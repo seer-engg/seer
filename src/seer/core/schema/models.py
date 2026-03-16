@@ -14,6 +14,8 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from seer.core.registry.default_models import DEFAULT_AGENT_MODEL_IDS
+
 # -----------------------------
 # JSON-ish values
 # -----------------------------
@@ -442,6 +444,15 @@ class AgentNode(NodeBase):
         missing = [k for k in required if k not in self.inputs]
         if missing:
             raise ValueError(f'AgentNode requires {", ".join(missing)} in inputs')
+
+        # pylint: disable-next=no-member  # Reason: Pydantic converts Field to actual Dict at runtime
+        model = self.inputs.get("model")
+        if model not in DEFAULT_AGENT_MODEL_IDS:
+            allowed = ", ".join(sorted(DEFAULT_AGENT_MODEL_IDS))
+            raise ValueError(
+                f"AgentNode model '{model}' is not allowed. "
+                f"Allowed models: {allowed}"
+            )
 
         # Validate tools format if provided
         # pylint: disable-next=no-member  # Reason: Pydantic converts Field to actual Dict at runtime

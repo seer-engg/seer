@@ -603,7 +603,7 @@ class TestGraphPreview:
         """Test generating preview creates sequential edges."""
         nodes = [
             ToolNode(id="n1", tool="test.tool"),
-            AgentNode(id="n2", inputs={"model": "gpt-4", "prompt": "test"}),
+            AgentNode(id="n2", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"}),
         ]
         spec = WorkflowSpec(nodes=nodes, edges=[])
 
@@ -616,7 +616,7 @@ class TestGraphPreview:
 
     def test_graph_preview_node_structure(self):
         """Test preview nodes have correct structure."""
-        node = AgentNode(id="llm1", inputs={"model": "gpt-4", "prompt": "test"})
+        node = AgentNode(id="llm1", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"})
         spec = WorkflowSpec(nodes=[node], edges=[])
 
         preview = catalog._graph_preview(spec)

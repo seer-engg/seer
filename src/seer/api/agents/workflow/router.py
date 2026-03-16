@@ -63,6 +63,57 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/nexus", tags=["nexus"])
 
 
+def _session_has_pending_interrupt(session: Any) -> bool:
+    """Return True when the session is waiting for resume input."""
+    return bool(
+        session.current_execution_status == "interrupted"
+        or session.pending_interrupt_data
+        or session.pending_interrupt_type
+    )
+
+
+def _ensure_session_can_start_fresh_chat(session: Any) -> None:
+    """Reject invalid fresh-chat transitions for interrupted or active sessions."""
+    from seer.database.workflow_models import ChatExecutionStatus  # pylint: disable=import-outside-toplevel # Reason: avoid circular import at module load
+
+    if session.current_execution_status in [ChatExecutionStatus.QUEUED, ChatExecutionStatus.RUNNING]:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Execution already in progress",
+            detail="Cannot start new execution while another is in progress",
+            status=409,
+        )
+
+    if _session_has_pending_interrupt(session):
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Session awaiting clarification",
+            detail="This session is waiting for clarification. Use /chat/resume instead of starting a new /chat request.",
+            status=409,
+        )
+
+
+def _ensure_session_can_resume(session: Any) -> None:
+    """Reject invalid resume transitions when no interrupt is pending."""
+    from seer.database.workflow_models import ChatExecutionStatus  # pylint: disable=import-outside-toplevel # Reason: avoid circular import at module load
+
+    if session.current_execution_status in [ChatExecutionStatus.QUEUED, ChatExecutionStatus.RUNNING]:
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Execution already in progress",
+            detail="Cannot resume while another execution is still running",
+            status=409,
+        )
+
+    if not _session_has_pending_interrupt(session):
+        raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="No pending interrupt",
+            detail="This session is not waiting for clarification. Start a new /chat request instead of /chat/resume.",
+            status=409,
+        )
+
+
 def _require_user(request: Request) -> User:
     user = getattr(request.state, "db_user", None)
     if user is None:
@@ -295,6 +346,20 @@ async def _build_resume_command(
             metadata={"clarification_answers": resume_data.answers.model_dump()},
         )
 
+    elif resume_data.message:
+        resume_value = {
+            "type": "free_text_response",
+            "message": resume_data.message,
+            "source": "chat_resume_message",
+        }
+
+        await save_chat_message(
+            session_id=session_id,
+            role="user",
+            content=resume_data.message,
+            metadata={"clarification_free_text": {"message": resume_data.message}},
+        )
+
     elif resume_data.command:
         # Other interrupt types
         resume_value = resume_data.command.get("resume")
@@ -303,7 +368,7 @@ async def _build_resume_command(
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Invalid resume data",
-            detail="Either answers or command must be provided",
+            detail="Exactly one of answers, message, or command must be provided",
             status=400
         )
 
@@ -329,7 +394,12 @@ async def chat_with_workflow_endpoint(
     from seer.database.workflow_models import ChatExecutionStatus  # pylint: disable=import-outside-toplevel # Reason: Only needed for status handling
     from seer.worker.tasks.chat import chat_execution_task  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
 
-    logger.info("Chat request received: workflow_id=%s, message_length=%d", workflow_id, len(chat_request.message))
+    logger.info(
+        "Chat request received: workflow_id=%s, message_length=%d, request_id=%s",
+        workflow_id,
+        len(chat_request.message),
+        chat_request.request_id,
+    )
     user = _require_user(request)
     org, membership = _get_org_context(request)
     workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
@@ -345,14 +415,7 @@ async def chat_with_workflow_endpoint(
         session_id=chat_request.session_id,
     )
 
-    # Check if session already has execution in progress
-    if session.current_execution_status in [ChatExecutionStatus.QUEUED, ChatExecutionStatus.RUNNING]:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Execution already in progress",
-            detail="Cannot start new execution while another is in progress",
-            status=409
-        )
+    _ensure_session_can_start_fresh_chat(session)
 
     # Save current workflow state to session for UI/persistence
     session.current_workflow_state = await workflow_state_snapshot(workflow)
@@ -365,13 +428,17 @@ async def chat_with_workflow_endpoint(
         content=chat_request.message,
     )
 
+    execution_owner_id = uuid.uuid4().hex
+
     # Update session status to QUEUED
     session.current_execution_status = ChatExecutionStatus.QUEUED
+    session.current_execution_task_id = execution_owner_id
     session.current_execution_error = None
     session.pending_interrupt_type = None
     session.pending_interrupt_data = None
     await session.save(update_fields=[
         'current_execution_status',
+        'current_execution_task_id',
         'current_execution_error',
         'pending_interrupt_type',
         'pending_interrupt_data',
@@ -384,17 +451,16 @@ async def chat_with_workflow_endpoint(
         message=chat_request.message,
         workflow_id=workflow.id,
         model=model,
+        execution_task_id=execution_owner_id,
     )
-
-    # Save task ID to session
-    session.current_execution_task_id = task.task_id
-    await session.save(update_fields=['current_execution_task_id'])
 
     logger.info(
         "Chat execution enqueued",
         extra={
             "session_id": session_id,
             "task_id": task.task_id,
+            "execution_owner_id": execution_owner_id,
+            "request_id": chat_request.request_id,
         }
     )
 
@@ -409,7 +475,7 @@ async def chat_with_workflow_endpoint(
     await publisher.publish(StreamEventType.SESSION_INFO, {
         "session_id": session_id,
         "thread_id": thread_id,
-        "execution_task_id": task.task_id,
+        "execution_task_id": execution_owner_id,
     })
 
     return StreamingResponse(
@@ -481,6 +547,10 @@ async def create_chat_session_endpoint(
         title=session.title,
         created_at=session.created_at,
         updated_at=session.updated_at,
+        current_execution_status=session.current_execution_status.value if session.current_execution_status else None,
+        current_execution_task_id=session.current_execution_task_id,
+        pending_interrupt_type=session.pending_interrupt_type,
+        pending_interrupt_data=session.pending_interrupt_data,
     )
 
 
@@ -507,6 +577,10 @@ async def list_chat_sessions_endpoint(
             title=session.title,
             created_at=session.created_at,
             updated_at=session.updated_at,
+            current_execution_status=session.current_execution_status.value if session.current_execution_status else None,
+            current_execution_task_id=session.current_execution_task_id,
+            pending_interrupt_type=session.pending_interrupt_type,
+            pending_interrupt_data=session.pending_interrupt_data,
         )
         for session in sessions
     ]
@@ -559,6 +633,10 @@ async def get_chat_session_endpoint(
         title=session.title,
         created_at=session.created_at,
         updated_at=session.updated_at,
+        current_execution_status=session.current_execution_status.value if session.current_execution_status else None,
+        current_execution_task_id=session.current_execution_task_id,
+        pending_interrupt_type=session.pending_interrupt_type,
+        pending_interrupt_data=session.pending_interrupt_data,
         messages=messages_out,
     )
 
@@ -572,7 +650,8 @@ async def resume_chat_endpoint(
     """
     Resume chat after interrupt (clarification question or other interrupt type).
 
-    For clarification questions, provide 'answer' with selected values.
+    For clarification questions, provide 'answers' with structured selections or
+    'message' with a free-text reply.
     For other interrupts, provide 'command' with raw Command data.
 
     Returns an SSE stream — same format as POST /{workflow_id}/chat.
@@ -581,7 +660,12 @@ async def resume_chat_endpoint(
     from seer.worker.tasks.chat import chat_resume_task  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
     from seer.database.workflow_models import ChatExecutionStatus  # pylint: disable=import-outside-toplevel # Reason: Only needed for status handling
 
-    logger.info("Resume request received: workflow_id=%s, thread_id=%s", workflow_id, resume_data.thread_id)
+    logger.info(
+        "Resume request received: workflow_id=%s, thread_id=%s, request_id=%s",
+        workflow_id,
+        resume_data.thread_id,
+        resume_data.request_id,
+    )
     user = _require_user(request)
     org, membership = _get_org_context(request)
     workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
@@ -601,16 +685,22 @@ async def resume_chat_endpoint(
     assert session is not None
     session_id = session.id
 
+    _ensure_session_can_resume(session)
+
     # Build resume command (validates answer)
     resume_command = await _build_resume_command(resume_data, checkpointer, session_id)
 
+    execution_owner_id = uuid.uuid4().hex
+
     # Update session status to QUEUED
     session.current_execution_status = ChatExecutionStatus.QUEUED
+    session.current_execution_task_id = execution_owner_id
     session.current_execution_error = None
     session.pending_interrupt_type = None
     session.pending_interrupt_data = None
     await session.save(update_fields=[
         'current_execution_status',
+        'current_execution_task_id',
         'current_execution_error',
         'pending_interrupt_type',
         'pending_interrupt_data',
@@ -623,17 +713,16 @@ async def resume_chat_endpoint(
         thread_id=resume_data.thread_id,
         resume_command_data=resume_command.resume,
         workflow_id=workflow.id,
+        execution_task_id=execution_owner_id,
     )
-
-    # Save task ID to session
-    session.current_execution_task_id = task.task_id
-    await session.save(update_fields=['current_execution_task_id'])
 
     logger.info(
         "Chat resume enqueued",
         extra={
             "session_id": session_id,
             "task_id": task.task_id,
+            "execution_owner_id": execution_owner_id,
+            "request_id": resume_data.request_id,
         }
     )
 
@@ -649,7 +738,7 @@ async def resume_chat_endpoint(
     await publisher.publish(StreamEventType.SESSION_INFO, {
         "session_id": session_id,
         "thread_id": resume_data.thread_id,
-        "execution_task_id": task.task_id,
+        "execution_task_id": execution_owner_id,
     })
 
     return StreamingResponse(
