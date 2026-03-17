@@ -35,6 +35,7 @@ class MemoryItem(BaseModel):
     score: Optional[float] = Field(default=None, description="Relevance score (for search results)")
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Associated metadata")
     created_at: Optional[str] = Field(default=None, description="When the memory was created")
+    updated_at: Optional[str] = Field(default=None, description="When the memory was last updated")
 
 
 class MemoryListResponse(BaseModel):
@@ -61,6 +62,13 @@ class MemoryDeleteResponse(BaseModel):
     message: str
 
 
+class MemoryMutationResponse(BaseModel):
+    """Response for creating or updating a memory."""
+
+    memory: MemoryItem
+    message: str
+
+
 class MemoryStatsResponse(BaseModel):
     """Response for memory statistics."""
 
@@ -68,6 +76,12 @@ class MemoryStatsResponse(BaseModel):
     memory_enabled: bool
     extraction_enabled: bool
     injection_enabled: bool
+
+
+class MemoryUpsertRequest(BaseModel):
+    """Request body for creating or updating a memory."""
+
+    memory: str = Field(..., min_length=1, max_length=2000, description="Memory content")
 
 
 # ============================================================================
@@ -83,6 +97,7 @@ def _format_memory_item(raw_memory: Dict[str, Any]) -> MemoryItem:
         score=raw_memory.get("score"),
         metadata=raw_memory.get("metadata"),
         created_at=raw_memory.get("created_at") or raw_memory.get("metadata", {}).get("added_at"),
+        updated_at=raw_memory.get("updated_at") or raw_memory.get("metadata", {}).get("edited_at"),
     )
 
 
@@ -101,6 +116,32 @@ def _check_memory_enabled():
             status_code=503,
             detail="Memory feature is not enabled. Set MEMORY_ENABLED=true to enable."
         )
+
+
+def _normalize_memory_content(content: str) -> str:
+    """Normalize and validate user-submitted memory content."""
+    normalized = content.strip()
+    if not normalized:
+        raise HTTPException(status_code=422, detail="Memory content cannot be empty")
+    return normalized
+
+
+async def _get_owned_memory(
+    request: Request,
+    memory_id: str,
+    memory_service: UserMemoryService,
+) -> Dict[str, Any]:
+    """Load a memory and verify it belongs to the authenticated user."""
+    user_id = _get_user_id_from_request(request)
+    memory = await memory_service.get_memory(memory_id)
+
+    if not memory or memory.get("user_id") != user_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Memory {memory_id} not found or does not belong to you"
+        )
+
+    return memory
 
 
 # ============================================================================
@@ -172,16 +213,8 @@ async def delete_memory(
     _check_memory_enabled()
     user_id = _get_user_id_from_request(request)
 
-    # Verify the memory belongs to this user by searching for it first
     memory_service = UserMemoryService()
-    all_memories = await memory_service.get_all(user_id=user_id)
-    memory_ids = {m.get("id") for m in all_memories}
-
-    if memory_id not in memory_ids:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Memory {memory_id} not found or does not belong to you"
-        )
+    await _get_owned_memory(request, memory_id, memory_service)
 
     success = await memory_service.delete_memory(memory_id)
 
@@ -194,6 +227,71 @@ async def delete_memory(
         deleted=True,
         memory_id=memory_id,
         message="Memory deleted successfully",
+    )
+
+
+@router.post("", response_model=MemoryMutationResponse)
+async def create_memory(
+    request: Request,
+    payload: MemoryUpsertRequest,
+) -> MemoryMutationResponse:
+    """
+    Create a new manual memory for the authenticated user.
+
+    The provided text is stored verbatim as a single memory item.
+    """
+    _check_memory_enabled()
+    user_id = _get_user_id_from_request(request)
+    content = _normalize_memory_content(payload.memory)
+
+    memory_service = UserMemoryService()
+    created_memory = await memory_service.create_manual_memory(
+        user_id=user_id,
+        content=content,
+    )
+
+    if created_memory is None:
+        raise HTTPException(status_code=500, detail="Failed to create memory")
+
+    logger.info("User %s created memory %s", user_id, created_memory.get("id"))
+
+    return MemoryMutationResponse(
+        memory=_format_memory_item(created_memory),
+        message="Memory created successfully",
+    )
+
+
+@router.put("/{memory_id}", response_model=MemoryMutationResponse)
+async def update_memory(
+    request: Request,
+    memory_id: str,
+    payload: MemoryUpsertRequest,
+) -> MemoryMutationResponse:
+    """
+    Update an existing memory by ID.
+
+    Only memories owned by the authenticated user can be updated.
+    """
+    _check_memory_enabled()
+    user_id = _get_user_id_from_request(request)
+    content = _normalize_memory_content(payload.memory)
+
+    memory_service = UserMemoryService()
+    existing_memory = await _get_owned_memory(request, memory_id, memory_service)
+    updated_memory = await memory_service.update_memory(
+        memory_id=memory_id,
+        content=content,
+        metadata={"source": existing_memory.get("metadata", {}).get("source", "manual")},
+    )
+
+    if updated_memory is None:
+        raise HTTPException(status_code=500, detail="Failed to update memory")
+
+    logger.info("User %s updated memory %s", user_id, memory_id)
+
+    return MemoryMutationResponse(
+        memory=_format_memory_item(updated_memory),
+        message="Memory updated successfully",
     )
 
 
