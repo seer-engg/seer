@@ -253,6 +253,10 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=2700,
         description="Default timeout for Nexus chat and chat resume requests in seconds",
     )
+    redis_stream_idle_timeout_ms: int = Field(
+        default=3600000,
+        description="Redis Stream pending-task reclaim timeout in milliseconds for Taskiq workers",
+    )
 
     # ============================================================================
     # Trigger Poller

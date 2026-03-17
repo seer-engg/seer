@@ -228,6 +228,7 @@ def mock_chat_session():
     session.id = 1
     session.thread_id = "test-thread-123"
     session.current_execution_status = ChatExecutionStatus.QUEUED
+    session.current_execution_task_id = None
     session.current_execution_started_at = None
     session.current_execution_finished_at = None
     session.current_execution_error = None
