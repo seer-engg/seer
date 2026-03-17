@@ -249,6 +249,10 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=75,
         description="Default maximum agent steps for Nexus chat (LangGraph recursion_limit)"
     )
+    nexus_chat_timeout_seconds: int = Field(
+        default=2700,
+        description="Default timeout for Nexus chat and chat resume requests in seconds",
+    )
 
     # ============================================================================
     # Trigger Poller

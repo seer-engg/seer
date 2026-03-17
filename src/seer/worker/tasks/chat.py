@@ -758,7 +758,7 @@ async def chat_resume_task(
 
             # Wrap agent resume stream with Langfuse user context
             with langfuse_user_context(user.user_id):
-                await asyncio.wait_for(_stream_resume(), timeout=900.0)
+                await asyncio.wait_for(_stream_resume(), timeout=float(config.nexus_chat_timeout_seconds))
 
             result: Dict[str, Any] = {"messages": all_messages, "final_content": final_content}
 

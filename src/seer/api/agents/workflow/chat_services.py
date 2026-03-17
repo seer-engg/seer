@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from seer.api.core.errors import VALIDATION_PROBLEM, raise_problem
+from seer.config import config
 from seer.database.workflow_models import ChatExecutionStatus, WorkflowChatSession
 from seer.logger import get_logger
 from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks
@@ -433,7 +434,7 @@ class ChatOrchestrator:
         config_dict: Dict[str, Any],
         # pylint: disable=unused-argument # Reason: Legacy parameter for compatibility
         thread_id_context=None,
-        timeout: float = 900.0,
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Invoke agent with timeout."""
         # pylint: disable=import-outside-toplevel # Reason: Avoids circular import with agents module
@@ -441,19 +442,20 @@ class ChatOrchestrator:
 
         thread_id = config_dict.get("configurable", {}).get("thread_id")
         token = _current_thread_id.set(thread_id) if thread_id else None
+        timeout_seconds = timeout if timeout is not None else float(config.nexus_chat_timeout_seconds)
 
         recursion_limit = config_dict.get("recursion_limit", 25)
-        logger.info("Invoking agent thread=%s recursion_limit=%d timeout=%ds", thread_id or 'unknown', recursion_limit, int(timeout))
+        logger.info("Invoking agent thread=%s recursion_limit=%d timeout=%ds", thread_id or 'unknown', recursion_limit, int(timeout_seconds))
 
         config_with_langfuse = merge_nexus_langfuse_callbacks(config_dict)
 
         try:
             return await asyncio.wait_for(
                 self.agent.ainvoke(messages, config=config_with_langfuse),
-                timeout=timeout,
+                timeout=timeout_seconds,
             )
         except asyncio.TimeoutError:
-            logger.error("Agent invocation timed out after %ss for thread %s", timeout, thread_id or 'unknown')
+            logger.error("Agent invocation timed out after %ss for thread %s", timeout_seconds, thread_id or 'unknown')
             raise_problem(
                 type_uri=VALIDATION_PROBLEM,
                 title="Request timeout",
@@ -601,7 +603,7 @@ class ChatOrchestrator:
         messages: Any,
         config_dict: Dict[str, Any],
         publisher: Any,  # StreamPublisher — typed as Any to avoid circular import
-        timeout: float = 900.0,
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Stream agent events via astream_events, publishing each to Redis.
@@ -621,6 +623,7 @@ class ChatOrchestrator:
 
         thread_id = config_dict.get("configurable", {}).get("thread_id")
         token = _current_thread_id.set(thread_id) if thread_id else None
+        timeout_seconds = timeout if timeout is not None else float(config.nexus_chat_timeout_seconds)
 
         config_with_langfuse = merge_nexus_langfuse_callbacks(config_dict)
 
@@ -637,9 +640,9 @@ class ChatOrchestrator:
                     all_messages = msgs
 
         try:
-            await asyncio.wait_for(_stream(), timeout=timeout)
+            await asyncio.wait_for(_stream(), timeout=timeout_seconds)
         except asyncio.TimeoutError:
-            logger.error("Agent stream timed out after %ss for thread %s", timeout, thread_id or 'unknown')
+            logger.error("Agent stream timed out after %ss for thread %s", timeout_seconds, thread_id or 'unknown')
             raise_problem(
                 type_uri=VALIDATION_PROBLEM,
                 title="Request timeout",

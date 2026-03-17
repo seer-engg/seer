@@ -1144,6 +1144,65 @@ class TestChatResumeTask:
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.COMPLETED
 
     @pytest.mark.asyncio
+    async def test_resume_uses_configured_chat_timeout(self, mock_user, mock_workflow, mock_chat_session):
+        """Test that resume timeout is sourced from config."""
+        from seer.worker.tasks.chat import chat_resume_task
+
+        observed_timeout = None
+
+        async def fake_wait_for(coro, timeout):
+            nonlocal observed_timeout
+            observed_timeout = timeout
+            return await coro
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat.User") as MockUser, \
+             patch("seer.worker.tasks.chat.Workflow") as MockWorkflow, \
+             patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent") as mock_create, \
+             patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
+             patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
+             patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.extract_thinking_from_messages") as mock_thinking, \
+             patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
+             patch("seer.worker.tasks.chat.merge_nexus_langfuse_callbacks") as mock_merge, \
+             patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat._current_thread_id"), \
+             patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal, \
+             patch("seer.worker.tasks.chat.config") as mock_config, \
+             patch("seer.worker.tasks.chat.asyncio.wait_for", side_effect=fake_wait_for):
+
+            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockUser.get = AsyncMock(return_value=mock_user)
+            MockWorkflow.get = AsyncMock(return_value=mock_workflow)
+            mock_settings.return_value = (50, MagicMock())
+            mock_merge.return_value = {}
+            mock_thinking.return_value = []
+            MockPublisher.return_value = AsyncMock()
+            mock_config.default_llm_model = "z-ai/glm-5"
+            mock_config.nexus_chat_timeout_seconds = 2700
+
+            mock_agent = MagicMock()
+            mock_agent.astream_events = _empty_astream_events
+            mock_create.return_value = mock_agent
+
+            MockInterrupt.extract_interrupt_from_result.return_value = (False, None)
+            MockInterrupt.extract_interrupt_from_state = AsyncMock(return_value=(False, None))
+            MockProposal.get_or_none.return_value.prefetch_related = AsyncMock(return_value=None)
+
+            await chat_resume_task(
+                session_id=1,
+                user_id=1,
+                thread_id="thread-123",
+                resume_command_data={},
+                workflow_id=1,
+            )
+
+        assert observed_timeout == 2700.0
+
+    @pytest.mark.asyncio
     async def test_sets_status_to_failed_on_exception(self, mock_user, mock_workflow, mock_chat_session):
         """Test that session is FAILED on exception during resume."""
         from seer.worker.tasks.chat import chat_resume_task
