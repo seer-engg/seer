@@ -217,6 +217,19 @@ class _ChatExecutionSingleFlightLock:
             self._redis = None
 
 
+class _NoOpChatExecutionSingleFlightLock:
+    """No-op lock used when a chat task has no execution owner ID."""
+
+    def __init__(self, session_id: int, task_name: str) -> None:
+        self.session_id = session_id
+        self.task_name = task_name
+        self.lock_key = ""
+
+    async def release(self) -> None:
+        """No-op release for direct task invocations without owner metadata."""
+        return
+
+
 def _set_sentry_context_for_chat(
     user: User,
     session_id: int,
@@ -349,8 +362,18 @@ async def _acquire_execution_single_flight_lock(
     session_id: int,
     execution_task_id: Optional[str],
     task_name: str,
-) -> Optional[_ChatExecutionSingleFlightLock]:
+) -> Optional[_ChatExecutionSingleFlightLock | _NoOpChatExecutionSingleFlightLock]:
     """Acquire a Redis single-flight lock or return None when a duplicate is already running."""
+    if not execution_task_id:
+        logger.info(
+            "Skipping chat single-flight lock because execution owner ID is missing",
+            extra={
+                "session_id": session_id,
+                "task_name": task_name,
+            },
+        )
+        return _NoOpChatExecutionSingleFlightLock(session_id=session_id, task_name=task_name)
+
     lock = _ChatExecutionSingleFlightLock(session_id, execution_task_id, task_name)
     if await lock.acquire():
         return lock
@@ -1064,7 +1087,7 @@ async def chat_execution_task(
         model=model,
     )
 
-    lock: Optional[_ChatExecutionSingleFlightLock] = None
+    lock: Optional[_ChatExecutionSingleFlightLock | _NoOpChatExecutionSingleFlightLock] = None
 
     try:
         session = await _get_session_if_current_owner(session_id, execution_task_id, "start")
@@ -1143,7 +1166,7 @@ async def chat_resume_task(
         }
     )
 
-    lock: Optional[_ChatExecutionSingleFlightLock] = None
+    lock: Optional[_ChatExecutionSingleFlightLock | _NoOpChatExecutionSingleFlightLock] = None
 
     try:
         session = await _get_session_if_current_owner(session_id, execution_task_id, "resume_start")

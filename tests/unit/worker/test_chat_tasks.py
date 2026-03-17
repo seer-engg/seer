@@ -23,8 +23,12 @@ async def _empty_astream_events(*args, **kwargs):
 
 
 @pytest.fixture(autouse=True)
-def mock_execution_single_flight_lock():
+def mock_execution_single_flight_lock(request):
     """Stub the Redis single-flight lock for task tests unless a test overrides it."""
+    if request.node.name == "test_returns_noop_lock_when_execution_owner_id_is_missing":
+        yield None
+        return
+
     lock = MagicMock()
     lock.lock_key = "nexus:chat-execution:1:test-owner"
     lock.ttl_ms = 960000
@@ -1404,6 +1408,26 @@ class TestPersistFailureIfCurrentOwner:
             )
 
         session.save.assert_not_awaited()
+
+
+@pytest.mark.unit
+class TestAcquireExecutionSingleFlightLock:
+    """Tests for single-flight lock acquisition helpers."""
+
+    @pytest.mark.asyncio
+    async def test_returns_noop_lock_when_execution_owner_id_is_missing(self):
+        """Direct task invocations without owner metadata should not require Redis."""
+        from seer.worker.tasks.chat import _NoOpChatExecutionSingleFlightLock, _acquire_execution_single_flight_lock
+
+        with patch("seer.worker.tasks.chat.create_redis_client") as mock_create_redis:
+            lock = await _acquire_execution_single_flight_lock(
+                session_id=1,
+                execution_task_id=None,
+                task_name="chat_execution_task",
+            )
+
+        assert isinstance(lock, _NoOpChatExecutionSingleFlightLock)
+        mock_create_redis.assert_not_called()
 
 
 # =============================================================================
