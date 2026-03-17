@@ -50,6 +50,7 @@ class UserMemoryService:
         user_id: str,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
+        infer: bool = True,
     ) -> Optional[Dict[str, Any]]:
         """
         Add memory for a user.
@@ -61,6 +62,7 @@ class UserMemoryService:
             user_id: Unique user identifier (e.g., Clerk user_id)
             content: Content to extract memories from
             metadata: Optional metadata (session_id, workflow_id, etc.)
+            infer: Whether Mem0 should infer/add/update/delete related facts
 
         Returns:
             Mem0 add result with extracted memories, or None if unavailable
@@ -84,6 +86,7 @@ class UserMemoryService:
                     content,
                     user_id=user_id,
                     metadata=mem_metadata,
+                    infer=infer,
                 )
             )
 
@@ -97,6 +100,40 @@ class UserMemoryService:
         except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Memory is non-critical, must not block main flow
             logger.warning("Failed to add memory for user %s: %s", user_id, e)
             return None
+
+    async def create_manual_memory(
+        self,
+        user_id: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Create a single manual memory from exact user-entered text.
+
+        This bypasses Mem0's inference flow so the input is stored verbatim.
+        """
+        manual_metadata = {
+            "source": "manual",
+            **(metadata or {}),
+        }
+        result = await self.add_memory(
+            user_id=user_id,
+            content=content,
+            metadata=manual_metadata,
+            infer=False,
+        )
+        if not isinstance(result, dict):
+            return None
+
+        results = result.get("results", [])
+        if not results:
+            return None
+
+        memory_id = results[0].get("id")
+        if not memory_id:
+            return None
+
+        return await self.get_memory(memory_id)
 
     async def search(
         self,
@@ -178,6 +215,77 @@ class UserMemoryService:
         except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Memory is non-critical
             logger.warning("Failed to get memories for user %s: %s", user_id, e)
             return []
+
+    async def get_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific memory by ID.
+
+        Args:
+            memory_id: Mem0 memory identifier
+
+        Returns:
+            The memory dict if found, otherwise None
+        """
+        if not self.is_available:
+            return None
+
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.client.get(memory_id)
+            )
+            return result if isinstance(result, dict) else None
+
+        except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Memory is non-critical
+            logger.warning("Failed to get memory %s: %s", memory_id, e)
+            return None
+
+    async def update_memory(
+        self,
+        memory_id: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Update a memory while preserving existing metadata.
+
+        Mem0's public update path replaces payload metadata, so this method
+        reuses the lower-level update helper with the current metadata payload.
+        """
+        if not self.is_available:
+            return None
+
+        existing_memory = await self.get_memory(memory_id)
+        if existing_memory is None:
+            return None
+
+        preserved_metadata = {
+            **(existing_memory.get("metadata") or {}),
+            **(metadata or {}),
+            "edited_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            def _update() -> None:
+                existing_embeddings = {
+                    content: self.client.embedding_model.embed(content, "update")
+                }
+                self.client._update_memory(  # pylint: disable=protected-access  # Reason: Mem0 public update drops custom metadata
+                    memory_id,
+                    content,
+                    existing_embeddings,
+                    metadata=preserved_metadata,
+                )
+
+            await loop.run_in_executor(None, _update)
+            return await self.get_memory(memory_id)
+
+        except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Memory is non-critical
+            logger.warning("Failed to update memory %s: %s", memory_id, e)
+            return None
 
     async def delete_memory(self, memory_id: str) -> bool:
         """

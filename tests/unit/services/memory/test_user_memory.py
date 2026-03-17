@@ -9,8 +9,7 @@ Tests the memory service layer with mocked Mem0 client to verify:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
 from seer.services.memory.user_memory import UserMemoryService, get_user_memory_service
 
@@ -19,6 +18,8 @@ from seer.services.memory.user_memory import UserMemoryService, get_user_memory_
 def mock_mem0_client():
     """Create a mock Mem0 client."""
     client = MagicMock()
+    client.embedding_model = MagicMock()
+    client.embedding_model.embed = MagicMock(return_value=[0.1, 0.2, 0.3])
     client.add = MagicMock(return_value={
         "results": [
             {"id": "mem_1", "memory": "User prefers Slack notifications"},
@@ -39,6 +40,17 @@ def mock_mem0_client():
         ]
     })
     client.delete = MagicMock()
+    client.get = MagicMock(return_value={
+        "id": "mem_1",
+        "memory": "User prefers Slack",
+        "user_id": "user_123",
+        "created_at": "2026-03-01T00:00:00+00:00",
+        "metadata": {
+          "source": "chat_session",
+          "session_id": 1,
+        },
+    })
+    client._update_memory = MagicMock()
     return client
 
 
@@ -132,6 +144,34 @@ class TestAddMemory:
 
             # Should not raise, should return None
             assert result is None
+
+    @pytest.mark.unit
+    async def test_create_manual_memory_stores_verbatim(self, memory_service, mock_mem0_client):
+        """Should create a raw manual memory without inference."""
+        mock_mem0_client.add.return_value = {
+            "results": [{"id": "mem_manual"}]
+        }
+        mock_mem0_client.get.return_value = {
+            "id": "mem_manual",
+            "memory": "Remember that I prefer concise answers.",
+            "user_id": "user_123",
+            "created_at": "2026-03-01T00:00:00+00:00",
+            "metadata": {"source": "manual"},
+        }
+
+        with patch("seer.services.memory.user_memory.config") as mock_config:
+            mock_config.memory_enabled = True
+
+            result = await memory_service.create_manual_memory(
+                user_id="user_123",
+                content="Remember that I prefer concise answers.",
+            )
+
+            assert result is not None
+            mock_mem0_client.add.assert_called_once()
+            call_args = mock_mem0_client.add.call_args
+            assert call_args[1]["infer"] is False
+            assert call_args[1]["metadata"]["source"] == "manual"
 
 
 class TestSearchMemory:
@@ -240,6 +280,64 @@ class TestDeleteMemory:
             result = await memory_service.delete_memory("mem_123")
 
             assert result is False
+
+
+class TestUpdateMemory:
+    """Test memory updates."""
+
+    @pytest.mark.unit
+    async def test_update_memory_preserves_existing_metadata(self, memory_service, mock_mem0_client):
+        """Should preserve metadata while updating text."""
+        updated_memory = {
+            "id": "mem_1",
+            "memory": "Updated preference",
+            "user_id": "user_123",
+            "created_at": "2026-03-01T00:00:00+00:00",
+            "updated_at": "2026-03-02T00:00:00+00:00",
+            "metadata": {
+                "source": "chat_session",
+                "session_id": 1,
+                "edited_at": "2026-03-02T00:00:00+00:00",
+            },
+        }
+        mock_mem0_client.get.side_effect = [
+            {
+                "id": "mem_1",
+                "memory": "Original preference",
+                "user_id": "user_123",
+                "created_at": "2026-03-01T00:00:00+00:00",
+                "metadata": {
+                    "source": "chat_session",
+                    "session_id": 1,
+                },
+            },
+            updated_memory,
+        ]
+
+        with patch("seer.services.memory.user_memory.config") as mock_config:
+            mock_config.memory_enabled = True
+
+            result = await memory_service.update_memory("mem_1", "Updated preference")
+
+            assert result == updated_memory
+            mock_mem0_client._update_memory.assert_called_once()
+            metadata = mock_mem0_client._update_memory.call_args.kwargs["metadata"]
+            assert metadata["source"] == "chat_session"
+            assert metadata["session_id"] == 1
+            assert "edited_at" in metadata
+
+    @pytest.mark.unit
+    async def test_update_memory_returns_none_when_missing(self, memory_service, mock_mem0_client):
+        """Should return None if the target memory does not exist."""
+        mock_mem0_client.get.return_value = None
+
+        with patch("seer.services.memory.user_memory.config") as mock_config:
+            mock_config.memory_enabled = True
+
+            result = await memory_service.update_memory("missing", "Updated preference")
+
+            assert result is None
+            mock_mem0_client._update_memory.assert_not_called()
 
 
 class TestContextForPrompt:
