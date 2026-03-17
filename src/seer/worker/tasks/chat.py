@@ -9,6 +9,7 @@ execution in background workers.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -60,6 +61,30 @@ from seer.worker.tasks.memory import extract_session_memories
 logger = get_logger(__name__)
 
 
+@dataclass(slots=True)
+class ChatExecutionContext:
+    """Dependencies prepared before streaming a chat execution."""
+
+    user: User
+    checkpointer: Any
+    thread_id: str
+    agent: Any
+    max_agent_steps: int
+    runtime_context: WorkflowRuntimeContext
+
+
+@dataclass(slots=True)
+class ChatExecutionRequest:
+    """Broker payload for a fresh chat execution."""
+
+    session_id: int
+    user_id: int
+    message: str
+    workflow_id: int
+    execution_task_id: Optional[str]
+    model: Optional[str]
+
+
 def _set_sentry_context_for_chat(
     user: User,
     session_id: int,
@@ -103,6 +128,76 @@ def _extract_response_text(result: Dict[str, Any]) -> str:
         last_msg = agent_messages[-1]
         return last_msg.content if hasattr(last_msg, "content") else str(last_msg)
     return "I'm here to help with your workflow!"
+
+
+async def _get_session_if_current_owner(
+    session_id: int,
+    execution_task_id: Optional[str],
+    phase: str,
+) -> Optional["WorkflowChatSession"]:
+    """Return session only if this task still owns the current execution."""
+    session = await WorkflowChatSession.get(id=session_id)
+
+    if execution_task_id and session.current_execution_task_id != execution_task_id:
+        logger.info(
+            "Skipping stale chat task during %s",
+            phase,
+            extra={
+                "session_id": session_id,
+                "phase": phase,
+                "task_execution_owner": execution_task_id,
+                "current_execution_task_id": session.current_execution_task_id,
+            },
+        )
+        return None
+
+    return session
+
+
+async def _persist_failure_if_current_owner(
+    session_id: int,
+    execution_task_id: Optional[str],
+    error_payload: Dict[str, Any],
+) -> None:
+    """Persist FAILED only if this task still owns the session."""
+    session = await _get_session_if_current_owner(session_id, execution_task_id, "persist_failure")
+    if session is None:
+        return
+
+    session.current_execution_status = ChatExecutionStatus.FAILED
+    session.current_execution_finished_at = datetime.now(timezone.utc)
+    session.current_execution_error = error_payload
+    await session.save(update_fields=[
+        "current_execution_status",
+        "current_execution_finished_at",
+        "current_execution_error",
+    ])
+
+
+def _should_abort_chat_execution(
+    session: WorkflowChatSession,
+    session_id: int,
+    execution_task_id: Optional[str],
+) -> bool:
+    """Return True when a fresh execution should not proceed."""
+    if session.current_execution_status == ChatExecutionStatus.INTERRUPTED or session.pending_interrupt_data:
+        logger.info(
+            "Aborting fresh chat execution because session is already interrupted",
+            extra={"session_id": session_id, "execution_task_id": execution_task_id},
+        )
+        return True
+
+    return False
+
+
+async def _mark_chat_execution_running(session: WorkflowChatSession) -> None:
+    """Persist RUNNING status for a session."""
+    session.current_execution_status = ChatExecutionStatus.RUNNING
+    session.current_execution_started_at = datetime.now(timezone.utc)
+    await session.save(update_fields=[
+        "current_execution_status",
+        "current_execution_started_at",
+    ])
 
 
 async def _get_user_settings_and_context(
@@ -198,6 +293,229 @@ async def _handle_agent_result(
                 logger.warning("Failed to enqueue memory extraction", extra={"session_id": session_id})
 
 
+async def _prepare_chat_execution(request: ChatExecutionRequest) -> Optional[ChatExecutionContext]:
+    """Fetch dependencies and create the chat agent for execution."""
+    user = await User.get(id=request.user_id)
+    workflow = await Workflow.get(id=request.workflow_id)
+    checkpointer = await get_checkpointer()
+    session = await _get_session_if_current_owner(
+        request.session_id,
+        request.execution_task_id,
+        "before_agent_create",
+    )
+    if session is None:
+        return None
+
+    thread_id = session.thread_id
+    _set_sentry_context_for_chat(user, request.session_id, request.workflow_id, thread_id)
+
+    agent = await create_nexus_chat_agent(
+        model=request.model or config.default_llm_model,
+        checkpointer=checkpointer,
+        user_id=user.user_id,
+        current_query=request.message,
+        workflow_id=workflow.workflow_id,  # Public workflow ID for pre-bound tools
+    )
+    max_agent_steps, runtime_context = await _get_user_settings_and_context(user, thread_id)
+
+    return ChatExecutionContext(
+        user=user,
+        checkpointer=checkpointer,
+        thread_id=thread_id,
+        agent=agent,
+        max_agent_steps=max_agent_steps,
+        runtime_context=runtime_context,
+    )
+
+
+async def _finalize_interrupted_chat_execution(
+    session: WorkflowChatSession,
+    result: Dict[str, Any],
+    interrupt_data: Dict[str, Any],
+    session_id: int,
+    publisher: StreamPublisher,
+) -> None:
+    """Persist interrupt state and notify the client."""
+    logger.info(
+        "Chat execution interrupted for user input",
+        extra={"session_id": session_id, "interrupt_type": interrupt_data.get("type")},
+    )
+
+    session.current_execution_status = ChatExecutionStatus.INTERRUPTED
+    session.current_execution_finished_at = datetime.now(timezone.utc)
+    session.pending_interrupt_type = interrupt_data.get("type")
+    session.pending_interrupt_data = interrupt_data
+    await session.save(update_fields=[
+        "current_execution_status",
+        "current_execution_finished_at",
+        "pending_interrupt_type",
+        "pending_interrupt_data",
+    ])
+
+    response_text = _extract_response_text(result)
+    agent_messages = result.get("messages", [])
+    thinking_steps = extract_thinking_from_messages(agent_messages)
+    await save_chat_message(
+        session_id=session_id,
+        role="assistant",
+        content=response_text,
+        thinking="\n".join(thinking_steps) if thinking_steps else None,
+    )
+
+    await publisher.publish(StreamEventType.INTERRUPT, interrupt_data)
+    await publisher.publish_done()
+
+
+async def _finalize_completed_chat_execution(
+    session: WorkflowChatSession,
+    result: Dict[str, Any],
+    thread_id: str,
+    session_id: int,
+    publisher: StreamPublisher,
+) -> None:
+    """Persist completion state and notify the client."""
+    agent_messages = result.get("messages", [])
+    response_text = result.get("final_content") or _extract_response_text(result)
+    thinking_steps = extract_thinking_from_messages(agent_messages)
+
+    proposal = await WorkflowProposal.get_or_none(
+        thread_id=thread_id,
+        status=WorkflowProposal.STATUS_PENDING,
+    ).prefetch_related("created_by", "workflow", "session")
+
+    await save_chat_message(
+        session_id=session_id,
+        role="assistant",
+        content=response_text,
+        thinking="\n".join(thinking_steps) if thinking_steps else None,
+        suggested_edits=proposal.spec if proposal else None,
+        proposal=proposal,
+    )
+
+    session.current_execution_status = ChatExecutionStatus.COMPLETED
+    session.current_execution_finished_at = datetime.now(timezone.utc)
+    session.current_execution_error = None
+    await session.save(update_fields=[
+        "current_execution_status",
+        "current_execution_finished_at",
+        "current_execution_error",
+    ])
+
+    logger.info("Chat execution completed successfully", extra={"session_id": session_id})
+
+    agent_end_data: Dict[str, Any] = {"content": response_text}
+    if proposal:
+        agent_end_data["proposal_id"] = proposal.id
+    await publisher.publish(StreamEventType.AGENT_END, agent_end_data)
+    await publisher.publish_done()
+
+    if config.memory_enabled and config.memory_extraction_enabled:
+        await extract_session_memories.kiq(session_id)
+
+
+async def _process_chat_execution_result(
+    result: Dict[str, Any],
+    context: ChatExecutionContext,
+    session_id: int,
+    execution_task_id: Optional[str],
+    publisher: StreamPublisher,
+) -> None:
+    """Persist the final execution outcome for a streamed chat run."""
+    interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
+    if not interrupt_required:
+        interrupt_required, interrupt_data = await InterruptHandler.extract_interrupt_from_state(
+            context.agent, {"configurable": {"thread_id": context.thread_id}}
+        )
+
+    phase = "save_interrupt" if interrupt_required and interrupt_data else "save_completion"
+    session = await _get_session_if_current_owner(session_id, execution_task_id, phase)
+    if session is None:
+        return
+
+    if interrupt_required and interrupt_data:
+        await _finalize_interrupted_chat_execution(session, result, interrupt_data, session_id, publisher)
+        return
+
+    await _finalize_completed_chat_execution(session, result, context.thread_id, session_id, publisher)
+
+
+async def _handle_chat_execution_cost_cap(
+    session_id: int,
+    execution_task_id: Optional[str],
+    publisher: StreamPublisher,
+    error: RunCostCapExceeded,
+) -> None:
+    """Persist cost-cap failures for chat execution."""
+    current_session = await _get_session_if_current_owner(session_id, execution_task_id, "cost_cap_exceeded")
+    if current_session is None:
+        return
+
+    logger.warning(
+        "Chat cost cap exceeded",
+        extra={
+            "session_id": session_id,
+            "accumulated_cost": error.accumulated_cost,
+            "cost_cap": error.cost_cap,
+        },
+    )
+    current_session.current_execution_status = ChatExecutionStatus.FAILED
+    current_session.current_execution_finished_at = datetime.now(timezone.utc)
+    current_session.current_execution_error = {
+        "type": "cost_cap_exceeded",
+        "detail": str(error.to_dict()),
+        "status": 402,
+    }
+    await current_session.save(update_fields=[
+        "current_execution_status",
+        "current_execution_finished_at",
+        "current_execution_error",
+    ])
+    await publisher.publish(StreamEventType.ERROR, {"status_code": 402, "message": str(error)})
+    await publisher.publish_done()
+
+
+async def _run_chat_execution_stream(
+    session_id: int,
+    message: str,
+    execution_task_id: Optional[str],
+    context: ChatExecutionContext,
+) -> None:
+    """Run the streaming portion of chat execution."""
+    set_chat_runtime_context(context.runtime_context)
+
+    publisher = StreamPublisher(session_id)
+    try:
+        session = await _get_session_if_current_owner(session_id, execution_task_id, "before_stream_start")
+        if session is None:
+            return
+
+        await publisher.publish(StreamEventType.AGENT_START, {})
+
+        user_msg = HumanMessage(content=message)
+        with langfuse_user_context(context.user.user_id):
+            result = await _stream_agent_with_orchestrator(
+                context.agent,
+                context.checkpointer,
+                user_msg,
+                context.thread_id,
+                context.max_agent_steps,
+                publisher,
+            )
+
+        await _process_chat_execution_result(
+            result=result,
+            context=context,
+            session_id=session_id,
+            execution_task_id=execution_task_id,
+            publisher=publisher,
+        )
+    except RunCostCapExceeded as error:
+        await _handle_chat_execution_cost_cap(session_id, execution_task_id, publisher, error)
+    finally:
+        clear_chat_runtime_context()
+        await publisher.close()
+
+
 async def _invoke_agent_with_orchestrator(
     agent,
     checkpointer,
@@ -257,13 +575,14 @@ async def _stream_agent_with_orchestrator(  # pylint: disable=too-many-positiona
 
 @broker.task
 async def chat_execution_task(
-    # pylint: disable=too-many-positional-arguments,too-many-locals,too-many-statements
-    # Reason: Background task requires all parameters; multiple variables needed for orchestration
+    # pylint: disable=too-many-positional-arguments
+    # Reason: Background task requires all parameters from the broker payload
     session_id: int,
     user_id: int,
     message: str,
     workflow_id: int,
     model: Optional[str] = None,
+    execution_task_id: Optional[str] = None,
 ) -> None:
     """
     Execute chat agent asynchronously in background.
@@ -281,192 +600,52 @@ async def chat_execution_task(
             "session_id": session_id,
             "user_id": user_id,
             "workflow_id": workflow_id,
+            "execution_task_id": execution_task_id,
         }
     )
 
-    # Update session status to RUNNING
-    session = await WorkflowChatSession.get(id=session_id)
-    session.current_execution_status = ChatExecutionStatus.RUNNING
-    session.current_execution_started_at = datetime.now(timezone.utc)
-    await session.save(update_fields=[
-        "current_execution_status",
-        "current_execution_started_at",
-    ])
+    request = ChatExecutionRequest(
+        session_id=session_id,
+        user_id=user_id,
+        message=message,
+        workflow_id=workflow_id,
+        execution_task_id=execution_task_id,
+        model=model,
+    )
+
+    session = await _get_session_if_current_owner(session_id, execution_task_id, "start")
+    if session is None or _should_abort_chat_execution(session, session_id, execution_task_id):
+        return
+
+    await _mark_chat_execution_running(session)
 
     try:
-        # Fetch related entities
-        user = await User.get(id=user_id)
-        workflow = await Workflow.get(id=workflow_id)
-        checkpointer = await get_checkpointer()
-        thread_id = session.thread_id
+        context = await _prepare_chat_execution(request)
+        if context is None:
+            return
 
-        # Set Sentry context for error tracking
-        _set_sentry_context_for_chat(user, session_id, workflow_id, thread_id)
-
-        # Create agent (with memory context injection if enabled)
-        agent = await create_nexus_chat_agent(
-            model=model or config.default_llm_model,
-            checkpointer=checkpointer,
-            user_id=user.user_id,
-            current_query=message,
-            workflow_id=workflow.workflow_id,  # Public workflow ID for pre-bound tools
+        await _run_chat_execution_stream(
+            session_id=session_id,
+            message=message,
+            execution_task_id=execution_task_id,
+            context=context,
         )
-
-        # Get user settings and create runtime context
-        max_agent_steps, runtime_context = await _get_user_settings_and_context(user, thread_id)
-
-        # Set context for callback access
-        set_chat_runtime_context(runtime_context)
-
-        publisher = StreamPublisher(session_id)
-        try:
-            # Publish AGENT_START before invocation
-            await publisher.publish(StreamEventType.AGENT_START, {})
-
-            # Stream agent with Langfuse user context for trace attribution
-            user_msg = HumanMessage(content=message)
-            with langfuse_user_context(user.user_id):
-                result = await _stream_agent_with_orchestrator(
-                    agent, checkpointer, user_msg, thread_id, max_agent_steps, publisher
-                )
-
-            # Detect interrupts
-            interrupt_required, interrupt_data = InterruptHandler.extract_interrupt_from_result(result)
-
-            if not interrupt_required:
-                # Also check agent state for interrupt (astream_events may not surface __interrupt__)
-                interrupt_required, interrupt_data = await InterruptHandler.extract_interrupt_from_state(
-                    agent, {"configurable": {"thread_id": thread_id}}
-                )
-
-            if interrupt_required and interrupt_data:
-                # Agent needs user input - mark as INTERRUPTED
-                logger.info(
-                    "Chat execution interrupted for user input",
-                    extra={"session_id": session_id, "interrupt_type": interrupt_data.get("type")}
-                )
-
-                session.current_execution_status = ChatExecutionStatus.INTERRUPTED
-                session.current_execution_finished_at = datetime.now(timezone.utc)
-                session.pending_interrupt_type = interrupt_data.get("type")
-                session.pending_interrupt_data = interrupt_data
-                await session.save(update_fields=[
-                    "current_execution_status",
-                    "current_execution_finished_at",
-                    "pending_interrupt_type",
-                    "pending_interrupt_data",
-                ])
-
-                # Save assistant's interrupt message
-                response_text = _extract_response_text(result)
-                agent_messages = result.get("messages", [])
-                thinking_steps = extract_thinking_from_messages(agent_messages)
-
-                await save_chat_message(
-                    session_id=session_id,
-                    role="assistant",
-                    content=response_text,
-                    thinking="\n".join(thinking_steps) if thinking_steps else None,
-                )
-
-                # Publish INTERRUPT event so client can show clarification UI
-                await publisher.publish(StreamEventType.INTERRUPT, interrupt_data)
-                await publisher.publish_done()
-            else:
-                # Execution completed successfully
-                agent_messages = result.get("messages", [])
-                # Prefer final_content from streaming; fall back to last message extraction
-                response_text = result.get("final_content") or _extract_response_text(result)
-                thinking_steps = extract_thinking_from_messages(agent_messages)
-
-                # Get any pending proposal
-                proposal = await WorkflowProposal.get_or_none(
-                    thread_id=thread_id,
-                    status=WorkflowProposal.STATUS_PENDING
-                ).prefetch_related('created_by', 'workflow', 'session')
-
-                # Save assistant message
-                await save_chat_message(
-                    session_id=session_id,
-                    role="assistant",
-                    content=response_text,
-                    thinking="\n".join(thinking_steps) if thinking_steps else None,
-                    suggested_edits=proposal.spec if proposal else None,
-                    proposal=proposal,
-                )
-
-                # Mark as completed
-                session.current_execution_status = ChatExecutionStatus.COMPLETED
-                session.current_execution_finished_at = datetime.now(timezone.utc)
-                session.current_execution_error = None
-                await session.save(update_fields=[
-                    "current_execution_status",
-                    "current_execution_finished_at",
-                    "current_execution_error",
-                ])
-
-                logger.info(
-                    "Chat execution completed successfully",
-                    extra={"session_id": session_id}
-                )
-
-                # Publish AGENT_END with final answer
-                agent_end_data: Dict[str, Any] = {"content": response_text}
-                if proposal:
-                    agent_end_data["proposal_id"] = proposal.id
-                await publisher.publish(StreamEventType.AGENT_END, agent_end_data)
-                await publisher.publish_done()
-
-                # Trigger memory extraction in background (non-blocking)
-                if config.memory_enabled and config.memory_extraction_enabled:
-                    await extract_session_memories.kiq(session_id)
-
-        except RunCostCapExceeded as e:
-            logger.warning(
-                "Chat cost cap exceeded",
-                extra={
-                    "session_id": session_id,
-                    "accumulated_cost": e.accumulated_cost,
-                    "cost_cap": e.cost_cap,
-                }
-            )
-            session.current_execution_status = ChatExecutionStatus.FAILED
-            session.current_execution_finished_at = datetime.now(timezone.utc)
-            session.current_execution_error = {
-                "type": "cost_cap_exceeded",
-                "detail": str(e.to_dict()),
-                "status": 402,
-            }
-            await session.save(update_fields=[
-                "current_execution_status",
-                "current_execution_finished_at",
-                "current_execution_error",
-            ])
-            await publisher.publish(StreamEventType.ERROR, {"status_code": 402, "message": str(e)})
-            await publisher.publish_done()
-        finally:
-            clear_chat_runtime_context()
-            await publisher.close()
 
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Background task must catch all exceptions to avoid worker crash
         logger.error(
             "Chat execution task failed",
             exc_info=True,
-            extra={"session_id": session_id, "error": str(e)}
+            extra={"session_id": session_id, "error": str(e), "execution_task_id": execution_task_id}
         )
-
-        session.current_execution_status = ChatExecutionStatus.FAILED
-        session.current_execution_finished_at = datetime.now(timezone.utc)
-        session.current_execution_error = {
-            "type": "execution_error",
-            "detail": str(e),
-            "status": 500,
-        }
-        await session.save(update_fields=[
-            "current_execution_status",
-            "current_execution_finished_at",
-            "current_execution_error",
-        ])
+        await _persist_failure_if_current_owner(
+            session_id,
+            execution_task_id,
+            {
+                "type": "execution_error",
+                "detail": str(e),
+                "status": 500,
+            },
+        )
 
 
 @broker.task
@@ -478,6 +657,7 @@ async def chat_resume_task(
     thread_id: str,
     resume_command_data: Dict[str, Any],
     workflow_id: int,
+    execution_task_id: Optional[str] = None,
 ) -> None:
     """
     Resume chat execution after interrupt.
@@ -495,11 +675,15 @@ async def chat_resume_task(
             "session_id": session_id,
             "user_id": user_id,
             "thread_id": thread_id,
+            "execution_task_id": execution_task_id,
         }
     )
 
+    session = await _get_session_if_current_owner(session_id, execution_task_id, "resume_start")
+    if session is None:
+        return
+
     # Clear interrupt state and set status to RUNNING
-    session = await WorkflowChatSession.get(id=session_id)
     session.current_execution_status = ChatExecutionStatus.RUNNING
     session.current_execution_started_at = datetime.now(timezone.utc)
     session.pending_interrupt_type = None
@@ -516,6 +700,9 @@ async def chat_resume_task(
         user = await User.get(id=user_id)
         workflow = await Workflow.get(id=workflow_id)
         checkpointer = await get_checkpointer()
+        session = await _get_session_if_current_owner(session_id, execution_task_id, "before_resume_agent_create")
+        if session is None:
+            return
 
         # Set Sentry context for error tracking
         _set_sentry_context_for_chat(user, session_id, workflow_id, thread_id)
@@ -550,6 +737,10 @@ async def chat_resume_task(
         # Set thread_id in context variable
         token = _current_thread_id.set(thread_id)
         try:
+            session = await _get_session_if_current_owner(session_id, execution_task_id, "before_resume_stream_start")
+            if session is None:
+                return
+
             await publisher.publish(StreamEventType.AGENT_START, {})
 
             final_content = ""
@@ -579,6 +770,10 @@ async def chat_resume_task(
                 interrupt_required, interrupt_data = await InterruptHandler.extract_interrupt_from_state(agent, config_dict)
 
             if interrupt_required and interrupt_data:
+                session = await _get_session_if_current_owner(session_id, execution_task_id, "save_resume_interrupt")
+                if session is None:
+                    return
+
                 # Another interrupt - mark as INTERRUPTED
                 logger.info(
                     "Chat resume interrupted again for user input",
@@ -611,6 +806,10 @@ async def chat_resume_task(
                 await publisher.publish(StreamEventType.INTERRUPT, interrupt_data)
                 await publisher.publish_done()
             else:
+                session = await _get_session_if_current_owner(session_id, execution_task_id, "save_resume_completion")
+                if session is None:
+                    return
+
                 # Execution completed successfully
                 agent_messages = all_messages
                 response_text = final_content or _extract_response_text(result)
@@ -663,21 +862,17 @@ async def chat_resume_task(
         logger.error(
             "Chat resume task failed",
             exc_info=True,
-            extra={"session_id": session_id, "error": str(e)}
+            extra={"session_id": session_id, "error": str(e), "execution_task_id": execution_task_id}
         )
-
-        session.current_execution_status = ChatExecutionStatus.FAILED
-        session.current_execution_finished_at = datetime.now(timezone.utc)
-        session.current_execution_error = {
-            "type": "execution_error",
-            "detail": str(e),
-            "status": 500,
-        }
-        await session.save(update_fields=[
-            "current_execution_status",
-            "current_execution_finished_at",
-            "current_execution_error",
-        ])
+        await _persist_failure_if_current_owner(
+            session_id,
+            execution_task_id,
+            {
+                "type": "execution_error",
+                "detail": str(e),
+                "status": 500,
+            },
+        )
 
 
 @broker.task

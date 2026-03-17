@@ -270,7 +270,7 @@ def test_build_type_environment_with_agent_node():
         nodes=[
             AgentNode(
                 id="llm1",
-                inputs={"model": "gpt-4", "prompt": "Generate a response"},
+                inputs={"model": "openai/gpt-oss-120b", "prompt": "Generate a response"},
                 outputs=OutputContract(mode=OutputMode.json, schema={"schema": {"type": "object"}})
             )
         ],
@@ -301,7 +301,7 @@ def test_build_type_environment_node_with_output():
         nodes=[
             AgentNode(
                 id="llm1",
-                inputs={"model": "gpt-4", "prompt": "test"}
+                inputs={"model": "openai/gpt-oss-120b", "prompt": "test"}
             )
         ],
         edges=[]
@@ -850,7 +850,7 @@ def test_for_each_loop_variable_infers_type_from_agent_node_output():
         nodes=[
             AgentNode(
                 id="prepare_data",
-                inputs={"model": "gpt-4", "prompt": "Generate organizations"},
+                inputs={"model": "openai/gpt-oss-120b", "prompt": "Generate organizations"},
                 outputs=OutputContract(
                     mode=OutputMode.json,
                     schema={

@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from seer.api.core.errors import VALIDATION_PROBLEM, raise_problem
 from seer.config import config
+from seer.database.workflow_models import ChatExecutionStatus, WorkflowChatSession
 from seer.logger import get_logger
 from seer.utilities.langfuse_tracing import merge_nexus_langfuse_callbacks
 from seer.utilities.message_sanitizer import sanitize_tool_call_id
@@ -471,6 +472,22 @@ class ChatOrchestrator:
 
         thread_id = config_dict.get("configurable", {}).get("thread_id")
         logger.debug("Checking checkpointer health for thread %s", thread_id)
+
+        if thread_id:
+            session = await WorkflowChatSession.get_or_none(thread_id=thread_id)
+            if session and (
+                session.current_execution_status == ChatExecutionStatus.INTERRUPTED
+                or session.pending_interrupt_data
+            ):
+                logger.info(
+                    "Skipping incomplete tool call recovery because thread is awaiting user clarification",
+                    extra={
+                        "thread_id": thread_id,
+                        "session_id": session.id,
+                        "current_execution_status": session.current_execution_status,
+                    },
+                )
+                return False
 
         for attempt in range(2):
             try:

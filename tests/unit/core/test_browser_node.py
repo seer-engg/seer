@@ -278,7 +278,7 @@ def test_type_env_browser_node_in_workflow():
             AgentNode(
                 id="process",
                 inputs={
-                    "model": "gpt-4o",
+                    "model": "openai/gpt-oss-120b",
                     "prompt": "Summarize: ${scrape.result}",
                 },
             ),
@@ -416,7 +416,7 @@ def test_type_env_browser_node_extracted_data_reference():
             AgentNode(
                 id="llm-1",
                 inputs={
-                    "model": "gpt-4o",
+                    "model": "openai/gpt-oss-120b",
                     "prompt": "What are these features? ${browser-1.extracted_data.features}",
                 },
             ),
@@ -475,7 +475,7 @@ def test_type_env_browser_node_rejects_invalid_property_access():
             AgentNode(
                 id="format_data",
                 inputs={
-                    "model": "gpt-4o",
+                    "model": "openai/gpt-oss-120b",
                     # WRONG: should be ${scrape_maps.extracted_data.shops}
                     "prompt": "Format these shops: ${scrape_maps.shops}",
                 },
@@ -552,7 +552,7 @@ def test_workflow_spec_browser_with_llm_chain():
                 "id": "summarize",
                 "type": "agent",
                 "inputs": {
-                    "model": "gpt-4o",
+                    "model": "openai/gpt-oss-120b",
                     "prompt": "Summarize these messages: ${scrape_slack.result}",
                 },
                 "outputs": {"mode": "text"},
@@ -692,7 +692,7 @@ def test_node_discriminator_identifies_browser():
         "nodes": [
             {"id": "n1", "type": "browser", "task": "Test task"},
             {"id": "n2", "type": "tool", "tool": "test_tool"},
-            {"id": "n3", "type": "agent", "inputs": {"model": "gpt-4o", "prompt": "Hello"}},
+            {"id": "n3", "type": "agent", "inputs": {"model": "openai/gpt-oss-120b", "prompt": "Hello"}},
         ],
         "edges": [],
     }

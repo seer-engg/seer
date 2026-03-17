@@ -862,6 +862,32 @@ class TestChatExecutionTask:
         assert mock_chat_session.pending_interrupt_type == "clarification_questions"
         MockInterrupt.extract_interrupt_from_state.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_exits_early_when_execution_owner_is_stale(self):
+        """A superseded chat task must exit before starting the agent."""
+        from seer.worker.tasks.chat import chat_execution_task
+
+        stale_session = MagicMock()
+        stale_session.current_execution_task_id = "new-owner"
+        stale_session.current_execution_status = ChatExecutionStatus.QUEUED
+        stale_session.pending_interrupt_data = None
+        stale_session.save = AsyncMock()
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent") as mock_create_agent:
+            MockSession.get = AsyncMock(return_value=stale_session)
+
+            await chat_execution_task(
+                session_id=1,
+                user_id=1,
+                message="Help me build a workflow",
+                workflow_id=1,
+                execution_task_id="old-owner",
+            )
+
+        mock_create_agent.assert_not_called()
+        stale_session.save.assert_not_awaited()
+
 
 # =============================================================================
 # Chat Resume Task Tests
