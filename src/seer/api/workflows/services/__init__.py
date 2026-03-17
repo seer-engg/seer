@@ -80,7 +80,11 @@ from .files import (
     delete_run_file,
 )
 
+# Import from share_template module
+from .share_template import generate_template_description
+
 __all__ = [
+    "generate_template_description",
     "list_node_types",
     "list_tools",
     "list_mcp_tools",
