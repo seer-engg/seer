@@ -77,10 +77,36 @@ def _build_connection_kwargs() -> Dict[str, Any]:
     return kwargs
 
 
+def _warn_if_idle_timeout_conflicts() -> None:
+    """Warn when broker reclaim timeout can preempt the chat runtime timeout."""
+    nexus_timeout_ms = int(config.nexus_chat_timeout_seconds) * 1000
+    if config.redis_stream_idle_timeout_ms <= nexus_timeout_ms:
+        logger.warning(
+            "Redis stream idle timeout should exceed Nexus chat timeout",
+            extra={
+                "redis_stream_idle_timeout_ms": config.redis_stream_idle_timeout_ms,
+                "nexus_chat_timeout_seconds": config.nexus_chat_timeout_seconds,
+                "nexus_chat_timeout_ms": nexus_timeout_ms,
+            },
+        )
+
+
+def create_redis_client(*, decode_responses: bool = True):
+    """Create an async Redis client with the worker's connection settings."""
+    import redis.asyncio as aioredis  # pylint: disable=import-outside-toplevel # Reason: Optional dependency used lazily at runtime
+
+    return aioredis.from_url(
+        redis_url,
+        decode_responses=decode_responses,
+        **connection_kwargs,
+    )
+
+
 redis_url = _resolve_redis_url()
 
 # Build connection kwargs with resilience settings
 connection_kwargs = _build_connection_kwargs()
+_warn_if_idle_timeout_conflicts()
 
 # Enable TLS/SSL for rediss:// URLs
 if redis_url.startswith("rediss://"):
@@ -98,7 +124,8 @@ result_backend = RedisAsyncResultBackend(redis_url=redis_url, **connection_kwarg
 broker = RedisStreamBroker(
     url=redis_url,
     max_connection_pool_size=config.redis_max_connections,
+    idle_timeout=config.redis_stream_idle_timeout_ms,
     **connection_kwargs,
 ).with_result_backend(result_backend)
 
-__all__ = ["broker", "redis_url", "result_backend"]
+__all__ = ["broker", "redis_url", "result_backend", "create_redis_client"]

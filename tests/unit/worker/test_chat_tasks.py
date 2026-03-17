@@ -6,6 +6,7 @@ error handling, and interrupt detection.
 """
 # pylint: disable=redefined-outer-name
 # Reason: pytest fixture pattern requires name reuse
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,6 +20,23 @@ async def _empty_astream_events(*args, **kwargs):
     """Async generator stub that yields nothing — prevents asyncio.wait_for(timeout=900) hang."""
     return
     yield  # noqa: unreachable — makes this an async generator
+
+
+@pytest.fixture(autouse=True)
+def mock_execution_single_flight_lock(request):
+    """Stub the Redis single-flight lock for task tests unless a test overrides it."""
+    if request.node.name == "test_returns_noop_lock_when_execution_owner_id_is_missing":
+        yield None
+        return
+
+    lock = MagicMock()
+    lock.lock_key = "nexus:chat-execution:1:test-owner"
+    lock.ttl_ms = 960000
+    lock.acquire = AsyncMock(return_value=True)
+    lock.release = AsyncMock()
+
+    with patch("seer.worker.tasks.chat._acquire_execution_single_flight_lock", new=AsyncMock(return_value=lock)):
+        yield lock
 
 
 # =============================================================================
@@ -888,6 +906,30 @@ class TestChatExecutionTask:
         mock_create_agent.assert_not_called()
         stale_session.save.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_exits_early_when_execution_lock_is_held(self, mock_chat_session):
+        """A duplicate execution delivery must exit before mutating session state."""
+        from seer.worker.tasks.chat import chat_execution_task
+
+        mock_chat_session.current_execution_task_id = "owner-1"
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat._acquire_execution_single_flight_lock", new=AsyncMock(return_value=None)), \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent") as mock_create_agent:
+
+            MockSession.get = AsyncMock(return_value=mock_chat_session)
+
+            await chat_execution_task(
+                session_id=1,
+                user_id=1,
+                message="Help me build a workflow",
+                workflow_id=1,
+                execution_task_id="owner-1",
+            )
+
+        mock_create_agent.assert_not_called()
+        mock_chat_session.save.assert_not_awaited()
+
 
 # =============================================================================
 # Chat Resume Task Tests
@@ -1142,6 +1184,66 @@ class TestChatResumeTask:
             )
 
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.COMPLETED
+        assert mock_chat_session.current_execution_task_id is None
+
+    @pytest.mark.asyncio
+    async def test_resume_uses_configured_chat_timeout(self, mock_user, mock_workflow, mock_chat_session):
+        """Test that resume timeout is sourced from config."""
+        from seer.worker.tasks.chat import chat_resume_task
+
+        observed_timeout = None
+
+        async def fake_wait_for(coro, timeout):
+            nonlocal observed_timeout
+            observed_timeout = timeout
+            return await coro
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat.User") as MockUser, \
+             patch("seer.worker.tasks.chat.Workflow") as MockWorkflow, \
+             patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent") as mock_create, \
+             patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
+             patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
+             patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.extract_thinking_from_messages") as mock_thinking, \
+             patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
+             patch("seer.worker.tasks.chat.merge_nexus_langfuse_callbacks") as mock_merge, \
+             patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat._current_thread_id"), \
+             patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal, \
+             patch("seer.worker.tasks.chat.config") as mock_config, \
+             patch("seer.worker.tasks.chat.asyncio.wait_for", side_effect=fake_wait_for):
+
+            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockUser.get = AsyncMock(return_value=mock_user)
+            MockWorkflow.get = AsyncMock(return_value=mock_workflow)
+            mock_settings.return_value = (50, MagicMock())
+            mock_merge.return_value = {}
+            mock_thinking.return_value = []
+            MockPublisher.return_value = AsyncMock()
+            mock_config.default_llm_model = "z-ai/glm-5"
+            mock_config.nexus_chat_timeout_seconds = 2700
+
+            mock_agent = MagicMock()
+            mock_agent.astream_events = _empty_astream_events
+            mock_create.return_value = mock_agent
+
+            MockInterrupt.extract_interrupt_from_result.return_value = (False, None)
+            MockInterrupt.extract_interrupt_from_state = AsyncMock(return_value=(False, None))
+            MockProposal.get_or_none.return_value.prefetch_related = AsyncMock(return_value=None)
+
+            await chat_resume_task(
+                session_id=1,
+                user_id=1,
+                thread_id="thread-123",
+                resume_command_data={},
+                workflow_id=1,
+            )
+
+        assert observed_timeout == 2700.0
 
     @pytest.mark.asyncio
     async def test_sets_status_to_failed_on_exception(self, mock_user, mock_workflow, mock_chat_session):
@@ -1166,6 +1268,166 @@ class TestChatResumeTask:
 
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
         assert mock_chat_session.current_execution_error["type"] == "execution_error"
+        assert mock_chat_session.current_execution_task_id is None
+
+    @pytest.mark.asyncio
+    async def test_exits_early_when_resume_lock_is_held(self, mock_chat_session):
+        """A duplicate resume delivery must exit before clearing interrupt state."""
+        from seer.worker.tasks.chat import chat_resume_task
+
+        mock_chat_session.current_execution_task_id = "owner-1"
+        mock_chat_session.pending_interrupt_type = "approval_request"
+        mock_chat_session.pending_interrupt_data = {"type": "approval_request"}
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat._acquire_execution_single_flight_lock", new=AsyncMock(return_value=None)), \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent") as mock_create_agent:
+
+            MockSession.get = AsyncMock(return_value=mock_chat_session)
+
+            await chat_resume_task(
+                session_id=1,
+                user_id=1,
+                thread_id="thread-123",
+                resume_command_data={"approved": True},
+                workflow_id=1,
+                execution_task_id="owner-1",
+            )
+
+        mock_create_agent.assert_not_called()
+        assert mock_chat_session.pending_interrupt_type == "approval_request"
+        assert mock_chat_session.pending_interrupt_data == {"type": "approval_request"}
+        mock_chat_session.save.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_resume_exits_while_first_attempt_streams(
+        self,
+        mock_user,
+        mock_workflow,
+        mock_chat_session,
+    ):
+        """Concurrent duplicate resume delivery should exit while the first attempt owns the lock."""
+        from seer.worker.tasks.chat import chat_resume_task
+
+        stream_started = asyncio.Event()
+        release_stream = asyncio.Event()
+        primary_lock = MagicMock()
+        primary_lock.release = AsyncMock()
+        mock_chat_session.current_execution_task_id = "owner-1"
+
+        async def blocking_astream_events(*args, **kwargs):
+            stream_started.set()
+            await release_stream.wait()
+            if False:
+                yield None
+
+        lock_acquire = AsyncMock(side_effect=[primary_lock, None])
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat.User") as MockUser, \
+             patch("seer.worker.tasks.chat.Workflow") as MockWorkflow, \
+             patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent") as mock_create, \
+             patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
+             patch("seer.worker.tasks.chat.InterruptHandler") as MockInterrupt, \
+             patch("seer.worker.tasks.chat.save_chat_message", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.extract_thinking_from_messages") as mock_thinking, \
+             patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
+             patch("seer.worker.tasks.chat.merge_nexus_langfuse_callbacks") as mock_merge, \
+             patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat._current_thread_id"), \
+             patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal, \
+             patch("seer.worker.tasks.chat._acquire_execution_single_flight_lock", new=lock_acquire):
+
+            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockUser.get = AsyncMock(return_value=mock_user)
+            MockWorkflow.get = AsyncMock(return_value=mock_workflow)
+            mock_settings.return_value = (50, MagicMock())
+            mock_merge.return_value = {}
+            mock_thinking.return_value = []
+            MockPublisher.return_value = AsyncMock()
+
+            mock_agent = MagicMock()
+            mock_agent.astream_events = blocking_astream_events
+            mock_create.return_value = mock_agent
+
+            MockInterrupt.extract_interrupt_from_result.return_value = (False, None)
+            MockInterrupt.extract_interrupt_from_state = AsyncMock(return_value=(False, None))
+            MockProposal.get_or_none.return_value.prefetch_related = AsyncMock(return_value=None)
+
+            first_attempt = asyncio.create_task(chat_resume_task(
+                session_id=1,
+                user_id=1,
+                thread_id="thread-123",
+                resume_command_data={},
+                workflow_id=1,
+                execution_task_id="owner-1",
+            ))
+            await asyncio.wait_for(stream_started.wait(), timeout=1)
+
+            await chat_resume_task(
+                session_id=1,
+                user_id=1,
+                thread_id="thread-123",
+                resume_command_data={},
+                workflow_id=1,
+                execution_task_id="owner-1",
+            )
+
+            release_stream.set()
+            await asyncio.wait_for(first_attempt, timeout=1)
+
+        assert lock_acquire.await_count == 2
+        assert mock_create.call_count == 1
+        assert primary_lock.release.await_count == 1
+
+
+@pytest.mark.unit
+class TestPersistFailureIfCurrentOwner:
+    """Tests for terminal-state failure persistence protections."""
+
+    @pytest.mark.asyncio
+    async def test_skips_failure_persistence_when_session_already_completed(self):
+        """A late loser attempt must not overwrite a completed session."""
+        from seer.worker.tasks.chat import _persist_failure_if_current_owner
+
+        session = MagicMock()
+        session.current_execution_status = ChatExecutionStatus.COMPLETED
+        session.current_execution_task_id = None
+        session.save = AsyncMock()
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession:
+            MockSession.get = AsyncMock(return_value=session)
+
+            await _persist_failure_if_current_owner(
+                session_id=1,
+                execution_task_id=None,
+                error_payload={"type": "execution_error", "status": 500},
+            )
+
+        session.save.assert_not_awaited()
+
+
+@pytest.mark.unit
+class TestAcquireExecutionSingleFlightLock:
+    """Tests for single-flight lock acquisition helpers."""
+
+    @pytest.mark.asyncio
+    async def test_returns_noop_lock_when_execution_owner_id_is_missing(self):
+        """Direct task invocations without owner metadata should not require Redis."""
+        from seer.worker.tasks.chat import _NoOpChatExecutionSingleFlightLock, _acquire_execution_single_flight_lock
+
+        with patch("seer.worker.tasks.chat.create_redis_client") as mock_create_redis:
+            lock = await _acquire_execution_single_flight_lock(
+                session_id=1,
+                execution_task_id=None,
+                task_name="chat_execution_task",
+            )
+
+        assert isinstance(lock, _NoOpChatExecutionSingleFlightLock)
+        mock_create_redis.assert_not_called()
 
 
 # =============================================================================

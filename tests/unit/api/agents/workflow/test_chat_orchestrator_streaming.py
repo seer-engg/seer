@@ -176,3 +176,38 @@ async def test_stream_with_health_checks_uses_streaming_path():
 
     mock_stream.assert_called_once()
     assert result == streaming_result
+
+
+@pytest.mark.asyncio
+async def test_stream_with_timeout_uses_config_default_timeout():
+    """stream_with_timeout should use config default timeout when none is provided."""
+    observed_timeout = None
+
+    async def fake_astream_events(*args, **kwargs):
+        yield {"event": "on_chain_end", "name": "LangGraph", "data": {"output": {"messages": []}}, "run_id": "r0"}
+
+    async def fake_wait_for(coro, timeout):
+        nonlocal observed_timeout
+        observed_timeout = timeout
+        return await coro
+
+    mock_agent = MagicMock()
+    mock_agent.astream_events = fake_astream_events
+
+    orchestrator = _make_orchestrator(agent=mock_agent)
+    publisher = _make_publisher()
+
+    with patch("seer.agents.nexus._current_thread_id") as mock_tid, \
+         patch("seer.api.agents.workflow.chat_services.config") as mock_config, \
+         patch("seer.api.agents.workflow.chat_services.asyncio.wait_for", side_effect=fake_wait_for):
+        mock_tid.set = MagicMock(return_value=None)
+        mock_tid.reset = MagicMock()
+        mock_config.nexus_chat_timeout_seconds = 2700
+
+        await orchestrator.stream_with_timeout(
+            {"messages": []},
+            {"configurable": {"thread_id": "t1"}, "recursion_limit": 10},
+            publisher,
+        )
+
+    assert observed_timeout == 2700.0

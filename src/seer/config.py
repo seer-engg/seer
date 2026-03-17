@@ -249,6 +249,14 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=75,
         description="Default maximum agent steps for Nexus chat (LangGraph recursion_limit)"
     )
+    nexus_chat_timeout_seconds: int = Field(
+        default=2700,
+        description="Default timeout for Nexus chat and chat resume requests in seconds",
+    )
+    redis_stream_idle_timeout_ms: int = Field(
+        default=3600000,
+        description="Redis Stream pending-task reclaim timeout in milliseconds for Taskiq workers",
+    )
 
     # ============================================================================
     # Trigger Poller
@@ -575,7 +583,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Qdrant port for Mem0 vector store"
     )
     mem0_collection_name: str = Field(
-        default="nexus_user_memories",
+        default="nexus_user_memories_openai",
         description="Collection name for Mem0 vector store"
     )
     memory_context_injection_enabled: bool = Field(
@@ -609,6 +617,10 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     mem0_embedder_model: str = Field(
         default="text-embedding-3-small",
         description="Embedding model for Mem0 (default: OpenAI text-embedding-3-small)"
+    )
+    mem0_embedding_dims: int = Field(
+        default=1536,
+        description="Embedding dimensions for Mem0 vector store"
     )
 
     @classmethod
