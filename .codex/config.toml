@@ -1,0 +1,5 @@
+
+[mcp_servers.cloudwatch]
+command = "uvx"
+args = ["awslabs.cloudwatch-mcp-server"]
+env = { AWS_PROFILE = "lokesh", AWS_REGION = "us-east-1" }
