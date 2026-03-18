@@ -216,11 +216,17 @@ class DeliveryChannelType(str, Enum):
     """Types of delivery channels for HITL notifications."""
     platform = "platform"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
     gmail = "gmail"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    ntfy = "ntfy"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
 
 
 class GmailDeliveryConfig(StrictModel):
     """Configuration for Gmail delivery channel."""
     recipient_email: str = Field(description="Email address to send HITL form link to")
+
+
+class NtfyDeliveryConfig(StrictModel):
+    """Configuration for Ntfy push notification delivery channel."""
+    topic: Optional[str] = Field(default=None, description="Ntfy topic override (uses default from config if not set)")
 
 
 class HITLDeliveryChannel(StrictModel):
@@ -230,9 +236,11 @@ class HITLDeliveryChannel(StrictModel):
     Supports multiple delivery methods:
     - platform: Default web-based HITL (existing behavior)
     - gmail: Send email with form link via Gmail
+    - ntfy: Push notification via Ntfy (mobile/desktop)
     """
     type: DeliveryChannelType = DeliveryChannelType.platform
     gmail: Optional[GmailDeliveryConfig] = None
+    ntfy: Optional[NtfyDeliveryConfig] = None
 
     @model_validator(mode="after")
     def _validate_channel_config(self) -> "HITLDeliveryChannel":

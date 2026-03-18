@@ -623,6 +623,19 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Embedding dimensions for Mem0 vector store"
     )
 
+    # ============================================================================
+    # Ntfy Push Notification Configuration
+    # ============================================================================
+
+    ntfy_base_url: str = Field(
+        default="https://ntfy.sh",
+        description="Ntfy server base URL"
+    )
+    ntfy_topic: Optional[str] = Field(
+        default=None,
+        description="Ntfy topic for push notifications (e.g., seer-approvals-abc123)"
+    )
+
     @classmethod
     def settings_customise_sources(  # pylint: disable=too-many-positional-arguments  # Reason: Method signature is defined by Pydantic's BaseSettings API and cannot be modified
         cls,

@@ -1,0 +1,39 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "target groceries",
+      "intents": [
+        {
+          "name": "AddGroceriesIntent",
+          "slots": [
+            {
+              "name": "items",
+              "type": "AMAZON.SearchQuery"
+            }
+          ],
+          "samples": [
+            "add {items}",
+            "order {items}",
+            "put {items} in my cart",
+            "add {items} to my cart",
+            "I need {items}",
+            "get me {items}",
+            "buy {items}"
+          ]
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        }
+      ]
+    }
+  }
+}

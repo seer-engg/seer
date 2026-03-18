@@ -103,6 +103,22 @@ async def _send_hitl_notifications(
                     extra={"run_id": run.run_id, "error": str(exc)},
                 )
 
+        if channel_type == "ntfy":
+            from seer.services.notifications import send_ntfy_notification  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+            from seer.config import config as app_config  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+            topic = (channel.get("ntfy") or {}).get("topic")
+            approval_url = f"{app_config.frontend_url}/approvals/{run.run_id}"
+            display = interrupt_data.get("display", [])
+            summary = "\n".join(f"- {d.get('label', '')}: {d.get('value', '')}" for d in display) or "Review required"
+            try:
+                await send_ntfy_notification(
+                    title=interrupt_data.get("title", "Approval Required"),
+                    message=summary, tags=["white_check_mark", "clipboard"],
+                    click_url=approval_url, priority=4, topic=topic,
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught  # Intentional: notifications must not fail workflow
+                logger.exception("Failed to send Ntfy notification for run '%s'", run.run_id, extra={"run_id": run.run_id, "error": str(exc)})
+
         # Platform channel is the default - no action needed here
         # Users can poll GET /runs/{run_id}/interrupt to get HITL data
 
@@ -546,19 +562,7 @@ async def get_workflow_run_interrupt(
     user: User,
     run_id: str,
 ) -> Optional[Dict[str, Any]]:
-    """
-    Get pending HITL interrupt data for a workflow run.
-
-    Args:
-        user: The user requesting interrupt data
-        run_id: Public run ID (run_XXX format)
-
-    Returns:
-        Interrupt data dict if run is interrupted, None otherwise
-
-    Raises:
-        HTTPException: If run is not found or not owned by user
-    """
+    """Get pending HITL interrupt data for a workflow run."""
     from seer.database.workflow_models import parse_run_public_id  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
 
     try:

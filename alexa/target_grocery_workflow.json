@@ -1,0 +1,102 @@
+{
+  "name": "Target Grocery Order",
+  "description": "Voice-triggered grocery ordering from Target with human approval before checkout",
+  "nodes": [
+    {
+      "id": "add_to_cart",
+      "type": "browser",
+      "task": "Go to target.com. For each item in the list, search for it, pick the top result, and add it to cart. After all items are added, go to the cart page. Return a summary of all items added with their names and prices, and the cart total.",
+      "inputs": {
+        "items": "${trigger.items}"
+      },
+      "browser_profile_id": null,
+      "max_steps": 50,
+      "timeout_seconds": 600,
+      "expect_outputs": {
+        "mode": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "items_added": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "price": { "type": "string" },
+                  "quantity": { "type": "integer" }
+                },
+                "required": ["name", "price", "quantity"]
+              }
+            },
+            "cart_total": { "type": "string" },
+            "items_not_found": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "required": ["items_added", "cart_total", "items_not_found"]
+        }
+      }
+    },
+    {
+      "id": "approval",
+      "type": "hitl",
+      "title": "Approve Target Cart",
+      "description": "Review your Target cart before checkout",
+      "display": [
+        {
+          "label": "Cart Total",
+          "value": "${add_to_cart.extracted_data.cart_total}"
+        },
+        {
+          "label": "Items",
+          "value": "${add_to_cart.extracted_data.items_added}"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "approved",
+          "input_type": "boolean",
+          "question": "Approve this cart for checkout?",
+          "required": true,
+          "default_value": true
+        }
+      ],
+      "delivery_channels": [
+        { "type": "ntfy" },
+        { "type": "platform" }
+      ],
+      "timeout_seconds": 3600
+    },
+    {
+      "id": "checkout",
+      "type": "browser",
+      "task": "Go to the Target cart page. If the approval was granted, proceed to checkout and complete the purchase using the saved payment method and default shipping address. If the approval was rejected, clear the cart instead. Return the order confirmation number if checkout succeeded.",
+      "inputs": {
+        "approved": "${approval.approved}",
+        "message": "${approval.message}"
+      },
+      "browser_profile_id": null,
+      "max_steps": 30,
+      "timeout_seconds": 300,
+      "expect_outputs": {
+        "mode": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "order_confirmed": { "type": "boolean" },
+            "order_number": { "type": "string" },
+            "status": { "type": "string" }
+          },
+          "required": ["order_confirmed", "order_number", "status"]
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "source": "add_to_cart", "target": "approval" },
+    { "source": "approval", "target": "checkout" }
+  ],
+  "triggers": []
+}
