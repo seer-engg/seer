@@ -11,8 +11,10 @@ from seer.api.core.middleware.organization import get_membership, get_organizati
 from seer.api.workflows import models as api_models
 from seer.api.workflows import services
 from seer.api.workflows.services.share_template import (
+    GenerateTemplateDescriptionResponse,
     ShareAsTemplateRequest,
     ShareAsTemplateResponse,
+    generate_template_description,
     get_workflow_template_meta,
     share_workflow_as_template,
 )
@@ -494,6 +496,15 @@ async def get_workflow_template(request: Request, workflow_id: str):
 async def share_as_template(request: Request, workflow_id: str, payload: ShareAsTemplateRequest):
     user = _require_user(request)
     return await share_workflow_as_template(user, workflow_id, payload)
+
+
+@router.post(
+    "/workflows/{workflow_id}/generate-template-description",
+    response_model=GenerateTemplateDescriptionResponse,
+)
+async def generate_template_desc(request: Request, workflow_id: str):
+    user = _require_user(request)
+    return await generate_template_description(user, workflow_id)
 
 
 @router.get("/variables", response_model=api_models.GlobalVariableListResponse)
