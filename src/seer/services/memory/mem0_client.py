@@ -149,8 +149,7 @@ def _get_embedding_dims() -> int:
             return 768
         # Default for unknown HuggingFace models
         return 384
-    # OpenAI models use 1536 dims by default
-    return config.embedding_dims
+    return config.mem0_embedding_dims
 
 
 def _build_llm_config() -> dict:
@@ -228,7 +227,7 @@ def _build_embedder_config() -> dict:
     embedder_config: dict = {
         "provider": "openai",
         "config": {
-            "model": config.embedding_model,
+            "model": config.mem0_embedder_model,
         }
     }
     if config.openai_api_key:

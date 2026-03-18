@@ -583,7 +583,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Qdrant port for Mem0 vector store"
     )
     mem0_collection_name: str = Field(
-        default="nexus_user_memories",
+        default="nexus_user_memories_openai",
         description="Collection name for Mem0 vector store"
     )
     memory_context_injection_enabled: bool = Field(
@@ -611,12 +611,16 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Custom base URL for Mem0 LLM (auto-set for openrouter)"
     )
     mem0_embedder_provider: str = Field(
-        default="huggingface",
+        default="openai",
         description="Embedder provider for Mem0: 'openai', 'huggingface', or 'ollama'"
     )
     mem0_embedder_model: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        description="Embedding model for Mem0 (default: HuggingFace sentence-transformers/all-MiniLM-L6-v2)"
+        default="text-embedding-3-small",
+        description="Embedding model for Mem0 (default: OpenAI text-embedding-3-small)"
+    )
+    mem0_embedding_dims: int = Field(
+        default=1536,
+        description="Embedding dimensions for Mem0 vector store"
     )
 
     @classmethod
