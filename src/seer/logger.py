@@ -156,14 +156,14 @@ class SlackHandler(logging.Handler):
     async def _send_slack_notification(self, record: logging.LogRecord) -> None:
         """
         Send a formatted log record to Slack via the Bot API.
-        Main message is sent first, then stack trace (if any) is sent as a thread reply.
+        Main message is sent first, then thread details (if any) are sent as a thread reply.
         This method handles all errors silently and logs to console on failure.
         Uses simple plain text format for maximum fault tolerance.
         """
         try:
             # Format the main message (without stack trace)
             main_message = self._format_slack_main_message(record)
-            stack_trace = self._extract_stack_trace(record)
+            thread_details = self._format_slack_thread_details(record)
 
             # Prepare the API request - use simple text format
             url = "https://slack.com/api/chat.postMessage"
@@ -218,13 +218,13 @@ class SlackHandler(logging.Handler):
             if thread_ts is None:
                 raise last_error or Exception("Failed to send Slack notification")
 
-            # If we have a stack trace, send it as a thread reply
-            if stack_trace:
+            # If we have thread details, send them as a thread reply
+            if thread_details:
                 try:
                     thread_payload = {
                         "channel": self.channel_id,
                         "thread_ts": thread_ts,  # Reply in thread
-                        "text": f"Stack Trace:\n{stack_trace}",
+                        "text": thread_details,
                     }
                     # Send thread reply (don't retry - if it fails, main message is already sent)
                     try:
@@ -233,13 +233,13 @@ class SlackHandler(logging.Handler):
                         result = response.json()
                         if not result.get("ok"):
                             # Silent failure for thread - main message was already sent
-                            self._log_fallback(f"Failed to send stack trace thread: {result.get('error')}", record)
+                            self._log_fallback(f"Failed to send Slack detail thread: {result.get('error')}", record)
                     except Exception as e:
                         # Silent failure for thread - main message was already sent
-                        self._log_fallback(f"Failed to send stack trace thread: {e}", record)
+                        self._log_fallback(f"Failed to send Slack detail thread: {e}", record)
                 except Exception as e:
                     # Silent failure for thread - main message was already sent
-                    self._log_fallback(f"Failed to format stack trace thread: {e}", record)
+                    self._log_fallback(f"Failed to format Slack detail thread: {e}", record)
 
         except Exception as e:
             # Silent failure - log to console only
@@ -248,7 +248,7 @@ class SlackHandler(logging.Handler):
     def _format_slack_main_message(self, record: logging.LogRecord) -> str:
         """
         Format the main log message (without stack trace) for Slack.
-        Stack trace will be sent separately as a thread reply.
+        Extra context and stack trace will be sent separately as a thread reply.
         This is fault-tolerant and avoids complex Block Kit formatting issues.
         """
         try:
@@ -266,17 +266,6 @@ class SlackHandler(logging.Handler):
             if correlation_id:
                 message = f"[{correlation_id[:8]}] {message}"
             parts.append(f"Message: {message}")
-
-            # Extract and include extra fields (same logic as ColoredFormatter)
-            extras = {
-                k: v for k, v in record.__dict__.items()
-                if k not in ColoredFormatter.RESERVED_ATTRS and not k.startswith('_')
-            }
-            if extras:
-                parts.append("")  # Empty line for visual separation
-                parts.append("Extra Context:")
-                for k, v in extras.items():
-                    parts.append(f"  • {k}: {v}")
 
             # Format timestamp
             try:
@@ -299,9 +288,11 @@ class SlackHandler(logging.Handler):
                         exc_value = record.exc_info[1]
                         exc_name = getattr(exc_type, '__name__', str(exc_type))
                         parts.append(f"Exception: {exc_name}: {exc_value}")
-                        parts.append("(Full stack trace in thread)")
                 except Exception:
                     pass
+
+            if self._has_thread_details(record):
+                parts.append("(Additional details in thread)")
 
             # Join all parts
             message_text = "\n".join(parts)
@@ -340,6 +331,45 @@ class SlackHandler(logging.Handler):
             pass
 
         return None
+
+    def _extract_extra_fields(self, record: logging.LogRecord) -> dict[str, object]:
+        """Extract non-standard fields attached to the log record."""
+        return {
+            k: v for k, v in record.__dict__.items()
+            if k not in ColoredFormatter.RESERVED_ATTRS and not k.startswith('_')
+        }
+
+    def _has_thread_details(self, record: logging.LogRecord) -> bool:
+        """Check whether a thread reply should be posted."""
+        return bool(self._extract_extra_fields(record) or self._extract_stack_trace(record))
+
+    def _format_slack_thread_details(self, record: logging.LogRecord) -> Optional[str]:
+        """Format extra context and stack trace for the Slack thread reply."""
+        try:
+            parts = []
+            extras = self._extract_extra_fields(record)
+            stack_trace = self._extract_stack_trace(record)
+
+            if extras:
+                parts.append("Extra Context:")
+                for key, value in extras.items():
+                    parts.append(f"  • {key}: {value}")
+
+            if stack_trace:
+                if parts:
+                    parts.append("")
+                parts.append("Stack Trace:")
+                parts.append(stack_trace)
+
+            if not parts:
+                return None
+
+            thread_text = "\n".join(parts)
+            if len(thread_text) > 8000:
+                thread_text = thread_text[:8000] + "\n... (truncated)"
+            return thread_text
+        except Exception:
+            return None
 
     def _log_fallback(self, message: str, original_record: Optional[logging.LogRecord] = None) -> None:
         """
