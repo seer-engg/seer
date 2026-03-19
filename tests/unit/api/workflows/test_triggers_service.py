@@ -797,6 +797,57 @@ class TestSyncTriggerSubscriptions:
         assert mock_subscription.enabled is True
         mock_subscription.save.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_sync_skip_validation_preserves_provider_connection_id(self, mock_user, mock_workflow):
+        """
+        Regression test: running a draft workflow (skip_validation=True) must not
+        clobber an existing provider_connection_id with None.
+
+        Root cause: line 880 unconditionally overwrote provider_connection_id from
+        the frontend payload, which is empty during draft runs.
+        """
+        from seer.api.workflows.services.triggers import sync_trigger_subscriptions
+
+        # Spec with a gmail trigger that has NO provider_connection_id in provider_config
+        spec = MagicMock()
+        trigger = MagicMock()
+        trigger.id = "gmail_trigger"
+        trigger.key = "poll.gmail.email_received"
+        trigger.filters = {}
+        trigger.provider_config = {}  # frontend doesn't send connection ID on draft run
+        trigger.ui_meta = None
+        spec.triggers = [trigger]
+
+        # Existing subscription WITH a valid provider_connection_id
+        mock_subscription = MagicMock()
+        mock_subscription.id = 45
+        mock_subscription.trigger_id = "gmail_trigger"
+        mock_subscription.trigger_key = "poll.gmail.email_received"
+        mock_subscription.provider_connection_id = 14  # previously set, must survive
+        mock_subscription.enabled = True
+        mock_subscription.webhook_slug = None
+        mock_subscription.form_suffix = None
+        mock_subscription.save = AsyncMock()
+
+        mock_definition = MagicMock()
+        mock_definition.title = "Gmail - New Email"
+        mock_definition.meta.requires_connection = True
+        mock_definition.schemas.filter = None
+
+        with patch("seer.api.workflows.services.triggers.TriggerSubscription") as MockSub:
+            MockSub.filter = MagicMock(return_value=AsyncMock(return_value=[mock_subscription])())
+
+            with patch("seer.api.workflows.services.triggers._load_trigger_definition", return_value=mock_definition):
+                with patch("seer.api.workflows.services.triggers._validate_and_adjust_poll_interval", new_callable=AsyncMock, return_value=(60, None)):
+                    with patch("seer.api.workflows.services.triggers.delete_trigger_subscription", new_callable=AsyncMock):
+                        await sync_trigger_subscriptions(
+                            mock_user, mock_workflow, spec, skip_validation=True
+                        )
+
+        # provider_connection_id must NOT be clobbered to None
+        assert mock_subscription.provider_connection_id == 14
+        mock_subscription.save.assert_called_once()
+
 
 # =============================================================================
 # List Trigger Subscriptions Extended Tests
