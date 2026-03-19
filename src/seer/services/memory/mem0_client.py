@@ -20,6 +20,20 @@ _MEM0_CLIENT: Optional["Memory"] = None  # type: ignore[name-defined]
 _client_lock = threading.Lock()
 
 
+def _disable_mem0_telemetry_store(client: "Memory") -> None:  # type: ignore[name-defined]
+    """
+    Disable Mem0's auxiliary telemetry vector store.
+
+    Mem0 0.1.115 creates an internal `mem0migrations` pgvector collection for
+    anonymous telemetry. In long-lived dev databases that table can be left at a
+    stale embedding dimension, which then poisons the telemetry connection with
+    repeated transaction-aborted errors. The product memory path uses
+    `client.vector_store`, so disabling only the telemetry store is safe.
+    """
+    if hasattr(client, "_telemetry_vector_store"):
+        setattr(client, "_telemetry_vector_store", None)
+
+
 def get_mem0_client() -> Optional["Memory"]:  # type: ignore[name-defined]
     """
     Get or create the singleton Mem0 client.
@@ -61,6 +75,7 @@ def get_mem0_client() -> Optional["Memory"]:  # type: ignore[name-defined]
                 mem0_config["vector_store"]["provider"],
             )
             _MEM0_CLIENT = Memory.from_config(mem0_config)
+            _disable_mem0_telemetry_store(_MEM0_CLIENT)
             logger.info(
                 "Mem0 client initialized successfully with collection=%s",
                 config.mem0_collection_name,

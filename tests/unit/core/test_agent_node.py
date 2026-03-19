@@ -162,6 +162,19 @@ def test_agent_node_invalid_model_raises():
         )
 
 
+def test_agent_node_memory_bank_id_must_be_string():
+    """Test that AgentNode validates memory_bank_id type."""
+    with pytest.raises(ValueError, match="memory_bank_id.*string"):
+        AgentNode(
+            id="invalid_agent",
+            inputs={
+                "model": TEST_AGENT_MODEL,
+                "prompt": "Do something",
+                "memory_bank_id": 123,
+            },
+        )
+
+
 # =============================================================================
 # Type Environment Registration Tests
 # =============================================================================
@@ -636,6 +649,169 @@ async def test_agent_node_json_output_mode():
     assert "json_agent" in result
     assert result["json_agent"]["name"] == "test"
     assert result["json_agent"]["value"] == 42
+
+
+@pytest.mark.asyncio
+async def test_agent_node_injects_memory_context_and_auto_binds_memory_tools():
+    """Test prompt injection and convenience tools for attached memory banks."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    mock_chat_model = MagicMock()
+    memory_access = MagicMock()
+    memory_access.get_prompt_context = AsyncMock(return_value="## User Context (from memory)\n- User prefers Slack")
+    memory_access.add = AsyncMock(return_value={"results": [{"id": "mem_1"}]})
+
+    model_def = ModelDefinition(
+        model_id=TEST_AGENT_MODEL,
+        text_handler=lambda invocation: ("Mock response", {}),
+        chat_model_factory=lambda: mock_chat_model,
+    )
+
+    spec = {
+        "version": "2",
+        "triggers": [{"id": "memory_trigger", "key": "test.memory", "mode": "webhook", "event_schema": {"type": "object"}}],
+        "nodes": [
+            {
+                "id": "memory_agent",
+                "type": "agent",
+                "inputs": {
+                    "model": TEST_AGENT_MODEL,
+                    "prompt": "Answer the user's question",
+                    "memory_bank_id": "mb_123",
+                    "tools": [],
+                },
+                "outputs": {"mode": "text"},
+            }
+        ],
+        "edges": [{"source": "memory_trigger", "target": "memory_agent", "type": "trigger"}],
+    }
+
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = {
+        "messages": [
+            HumanMessage(content="## User Context (from memory)\n- User prefers Slack\n\nAnswer the user's question"),
+            AIMessage(content="Done"),
+        ]
+    }
+
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent) as mock_create_agent:
+        compiled = await _compile_agent_workflow(spec, [model_def])
+        result = await compiled.ainvoke(
+            config=None,
+            context=WorkflowRuntimeContext(user=MagicMock(), memory_access=memory_access),
+            trigger={"trigger_key": "test.memory"},
+        )
+
+    trace = result["_trace_memory_agent"]
+    assert "## User Context" in trace["prompt"]
+    assert "recall_memories" in trace["tools"]
+    assert "remember_fact" in trace["tools"]
+    memory_access.get_prompt_context.assert_awaited_once_with("mb_123", current_query="Answer the user's question")
+    memory_access.add.assert_awaited_once_with(
+        "mb_123",
+        "User: Answer the user's question\n\nAssistant: Done",
+        metadata={"source": "workflow_agent_run", "node_id": "memory_agent"},
+        infer=True,
+    )
+
+    bound_tools = mock_create_agent.call_args.kwargs["tools"]
+    bound_tool_names = [tool.name for tool in bound_tools]
+    assert "recall_memories" in bound_tool_names
+    assert "remember_fact" in bound_tool_names
+
+
+@pytest.mark.asyncio
+async def test_agent_node_skips_auto_persist_when_agent_explicitly_remembers() -> None:
+    """Automatic persistence should not duplicate an explicit remember_fact tool call."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    memory_access = MagicMock()
+    memory_access.get_prompt_context = AsyncMock(return_value="")
+    memory_access.add = AsyncMock(return_value={"results": [{"id": "mem_1"}]})
+
+    model_def = ModelDefinition(
+        model_id=TEST_AGENT_MODEL,
+        text_handler=lambda invocation: ("Mock response", {}),
+        chat_model_factory=lambda: MagicMock(),
+    )
+
+    spec = {
+        "version": "2",
+        "triggers": [{"id": "memory_trigger", "key": "test.memory", "mode": "webhook", "event_schema": {"type": "object"}}],
+        "nodes": [
+            {
+                "id": "memory_agent",
+                "type": "agent",
+                "inputs": {
+                    "model": TEST_AGENT_MODEL,
+                    "prompt": "Remember the user's preference",
+                    "memory_bank_id": "mb_123",
+                    "tools": [],
+                },
+                "outputs": {"mode": "text"},
+            }
+        ],
+        "edges": [{"source": "memory_trigger", "target": "memory_agent", "type": "trigger"}],
+    }
+
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = {
+        "messages": [
+            HumanMessage(content="Remember the user's preference"),
+            AIMessage(
+                content="I'll remember that.",
+                tool_calls=[{"name": "remember_fact", "args": {"content": "User prefers Slack"}, "id": "call_1"}],
+            ),
+            AIMessage(content="I'll remember that."),
+        ]
+    }
+
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+        compiled = await _compile_agent_workflow(spec, [model_def])
+        await compiled.ainvoke(
+            config=None,
+            context=WorkflowRuntimeContext(user=MagicMock(), memory_access=memory_access),
+            trigger={"trigger_key": "test.memory"},
+        )
+
+    memory_access.add.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_agent_node_with_memory_bank_requires_runtime_memory_access():
+    """Test that memory-attached agents fail fast when runtime memory access is missing."""
+    model_def = ModelDefinition(
+        model_id=TEST_AGENT_MODEL,
+        text_handler=lambda invocation: ("Mock response", {}),
+        chat_model_factory=lambda: MagicMock(),
+    )
+
+    spec = {
+        "version": "2",
+        "triggers": [{"id": "memory_trigger", "key": "test.memory", "mode": "webhook", "event_schema": {"type": "object"}}],
+        "nodes": [
+            {
+                "id": "memory_agent",
+                "type": "agent",
+                "inputs": {
+                    "model": TEST_AGENT_MODEL,
+                    "prompt": "Answer the user's question",
+                    "memory_bank_id": "mb_123",
+                    "tools": [],
+                },
+                "outputs": {"mode": "text"},
+            }
+        ],
+        "edges": [{"source": "memory_trigger", "target": "memory_agent", "type": "trigger"}],
+    }
+
+    compiled = await _compile_agent_workflow(spec, [model_def])
+    with pytest.raises(Exception, match="runtime memory access"):
+        await compiled.ainvoke(
+            config=None,
+            context=WorkflowRuntimeContext(user=MagicMock()),
+            trigger={"trigger_key": "test.memory"},
+        )
 
 
 @pytest.mark.asyncio

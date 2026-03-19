@@ -10,6 +10,7 @@ from seer.core.errors import ExecutionError, WorkflowCompilerError
 from seer.database import WorkflowRun, User, WorkflowRunStatus
 from seer.database.models import UserSettings
 from seer.core.runtime.context import WorkflowRuntimeContext
+from seer.services.memory.runtime_adapter import WorkflowMemoryRuntimeAdapter
 
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 
@@ -217,6 +218,7 @@ async def _execute_run(
             per_run_cost_cap_usd=per_run_cost_cap_usd,
             accumulated_cost_usd=0.0,
             organization_id=organization_id,
+            memory_access=WorkflowMemoryRuntimeAdapter(user=user, organization_id=organization_id),
         )
         result = await compiled.ainvoke(
             config=effective_config, context=runtime_context, trigger=trigger_envelope
@@ -409,6 +411,7 @@ async def _execute_resume(
         per_run_cost_cap_usd=per_run_cost_cap_usd,
         accumulated_cost_usd=0.0,
         organization_id=organization_id,
+        memory_access=WorkflowMemoryRuntimeAdapter(user=user, organization_id=organization_id),
     )
 
     # Resume with user responses using LangGraph's Command
