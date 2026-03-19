@@ -2,6 +2,8 @@
 # Reason: Mock handlers require specific function signatures even if not all params are used
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 from seer.core.compiler.emit_langgraph import emit_langgraph
@@ -256,6 +258,51 @@ async def test_for_each_body_tools_use_async_handler() -> None:
     assert result["done"] == "finished"
     # Verify the last iteration's result is in state
     assert result["loop_tool"]["echo"] == "beta-processed"
+
+
+@pytest.mark.asyncio
+async def test_compiled_workflow_passes_config_through_without_langfuse_injection() -> None:
+    runtime = MagicMock()
+    graph = MagicMock()
+    graph.ainvoke = AsyncMock(
+        return_value={
+            "result": "ok",
+            "__internal_secret": "drop-me",
+            "__interrupt__": {"type": "hitl"},
+        }
+    )
+    context = MagicMock()
+    config = {
+        "callbacks": ["existing-callback"],
+        "configurable": {"thread_id": "run_123"},
+    }
+    compiled = CompiledWorkflow(
+        spec=MagicMock(),
+        type_env={},
+        graph=graph,
+        runtime=runtime,
+    )
+
+    with patch.object(CompiledWorkflow, "_load_global_variables", AsyncMock(return_value=None)):
+        result = await compiled.ainvoke(
+            workflow_input={"input": True},
+            config=config,
+            context=context,
+            trigger={"trigger_key": "test.trigger"},
+        )
+
+    runtime.bind_trigger.assert_called_once_with({"trigger_key": "test.trigger"})
+    runtime.bind_context.assert_called_once_with(context)
+    runtime.bind_vars.assert_called_once_with(None)
+    graph.ainvoke.assert_awaited_once_with(
+        {"input": True},
+        config=config,
+        context=context,
+    )
+    assert result == {
+        "result": "ok",
+        "__interrupt__": {"type": "hitl"},
+    }
 
 
 @pytest.mark.asyncio

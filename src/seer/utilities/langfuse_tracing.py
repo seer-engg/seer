@@ -1,13 +1,9 @@
 """
 Langfuse tracing utilities for LangChain/LangGraph integration.
 
-Supports separate Langfuse projects for:
-- Nexus agent tracing
-- Workflow/Compiler tracing
-
-Langfuse v3 Multi-Project Pattern:
-1. Initialize Langfuse clients with full credentials for each project
-2. Create CallbackHandler(public_key=...) to route traces to the correct project
+Langfuse v3 project pattern:
+1. Initialize the Langfuse client with full credentials
+2. Create CallbackHandler(public_key=...) to route traces correctly
 """
 from contextlib import contextmanager
 from enum import Enum
@@ -20,9 +16,8 @@ logger = get_logger(__name__)
 
 
 class LangfuseProject(Enum):
-    """Langfuse project types for separate tracing."""
+    """Langfuse project types for tracing."""
     NEXUS = "nexus"
-    WORKFLOW = "workflow"
 
 
 # Singleton instances per project
@@ -31,30 +26,20 @@ _langfuse_handlers: Dict[LangfuseProject, Any] = {}
 _handlers_initialized: Dict[LangfuseProject, bool] = {}
 
 
-def _get_project_credentials(project: LangfuseProject) -> Tuple[Optional[str], Optional[str]]:
+def _get_project_credentials() -> Tuple[Optional[str], Optional[str]]:
     """
     Get credentials for a specific Langfuse project.
 
     Returns:
         Tuple of (public_key, secret_key) or (None, None) if not configured.
     """
-    if project == LangfuseProject.NEXUS:
-        if not config.is_langfuse_nexus_configured:
-            logger.debug(
-                "Langfuse Nexus project not configured. "
-                "Set LANGFUSE_NEXUS_PUBLIC_KEY and LANGFUSE_NEXUS_SECRET_KEY."
-            )
-            return None, None
-        return config.langfuse_nexus_public_key, config.langfuse_nexus_secret_key
-
-    # WORKFLOW
-    if not config.is_langfuse_workflow_configured:
+    if not config.is_langfuse_nexus_configured:
         logger.debug(
-            "Langfuse Workflow project not configured. "
-            "Set LANGFUSE_WORKFLOW_PUBLIC_KEY and LANGFUSE_WORKFLOW_SECRET_KEY."
+            "Langfuse Nexus project not configured. "
+            "Set LANGFUSE_NEXUS_PUBLIC_KEY and LANGFUSE_NEXUS_SECRET_KEY."
         )
         return None, None
-    return config.langfuse_workflow_public_key, config.langfuse_workflow_secret_key
+    return config.langfuse_nexus_public_key, config.langfuse_nexus_secret_key
 
 
 def _create_langfuse_handler(project: LangfuseProject, public_key: str, secret_key: str) -> Optional[Any]:
@@ -99,12 +84,8 @@ def _get_langfuse_handler(project: LangfuseProject) -> Optional[Any]:
     """
     Get or create Langfuse callback handler for a specific project.
 
-    In Langfuse v3 with multiple projects:
-    1. Initialize Langfuse client with full credentials
-    2. Create CallbackHandler(public_key=...) to route to correct project
-
     Args:
-        project: Which Langfuse project to use (NEXUS or WORKFLOW)
+        project: Which Langfuse project to use.
 
     Returns:
         CallbackHandler instance or None if not configured/available.
@@ -118,7 +99,7 @@ def _get_langfuse_handler(project: LangfuseProject) -> Optional[Any]:
         logger.debug("Langfuse tracing disabled via configuration")
         return None
 
-    public_key, secret_key = _get_project_credentials(project)
+    public_key, secret_key = _get_project_credentials()
     if public_key is None or secret_key is None:
         return None
 
@@ -136,17 +117,6 @@ def get_nexus_langfuse_callbacks() -> List[Any]:
     return [handler] if handler else []
 
 
-def get_workflow_langfuse_callbacks() -> List[Any]:
-    """
-    Get Langfuse callbacks for Workflow/Compiler tracing.
-
-    Returns:
-        List containing Langfuse handler if configured, empty list otherwise.
-    """
-    handler = _get_langfuse_handler(LangfuseProject.WORKFLOW)
-    return [handler] if handler else []
-
-
 def merge_nexus_langfuse_callbacks(config_dict: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Merge Nexus Langfuse callbacks into an existing LangGraph config dictionary.
@@ -158,19 +128,6 @@ def merge_nexus_langfuse_callbacks(config_dict: Optional[Dict[str, Any]]) -> Dic
         Config dictionary with Langfuse callbacks merged in.
     """
     return _merge_callbacks(config_dict, get_nexus_langfuse_callbacks())
-
-
-def merge_workflow_langfuse_callbacks(config_dict: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Merge Workflow Langfuse callbacks into an existing LangGraph config dictionary.
-
-    Args:
-        config_dict: Existing config dictionary (can be None or empty).
-
-    Returns:
-        Config dictionary with Langfuse callbacks merged in.
-    """
-    return _merge_callbacks(config_dict, get_workflow_langfuse_callbacks())
 
 
 def _merge_callbacks(config_dict: Optional[Dict[str, Any]], langfuse_callbacks: List[Any]) -> Dict[str, Any]:

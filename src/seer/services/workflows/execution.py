@@ -14,8 +14,6 @@ from seer.services.memory.runtime_adapter import WorkflowMemoryRuntimeAdapter
 
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 
-
-
 from seer.logger import get_logger
 logger = get_logger(__name__)
 
@@ -221,7 +219,9 @@ async def _execute_run(
             memory_access=WorkflowMemoryRuntimeAdapter(user=user, organization_id=organization_id),
         )
         result = await compiled.ainvoke(
-            config=effective_config, context=runtime_context, trigger=trigger_envelope
+            config=effective_config,
+            context=runtime_context,
+            trigger=trigger_envelope,
         )
 
         # Check for HITL interrupt

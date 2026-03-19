@@ -1150,6 +1150,48 @@ class TestExecuteRun:
             call_kwargs = mock_context_cls.call_args.kwargs
             assert call_kwargs["per_run_cost_cap_usd"] == 5.0  # Default
 
+    async def test_passes_built_config_directly_to_workflow_execution(
+        self, mock_workflow_run, mock_user, mock_compiled_workflow, frozen_time
+    ):
+        """Workflow execution should not inject tracing callbacks."""
+        from seer.services.workflows.execution import _execute_run
+
+        run = mock_workflow_run()
+        compiled = mock_compiled_workflow(result={"output": "success"})
+        config_payload = {
+            "recursion_limit": 25,
+            "configurable": {"thread_id": run.run_id},
+        }
+
+        with patch(
+            "seer.services.workflows.execution.WorkflowRun"
+        ) as mock_run_model, patch(
+            "seer.services.workflows.execution.get_checkpointer",
+            new_callable=AsyncMock,
+        ) as mock_cp, patch(
+            "seer.services.workflows.execution._compile_workflow",
+            new_callable=AsyncMock,
+        ) as mock_compile, patch(
+            "seer.services.workflows.execution.UserSettings"
+        ) as mock_settings:
+            mock_filter = MagicMock()
+            mock_filter.update = AsyncMock()
+            mock_run_model.filter.return_value = mock_filter
+
+            mock_cp.return_value = None
+            mock_compile.return_value = compiled
+
+            mock_settings_instance = MagicMock()
+            mock_settings_instance.preferences = {"per_run_cost_cap_usd": 5.0}
+            mock_settings.get_or_create = AsyncMock(
+                return_value=(mock_settings_instance, False)
+            )
+
+            await _execute_run(run, mock_user, inputs={}, config_payload=config_payload)
+
+            compiled.ainvoke.assert_awaited_once()
+            assert compiled.ainvoke.call_args.kwargs["config"] == config_payload
+
 
 # =============================================================================
 # TestExecuteResume - Resume execution
@@ -1272,6 +1314,40 @@ class TestExecuteResume:
             call_kwargs = mock_filter.update.call_args.kwargs
             assert call_kwargs["status"] == WorkflowRunStatus.SUCCEEDED
             assert call_kwargs["output"] == {"output": "final_result"}
+
+    async def test_passes_built_config_directly_on_resume(
+        self, mock_workflow_run, mock_user, mock_compiled_workflow, frozen_time
+    ):
+        """Resume execution should not inject tracing callbacks."""
+        from seer.services.workflows.execution import _execute_resume
+
+        run = mock_workflow_run(status="interrupted")
+        run.config = {"recursion_limit": 10}
+        compiled = mock_compiled_workflow(result={"output": "resumed"})
+        expected_config = {
+            "recursion_limit": 10,
+            "configurable": {"thread_id": run.run_id},
+        }
+
+        with patch(
+            "seer.services.workflows.execution.WorkflowRun"
+        ) as mock_run_model, patch(
+            "seer.services.workflows.execution.UserSettings"
+        ) as mock_settings:
+            mock_filter = MagicMock()
+            mock_filter.update = AsyncMock()
+            mock_run_model.filter.return_value = mock_filter
+
+            mock_settings_instance = MagicMock()
+            mock_settings_instance.preferences = {"per_run_cost_cap_usd": 5.0}
+            mock_settings.get_or_create = AsyncMock(
+                return_value=(mock_settings_instance, False)
+            )
+
+            await _execute_resume(run, mock_user, compiled, {"decision": True})
+
+            compiled.ainvoke.assert_awaited_once()
+            assert compiled.ainvoke.call_args.kwargs["config"] == expected_config
 
 
 # =============================================================================
