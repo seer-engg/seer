@@ -56,5 +56,15 @@ Never reach "upward." If you need to, extract a shared abstraction into `core/` 
 - PRs target `dev`. Description must include: what changed, why, how to test.
 - After merge to `dev` + CI green → publish to `main`.
 
+## Isolated Development (ISO)
+
+**Setup (first time only):** `git clone https://github.com/seer-engg/iso ~/iso && ~/iso/setup.sh`
+
+When starting any feature, bugfix, or dev work in this repo:
+1. Use the `iso_init_thread` MCP tool to create an isolated thread
+2. Report the thread ID, ports, and worktree path to the user
+3. All work happens in the worktree — never modify the main repo working directory
+4. On completion, remind user to `iso cleanup <id>`
+
 ## Trigger Handlers Must Be Idempotent
 The same event delivered twice must not produce duplicate workflow runs. This is a hard requirement for all trigger implementations in `src/seer/services/workflows/triggers.py` and `src/seer/worker/`.
