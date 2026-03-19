@@ -12,7 +12,6 @@ from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.nodes import NodeRuntime
 from seer.core.runtime.state import INTERNAL_STATE_PREFIX
 from seer.core.schema.models import JsonSchema, WorkflowSpec
-from seer.utilities.langfuse_tracing import merge_workflow_langfuse_callbacks
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,6 @@ class CompiledWorkflow:
         self.runtime.bind_vars(vars_dict)
 
         effective_config = dict(config or {})
-        effective_config = merge_workflow_langfuse_callbacks(effective_config)
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
@@ -53,12 +51,7 @@ class CompiledWorkflow:
         # Use provided input (e.g., Command for resume) or empty dict for fresh start
         graph_input = workflow_input if workflow_input is not None else {}
 
-        # Wrap graph invocation with Langfuse user context for trace attribution
-        # pylint: disable=import-outside-toplevel  # Reason: lazy loading to match module pattern
-        from seer.utilities.langfuse_tracing import langfuse_user_context
-        user_id = context.user.user_id if context and context.user else None
-        with langfuse_user_context(user_id):
-            final_state = await self.graph.ainvoke(graph_input, **invoke_kwargs)
+        final_state = await self.graph.ainvoke(graph_input, **invoke_kwargs)
 
         return {
             key: value
