@@ -104,9 +104,10 @@ class TestCompatibilityRoutes:
         assert response.status_code == 200
         assert response.json()["memory"]["memory"] == "Updated memory"
         await_args = mock_memory_service.update_memory.await_args
-        assert await_args.args[2] == "mem_1"
-        assert await_args.args[3] == "Updated memory"
-        assert await_args.kwargs["metadata"] == {"source": "chat_session"}
+        args, kwargs = await_args
+        assert args[2] == "mem_1"
+        assert kwargs["content"] == "Updated memory"
+        assert kwargs["metadata"] == {"source": "chat_session"}
 
     @patch("seer.api.memory.router.config")
     @patch("seer.api.memory.router.MemoryBankMemoryService")
