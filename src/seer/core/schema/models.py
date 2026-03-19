@@ -10,7 +10,7 @@ JSON payload.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -440,13 +440,13 @@ class AgentNode(NodeBase):
     @model_validator(mode="after")
     def _validate_agent_inputs(self) -> "AgentNode":
         """Validate required inputs and tool format."""
+        inputs = cast(Dict[str, JSONValue], dict(self.inputs))
         required = ["model", "prompt"]
-        missing = [k for k in required if k not in self.inputs]
+        missing = [key for key in required if key not in inputs]
         if missing:
             raise ValueError(f'AgentNode requires {", ".join(missing)} in inputs')
 
-        # pylint: disable-next=no-member  # Reason: Pydantic converts Field to actual Dict at runtime
-        model = self.inputs.get("model")
+        model = inputs.get("model")
         if model not in DEFAULT_AGENT_MODEL_IDS:
             allowed = ", ".join(sorted(DEFAULT_AGENT_MODEL_IDS))
             raise ValueError(
@@ -454,27 +454,34 @@ class AgentNode(NodeBase):
                 f"Allowed models: {allowed}"
             )
 
-        # Validate tools format if provided
-        # pylint: disable-next=no-member  # Reason: Pydantic converts Field to actual Dict at runtime
-        tools = self.inputs.get("tools", [])
+        self._validate_tool_specs(inputs.get("tools", []))
+        self._validate_max_iterations(inputs.get("max_iterations"))
+
+        memory_bank_id = inputs.get("memory_bank_id")
+        if memory_bank_id is not None and not isinstance(memory_bank_id, str):
+            raise ValueError("AgentNode 'memory_bank_id' must be a string")
+
+        return self
+
+    @staticmethod
+    def _validate_tool_specs(tools: JSONValue) -> None:
+        """Validate agent tool configuration."""
         if not isinstance(tools, list):
             raise ValueError("AgentNode 'tools' must be a list")
 
-        for i, tool in enumerate(tools):
+        for index, tool in enumerate(tools):
             if isinstance(tool, dict):
                 if "name" not in tool:
-                    raise ValueError(f"AgentNode tool at index {i} must have 'name' field")
-            elif not isinstance(tool, str):
-                raise ValueError(f"AgentNode tool at index {i} must be string or {{name, connection_id}} object")
+                    raise ValueError(f"AgentNode tool at index {index} must have 'name' field")
+                continue
+            if not isinstance(tool, str):
+                raise ValueError(f"AgentNode tool at index {index} must be string or {{name, connection_id}} object")
 
-        # Validate max_iterations if provided
-        # pylint: disable-next=no-member  # Reason: Pydantic converts Field to actual Dict at runtime
-        max_iterations = self.inputs.get("max_iterations")
-        if max_iterations is not None:
-            if not isinstance(max_iterations, int) or max_iterations < 1:
-                raise ValueError("AgentNode 'max_iterations' must be a positive integer")
-
-        return self
+    @staticmethod
+    def _validate_max_iterations(max_iterations: JSONValue) -> None:
+        """Validate the optional max_iterations input."""
+        if max_iterations is not None and (not isinstance(max_iterations, int) or max_iterations < 1):
+            raise ValueError("AgentNode 'max_iterations' must be a positive integer")
 
 
 Node = Annotated[

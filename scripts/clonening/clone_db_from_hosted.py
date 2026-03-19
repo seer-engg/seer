@@ -25,7 +25,7 @@ Examples:
     uv run scripts/clone_db_from_hosted.py --source-env dev
 
     # Clone main and drop existing local data
-    uv run scripts/clone_db_from_hosted.py --source-env main --drop-existing --yes
+    uv run scripts/clonening/clone_db_from_hosted.py --source-env main --drop-existing --yes
 
     # Exclude large tables
     uv run scripts/clone_db_from_hosted.py --source-env dev \\

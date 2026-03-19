@@ -82,6 +82,7 @@ NODE_TYPE_DESCRIPTORS = api_models.NodeTypeResponse(
                 api_models.NodeFieldDescriptor(name="id", kind="string", required=True),
                 api_models.NodeFieldDescriptor(name="model", kind="model_select", required=True),
                 api_models.NodeFieldDescriptor(name="prompt", kind="textarea", required=True),
+                api_models.NodeFieldDescriptor(name="memory_bank_id", kind="memory_bank_select"),
                 api_models.NodeFieldDescriptor(name="tools", kind="tools_list"),
                 api_models.NodeFieldDescriptor(name="max_iterations", kind="number"),
                 api_models.NodeFieldDescriptor(name="outputs", kind="output_contract"),
