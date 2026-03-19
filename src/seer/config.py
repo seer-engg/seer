@@ -156,6 +156,15 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     )
 
     # ============================================================================
+    # Agent Configuration
+    # ============================================================================
+
+    agent_tool_output_max_chars: int = Field(
+        default=50000,
+        description="Max characters per tool output in workflow agent nodes. Prevents context overflow on large API responses.",
+    )
+
+    # ============================================================================
     # Session Configuration (for OAuth flows)
     # ============================================================================
 
