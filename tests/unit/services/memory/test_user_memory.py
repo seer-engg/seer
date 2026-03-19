@@ -1,437 +1,169 @@
-"""
-Unit tests for UserMemoryService.
+"""Unit tests for the default-bank compatibility wrapper."""
 
-Tests the memory service layer with mocked Mem0 client to verify:
-- Memory add/search/get operations
-- Context formatting for prompt injection
-- Graceful degradation when service unavailable
-- Filter application
-"""
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unittest.mock import MagicMock, patch
 
 from seer.services.memory.user_memory import UserMemoryService, get_user_memory_service
 
 
-@pytest.fixture
-def mock_mem0_client():
-    """Create a mock Mem0 client."""
-    client = MagicMock()
-    client.embedding_model = MagicMock()
-    client.embedding_model.embed = MagicMock(return_value=[0.1, 0.2, 0.3])
-    client.add = MagicMock(return_value={
-        "results": [
-            {"id": "mem_1", "memory": "User prefers Slack notifications"},
-            {"id": "mem_2", "memory": "User's company uses PostgreSQL"},
-        ]
-    })
-    client.search = MagicMock(return_value={
-        "results": [
-            {"id": "mem_1", "memory": "User prefers Slack notifications", "score": 0.95},
-            {"id": "mem_2", "memory": "User uses Gmail for work", "score": 0.82},
-        ]
-    })
-    client.get_all = MagicMock(return_value={
-        "results": [
-            {"id": "mem_1", "memory": "User prefers Slack"},
-            {"id": "mem_2", "memory": "User uses PostgreSQL"},
-            {"id": "mem_3", "memory": "User likes dark mode"},
-        ]
-    })
-    client.delete = MagicMock()
-    client.get = MagicMock(return_value={
-        "id": "mem_1",
-        "memory": "User prefers Slack",
-        "user_id": "user_123",
-        "created_at": "2026-03-01T00:00:00+00:00",
-        "metadata": {
-          "source": "chat_session",
-          "session_id": 1,
-        },
-    })
-    client._update_memory = MagicMock()
-    return client
+pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def memory_service(mock_mem0_client):
-    """Create a UserMemoryService with mocked client."""
+def resolved_user():
+    user = MagicMock()
+    user.user_id = "user_123"
+    return user
+
+
+@pytest.fixture
+def resolved_bank():
+    bank = MagicMock()
+    bank.public_id = "mb_1"
+    return bank
+
+
+@pytest.fixture
+def memory_service(resolved_user, resolved_bank):
     service = UserMemoryService()
-    service._client = mock_mem0_client
+    service._client = MagicMock()
+    service._resolve_default_bank = AsyncMock(return_value=(resolved_user, resolved_bank))
+    service._bank_memory_service = MagicMock()
+    service._bank_memory_service.is_available = True
     return service
 
 
-class TestUserMemoryServiceBasics:
-    """Test basic service operations."""
-
-    @pytest.mark.unit
-    async def test_is_available_when_enabled(self, memory_service):
-        """Service should report available when enabled with client."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-            assert memory_service.is_available is True
-
-    @pytest.mark.unit
-    async def test_is_available_when_disabled(self, memory_service):
-        """Service should report unavailable when disabled."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = False
-            assert memory_service.is_available is False
-
-    @pytest.mark.unit
-    async def test_is_available_when_no_client(self):
-        """Service should report unavailable when client is None."""
-        service = UserMemoryService()
-        service._client = None
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-            with patch("seer.services.memory.user_memory.get_mem0_client", return_value=None):
-                assert service.is_available is False
-
-
-class TestAddMemory:
-    """Test memory addition."""
-
-    @pytest.mark.unit
-    async def test_add_memory_success(self, memory_service, mock_mem0_client):
-        """Should add memory with metadata."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-
-            result = await memory_service.add_memory(
-                user_id="user_123",
-                content="I prefer using Python for automation",
-                metadata={"session_id": 42},
-            )
-
-            assert result is not None
-            assert "results" in result
-            mock_mem0_client.add.assert_called_once()
-
-            # Verify call arguments
-            call_args = mock_mem0_client.add.call_args
-            assert call_args[0][0] == "I prefer using Python for automation"
-            assert call_args[1]["user_id"] == "user_123"
-            assert "added_at" in call_args[1]["metadata"]
-            assert call_args[1]["metadata"]["session_id"] == 42
-
-    @pytest.mark.unit
-    async def test_add_memory_when_disabled(self, memory_service):
-        """Should return None when memory disabled."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = False
-
-            result = await memory_service.add_memory(
-                user_id="user_123",
-                content="Test content",
-            )
-
-            assert result is None
-
-    @pytest.mark.unit
-    async def test_add_memory_handles_exception(self, memory_service, mock_mem0_client):
-        """Should handle exceptions gracefully."""
-        mock_mem0_client.add.side_effect = Exception("Connection failed")
-
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-
-            result = await memory_service.add_memory(
-                user_id="user_123",
-                content="Test content",
-            )
-
-            # Should not raise, should return None
-            assert result is None
-
-    @pytest.mark.unit
-    async def test_create_manual_memory_stores_verbatim(self, memory_service, mock_mem0_client):
-        """Should create a raw manual memory without inference."""
-        mock_mem0_client.add.return_value = {
-            "results": [{"id": "mem_manual"}]
-        }
-        mock_mem0_client.get.return_value = {
-            "id": "mem_manual",
-            "memory": "Remember that I prefer concise answers.",
-            "user_id": "user_123",
-            "created_at": "2026-03-01T00:00:00+00:00",
-            "metadata": {"source": "manual"},
-        }
-
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-
-            result = await memory_service.create_manual_memory(
-                user_id="user_123",
-                content="Remember that I prefer concise answers.",
-            )
-
-            assert result is not None
-            mock_mem0_client.add.assert_called_once()
-            call_args = mock_mem0_client.add.call_args
-            assert call_args[1]["infer"] is False
-            assert call_args[1]["metadata"]["source"] == "manual"
-
-
-class TestSearchMemory:
-    """Test memory search."""
-
-    @pytest.mark.unit
-    async def test_search_success(self, memory_service, mock_mem0_client):
-        """Should search memories and return results."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-
-            results = await memory_service.search(
-                user_id="user_123",
-                query="notification preferences",
-                limit=5,
-            )
-
-            assert len(results) == 2
-            assert results[0]["memory"] == "User prefers Slack notifications"
-            mock_mem0_client.search.assert_called_once()
-
-    @pytest.mark.unit
-    async def test_search_when_disabled(self, memory_service):
-        """Should return empty list when disabled."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = False
-
-            results = await memory_service.search(
-                user_id="user_123",
-                query="test query",
-            )
-
-            assert results == []
-
-    @pytest.mark.unit
-    async def test_search_with_filters(self, memory_service, mock_mem0_client):
-        """Should apply metadata filters to results."""
-        # Add session_id to some results
-        mock_mem0_client.search.return_value = {
-            "results": [
-                {"id": "1", "memory": "Memory 1", "metadata": {"session_id": 1}},
-                {"id": "2", "memory": "Memory 2", "metadata": {}},
-                {"id": "3", "memory": "Memory 3", "metadata": {"session_id": 2}},
-            ]
-        }
-
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-
-            results = await memory_service.search(
-                user_id="user_123",
-                query="test",
-                filters={"has_session_id": True},
-            )
-
-            # Should only return memories with session_id
-            assert len(results) == 2
-            assert all(m.get("metadata", {}).get("session_id") for m in results)
-
-
-class TestGetAll:
-    """Test getting all memories."""
-
-    @pytest.mark.unit
-    async def test_get_all_success(self, memory_service, mock_mem0_client):
-        """Should get all memories for user."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-
-            results = await memory_service.get_all(user_id="user_123")
-
-            assert len(results) == 3
-            mock_mem0_client.get_all.assert_called_once_with(user_id="user_123")
-
-    @pytest.mark.unit
-    async def test_get_all_when_disabled(self, memory_service):
-        """Should return empty list when disabled."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = False
-
-            results = await memory_service.get_all(user_id="user_123")
-
-            assert results == []
-
-
-class TestDeleteMemory:
-    """Test memory deletion."""
-
-    @pytest.mark.unit
-    async def test_delete_memory_success(self, memory_service, mock_mem0_client):
-        """Should delete memory by ID."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-
-            result = await memory_service.delete_memory("mem_123")
-
-            assert result is True
-            mock_mem0_client.delete.assert_called_once_with("mem_123")
-
-    @pytest.mark.unit
-    async def test_delete_memory_when_disabled(self, memory_service):
-        """Should return False when disabled."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = False
-
-            result = await memory_service.delete_memory("mem_123")
-
-            assert result is False
-
-
-class TestUpdateMemory:
-    """Test memory updates."""
-
-    @pytest.mark.unit
-    async def test_update_memory_preserves_existing_metadata(self, memory_service, mock_mem0_client):
-        """Should preserve metadata while updating text."""
-        updated_memory = {
-            "id": "mem_1",
-            "memory": "Updated preference",
-            "user_id": "user_123",
-            "created_at": "2026-03-01T00:00:00+00:00",
-            "updated_at": "2026-03-02T00:00:00+00:00",
-            "metadata": {
-                "source": "chat_session",
-                "session_id": 1,
-                "edited_at": "2026-03-02T00:00:00+00:00",
-            },
-        }
-        mock_mem0_client.get.side_effect = [
-            {
-                "id": "mem_1",
-                "memory": "Original preference",
-                "user_id": "user_123",
-                "created_at": "2026-03-01T00:00:00+00:00",
-                "metadata": {
-                    "source": "chat_session",
-                    "session_id": 1,
-                },
-            },
-            updated_memory,
-        ]
-
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-
-            result = await memory_service.update_memory("mem_1", "Updated preference")
-
-            assert result == updated_memory
-            mock_mem0_client._update_memory.assert_called_once()
-            metadata = mock_mem0_client._update_memory.call_args.kwargs["metadata"]
-            assert metadata["source"] == "chat_session"
-            assert metadata["session_id"] == 1
-            assert "edited_at" in metadata
-
-    @pytest.mark.unit
-    async def test_update_memory_returns_none_when_missing(self, memory_service, mock_mem0_client):
-        """Should return None if the target memory does not exist."""
-        mock_mem0_client.get.return_value = None
-
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-
-            result = await memory_service.update_memory("missing", "Updated preference")
-
-            assert result is None
-            mock_mem0_client._update_memory.assert_not_called()
-
-
-class TestContextForPrompt:
-    """Test context formatting for prompt injection."""
-
-    @pytest.mark.unit
-    async def test_get_context_with_query(self, memory_service, mock_mem0_client):
-        """Should search with query and format results."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-            mock_config.memory_context_injection_enabled = True
-            mock_config.memory_context_max_memories = 10
-
-            context = await memory_service.get_context_for_prompt(
-                user_id="user_123",
-                current_query="How do I set up notifications?",
-            )
-
-            assert "## User Context" in context
-            assert "User prefers Slack notifications" in context
-            mock_mem0_client.search.assert_called_once()
-
-    @pytest.mark.unit
-    async def test_get_context_without_query(self, memory_service, mock_mem0_client):
-        """Should get recent memories when no query provided."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-            mock_config.memory_context_injection_enabled = True
-            mock_config.memory_context_max_memories = 10
-
-            context = await memory_service.get_context_for_prompt(
-                user_id="user_123",
-                current_query="",
-            )
-
-            assert "## User Context" in context
-            mock_mem0_client.get_all.assert_called_once()
-
-    @pytest.mark.unit
-    async def test_get_context_when_injection_disabled(self, memory_service):
-        """Should return empty string when injection disabled."""
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-            mock_config.memory_context_injection_enabled = False
-
-            context = await memory_service.get_context_for_prompt(
-                user_id="user_123",
-                current_query="test",
-            )
-
-            assert context == ""
-
-    @pytest.mark.unit
-    async def test_get_context_when_no_memories(self, memory_service, mock_mem0_client):
-        """Should return empty string when no memories found."""
-        mock_mem0_client.search.return_value = {"results": []}
-
-        with patch("seer.services.memory.user_memory.config") as mock_config:
-            mock_config.memory_enabled = True
-            mock_config.memory_context_injection_enabled = True
-            mock_config.memory_context_max_memories = 10
-
-            context = await memory_service.get_context_for_prompt(
-                user_id="user_123",
-                current_query="test",
-            )
-
-            assert context == ""
-
-    @pytest.mark.unit
-    async def test_format_truncates_long_memories(self, memory_service):
-        """Should truncate very long memory text."""
-        long_text = "x" * 300  # 300 chars
-        memories = [{"memory": long_text}]
-
-        formatted = memory_service._format_memories_for_prompt(memories)
-
-        # Should be truncated to ~200 chars + "..."
-        assert "..." in formatted
-        # The full 300-char string should not appear in output
-        assert long_text not in formatted
+class TestUserMemoryService:
+    async def test_is_available_delegates_to_bank_service(self, memory_service):
+        assert memory_service.is_available is True
+        memory_service._bank_memory_service.is_available = False
+        assert memory_service.is_available is False
+
+    async def test_add_memory_delegates_to_default_bank(self, memory_service, resolved_user, resolved_bank):
+        memory_service._bank_memory_service.add_memory = AsyncMock(return_value={"results": [{"id": "mem_1"}]})
+
+        result = await memory_service.add_memory(
+            user_id="user_123",
+            content="Remember this",
+            metadata={"session_id": 42},
+            infer=False,
+        )
+
+        assert result == {"results": [{"id": "mem_1"}]}
+        memory_service._resolve_default_bank.assert_awaited_once_with("user_123")
+        memory_service._bank_memory_service.add_memory.assert_awaited_once_with(
+            resolved_user,
+            resolved_bank,
+            content="Remember this",
+            metadata={"session_id": 42},
+            infer=False,
+        )
+
+    async def test_search_delegates_to_default_bank(self, memory_service, resolved_user, resolved_bank):
+        memories = [{"id": "mem_1", "memory": "User prefers Slack"}]
+        memory_service._bank_memory_service.search = AsyncMock(return_value=memories)
+
+        result = await memory_service.search("user_123", "slack", limit=3, filters={"workflow_id": "wf_1"})
+
+        assert result == memories
+        memory_service._bank_memory_service.search.assert_awaited_once_with(
+            resolved_user,
+            resolved_bank,
+            query="slack",
+            limit=3,
+            filters={"workflow_id": "wf_1"},
+        )
+
+    async def test_get_all_delegates_to_default_bank(self, memory_service, resolved_user, resolved_bank):
+        memories = [{"id": "mem_1"}]
+        memory_service._bank_memory_service.get_all = AsyncMock(return_value=memories)
+
+        result = await memory_service.get_all("user_123", filters={"source": "manual"})
+
+        assert result == memories
+        memory_service._bank_memory_service.get_all.assert_awaited_once_with(
+            resolved_user,
+            resolved_bank,
+            filters={"source": "manual"},
+        )
+
+    async def test_get_memory_with_user_id_is_bank_scoped(self, memory_service, resolved_user, resolved_bank):
+        memory = {"id": "mem_1", "user_id": "user_123"}
+        memory_service._bank_memory_service.get_memory = AsyncMock(return_value=memory)
+
+        result = await memory_service.get_memory("mem_1", user_id="user_123")
+
+        assert result == memory
+        memory_service._bank_memory_service.get_memory.assert_awaited_once_with(resolved_user, resolved_bank, "mem_1")
+
+    async def test_get_memory_without_user_id_uses_raw_client(self, memory_service):
+        memory_service._client.get.return_value = {"id": "mem_1"}
+
+        result = await memory_service.get_memory("mem_1")
+
+        assert result == {"id": "mem_1"}
+        memory_service._resolve_default_bank.assert_not_awaited()
+
+    async def test_update_memory_with_user_id_delegates(self, memory_service, resolved_user, resolved_bank):
+        updated = {"id": "mem_1", "memory": "Updated"}
+        memory_service._bank_memory_service.update_memory = AsyncMock(return_value=updated)
+
+        result = await memory_service.update_memory("mem_1", "Updated", metadata={"source": "manual"}, user_id="user_123")
+
+        assert result == updated
+        memory_service._bank_memory_service.update_memory.assert_awaited_once_with(
+            resolved_user,
+            resolved_bank,
+            "mem_1",
+            content="Updated",
+            metadata={"source": "manual"},
+        )
+
+    async def test_delete_memory_with_user_id_delegates(self, memory_service, resolved_user, resolved_bank):
+        memory_service._bank_memory_service.delete_memory = AsyncMock(return_value=True)
+
+        result = await memory_service.delete_memory("mem_1", user_id="user_123")
+
+        assert result is True
+        memory_service._bank_memory_service.delete_memory.assert_awaited_once_with(resolved_user, resolved_bank, "mem_1")
+
+    async def test_get_context_for_prompt_delegates(self, memory_service, resolved_user, resolved_bank):
+        memory_service._bank_memory_service.get_context_for_prompt = AsyncMock(return_value="## User Context")
+
+        result = await memory_service.get_context_for_prompt("user_123", current_query="notifications", max_memories=7)
+
+        assert result == "## User Context"
+        memory_service._bank_memory_service.get_context_for_prompt.assert_awaited_once_with(
+            resolved_user,
+            resolved_bank,
+            current_query="notifications",
+            max_memories=7,
+        )
 
 
 class TestSingleton:
-    """Test singleton behavior."""
-
-    @pytest.mark.unit
     def test_get_user_memory_service_returns_same_instance(self):
-        """Should return the same service instance."""
-        # Reset singleton
         import seer.services.memory.user_memory as module
-        module._service_instance = None
 
-        service1 = get_user_memory_service()
-        service2 = get_user_memory_service()
+        module._SERVICE_INSTANCE = None
+        service_one = get_user_memory_service()
+        service_two = get_user_memory_service()
 
-        assert service1 is service2
+        assert service_one is service_two
+
+
+class TestResolveDefaultBank:
+    @pytest.mark.asyncio
+    async def test_resolve_default_bank_looks_up_user_and_bank(self):
+        service = UserMemoryService()
+        fake_user = MagicMock()
+        fake_user.user_id = "user_123"
+        fake_bank = MagicMock()
+
+        with patch("seer.services.memory.user_memory.User.get_or_none", AsyncMock(return_value=fake_user)), \
+             patch.object(service._bank_service, "get_or_create_default_bank", AsyncMock(return_value=fake_bank)):
+            user, bank = await service._resolve_default_bank("user_123")
+
+        assert user is fake_user
+        assert bank is fake_bank

@@ -15,6 +15,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from seer.core.registry.model_registry import ModelDefinition
+from seer.core.runtime.context import WorkflowRuntimeContext
 
 from .conftest import (
     compile_workflow,
@@ -503,6 +504,52 @@ async def test_execute_workflow_with_agent_json_output() -> None:
 
     # Verify downstream access to JSON fields
     assert "Test Name" in call_tracker
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_with_agent_memory_bank_attachment() -> None:
+    """Test attached agent memory wiring in a compiled workflow execution."""
+    model_def = ModelDefinition(
+        model_id="openai/gpt-oss-120b",
+        chat_model_factory=lambda: MagicMock(),
+    )
+
+    spec = {
+        "version": "2",
+        "triggers": [simple_trigger_spec()],
+        "nodes": [
+            {
+                "id": "generate",
+                "type": "agent",
+                "inputs": {
+                    "model": "openai/gpt-oss-120b",
+                    "prompt": "Answer: ${test_trigger.message}",
+                    "memory_bank_id": "mb_123",
+                },
+                "outputs": {"mode": "text"},
+            }
+        ],
+        "edges": [{"source": "test_trigger", "target": "generate", "type": "trigger"}],
+    }
+
+    compiled = await compile_workflow(spec, model_defs=[model_def])
+    trigger_envelope = {"trigger_id": "test_trigger", "trigger_key": "test.trigger", "message": "test input"}
+
+    memory_access = MagicMock()
+    memory_access.get_prompt_context = AsyncMock(return_value="## User Context (from memory)\n- Prefers Slack")
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = {"messages": [AIMessage(content="Generated text response")]}
+
+    with patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent):
+        result = await compiled.ainvoke(
+            config=None,
+            context=WorkflowRuntimeContext(user=MagicMock(), memory_access=memory_access),
+            trigger=trigger_envelope,
+        )
+
+    assert result["generate"] == "Generated text response"
+    assert "## User Context" in result["_trace_generate"]["prompt"]
+    memory_access.get_prompt_context.assert_awaited_once_with("mb_123", current_query="Answer: test input")
 
 
 # =============================================================================

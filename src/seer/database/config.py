@@ -84,6 +84,7 @@ TORTOISE_ORM: Dict[str, Any] = {
                 "seer.database.subscription_models",
                 "seer.database.usage_models",
                 "seer.database.knowledge_models",
+                "seer.database.memory_models",
                 "seer.database.template_models",
                 "seer.database.overage_models",
                 "seer.database.profile_models",
