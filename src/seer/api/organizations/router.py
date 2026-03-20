@@ -89,6 +89,7 @@ from seer.services.organization_service import (
     get_user_organizations,
     switch_user_organization,
 )
+from seer.services.collaboration import CollaborationEventType, publish_collaboration_event
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
@@ -118,6 +119,27 @@ def _require_role(membership: OrganizationMembership, allowed_roles: List[Organi
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Requires one of roles: {[r.value for r in allowed_roles]}",
         )
+
+
+async def _publish_org_event(
+    *,
+    request: Request,
+    organization_id: int,
+    event_type: CollaborationEventType,
+    resource_type: str,
+    actor: User | None,
+    resource_id: str | None = None,
+    payload: dict | None = None,
+) -> None:
+    await publish_collaboration_event(
+        organization_id=organization_id,
+        event_type=event_type,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        actor=actor,
+        payload=payload,
+        correlation_id=getattr(request.state, "correlation_id", None),
+    )
 
 
 def _require_owner(membership: OrganizationMembership) -> None:
@@ -336,6 +358,16 @@ async def convert_org_to_team(
             status=400,
         )
 
+    await _publish_org_event(
+        request=request,
+        organization_id=updated_org.id,
+        event_type=CollaborationEventType.ORGANIZATION_UPDATED,
+        resource_type="organization",
+        resource_id=str(updated_org.id),
+        actor=_require_user(request),
+        payload={"name": updated_org.name, "type": updated_org.type.value},
+    )
+
     return OrganizationResponse(
         id=updated_org.id,
         name=updated_org.name,
@@ -372,6 +404,15 @@ async def update_organization(
         org.settings.update(body.settings)
 
     await org.save()
+    await _publish_org_event(
+        request=request,
+        organization_id=org.id,
+        event_type=CollaborationEventType.ORGANIZATION_UPDATED,
+        resource_type="organization",
+        resource_id=str(org.id),
+        actor=_require_user(request),
+        payload={"name": org.name, "settings": body.settings or {}},
+    )
 
     return OrganizationResponse(
         id=org.id,
@@ -469,6 +510,15 @@ async def update_member_role(
     await target_membership.save()
 
     await target_membership.fetch_related("user")
+    await _publish_org_event(
+        request=request,
+        organization_id=org.id,
+        event_type=CollaborationEventType.MEMBER_ROLE_UPDATED,
+        resource_type="member",
+        resource_id=str(target_membership.user_id),
+        actor=_require_user(request),
+        payload={"role": target_membership.role.value},
+    )
 
     return MemberResponse(
         user_id=target_membership.user.id,
@@ -517,6 +567,15 @@ async def remove_member(
     # Soft delete - set status to suspended
     target_membership.status = MembershipStatus.SUSPENDED
     await target_membership.save()
+    await _publish_org_event(
+        request=request,
+        organization_id=org.id,
+        event_type=CollaborationEventType.MEMBER_REMOVED,
+        resource_type="member",
+        resource_id=str(user_id),
+        actor=_require_user(request),
+        payload={"status": target_membership.status.value},
+    )
 
 
 # =============================================================================
@@ -638,6 +697,15 @@ async def create_invitation(
         invited_by_name=inviter_name,
         role=body.role.value,
         invite_url=invite_url,
+    )
+    await _publish_org_event(
+        request=request,
+        organization_id=org.id,
+        event_type=CollaborationEventType.INVITATION_CREATED,
+        resource_type="invitation",
+        resource_id=str(invitation.id),
+        actor=user,
+        payload={"email": invitation.email, "role": invitation.role.value},
     )
 
     return InvitationResponse(
@@ -810,6 +878,25 @@ async def accept_invitation(
             role=invitation.role.value,
         )
 
+    await _publish_org_event(
+        request=request,
+        organization_id=invitation.organization.id,
+        event_type=CollaborationEventType.INVITATION_ACCEPTED,
+        resource_type="invitation",
+        resource_id=str(invitation.id),
+        actor=user,
+        payload={"email": invitation.email, "role": invitation.role.value},
+    )
+    await _publish_org_event(
+        request=request,
+        organization_id=invitation.organization.id,
+        event_type=CollaborationEventType.MEMBER_ADDED,
+        resource_type="member",
+        resource_id=str(user.id),
+        actor=user,
+        payload={"role": membership.role.value, "email": user.email},
+    )
+
     org_response = OrganizationWithRoleResponse(
         id=invitation.organization.id,
         name=invitation.organization.name,
@@ -853,6 +940,15 @@ async def revoke_invitation(
 
     invitation.status = InvitationStatus.REVOKED
     await invitation.save()
+    await _publish_org_event(
+        request=request,
+        organization_id=org.id,
+        event_type=CollaborationEventType.INVITATION_REVOKED,
+        resource_type="invitation",
+        resource_id=str(invitation.id),
+        actor=_require_user(request),
+        payload={"email": invitation.email},
+    )
 
 
 # =============================================================================
@@ -1052,6 +1148,15 @@ async def share_integration(
     # Share the connection
     connection.shared_with_organization = org
     await connection.save()
+    await _publish_org_event(
+        request=request,
+        organization_id=org.id,
+        event_type=CollaborationEventType.INTEGRATION_SHARED,
+        resource_type="integration",
+        resource_id=str(connection.id),
+        actor=user,
+        payload={"provider": connection.provider},
+    )
 
     return ShareIntegrationResponse(
         integration=IntegrationResponse(
@@ -1116,6 +1221,15 @@ async def unshare_integration(
     # Unshare the connection
     connection.shared_with_organization = None
     await connection.save()
+    await _publish_org_event(
+        request=request,
+        organization_id=org.id,
+        event_type=CollaborationEventType.INTEGRATION_UNSHARED,
+        resource_type="integration",
+        resource_id=str(connection.id),
+        actor=user,
+        payload={"provider": connection.provider},
+    )
 
 
 # =============================================================================
@@ -1200,6 +1314,15 @@ async def request_workflow_approval(
             organization_name=org.name,
             review_url=review_url,
         )
+    await _publish_org_event(
+        request=request,
+        organization_id=org.id,
+        event_type=CollaborationEventType.APPROVAL_REQUESTED,
+        resource_type="workflow",
+        resource_id=workflow.workflow_id if hasattr(workflow, "workflow_id") else str(workflow.id),
+        actor=user,
+        payload={"approval_id": approval.id, "workflow_name": workflow.name},
+    )
 
     return RequestApprovalResponse(
         approval=WorkflowApprovalResponse(
@@ -1326,6 +1449,15 @@ async def review_workflow_approval(
     # Update workflow approval status
     approval.workflow.approval_status = body.status.value
     await approval.workflow.save()
+    await _publish_org_event(
+        request=request,
+        organization_id=org.id,
+        event_type=CollaborationEventType.APPROVAL_REVIEWED,
+        resource_type="workflow",
+        resource_id=approval.workflow.workflow_id if hasattr(approval.workflow, "workflow_id") else str(approval.workflow.id),
+        actor=user,
+        payload={"approval_id": approval.id, "status": body.status.value},
+    )
 
     return WorkflowApprovalResponse(
         id=approval.id,

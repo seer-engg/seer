@@ -95,7 +95,7 @@ async def _update_draft_version(
         _raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Cannot modify non-draft version",
-            detail="Only DRAFT versions can be edited",
+            detail="Only  DRAFT versions can be edited",
             status=400,
         )
 
@@ -164,17 +164,13 @@ async def _can_view_workflow(  # pylint: disable=too-many-return-statements  # R
     # Get visibility (default to TEAM for backward compatibility)
     visibility = getattr(workflow, "visibility", WorkflowVisibility.TEAM)
 
-    if membership.role == OrganizationRole.USER:
+    if membership.role in (OrganizationRole.USER, OrganizationRole.CONSULTANT):
         if visibility == WorkflowVisibility.TEAM:
             return True
         if visibility == WorkflowVisibility.PRIVATE:
             return workflow.user_id == user.id
         if visibility == WorkflowVisibility.ASSIGNED:
             return await WorkflowAssignment.filter(workflow=workflow, user=user).exists()
-
-    if membership.role == OrganizationRole.CONSULTANT:
-        # Consultants can only view assigned workflows
-        return await WorkflowAssignment.filter(workflow=workflow, user=user).exists()
 
     return False
 
