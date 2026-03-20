@@ -169,7 +169,7 @@ async def can_view_workflow(
     - ASSIGNED: Only assigned users can view
 
     Owner/Admin can always view all workflows.
-    Consultants can only view assigned workflows.
+    Users and consultants share the same read visibility rules.
 
     Args:
         user: The user attempting to view
@@ -186,17 +186,13 @@ async def can_view_workflow(
     # Check workflow visibility
     visibility = getattr(workflow, "visibility", WorkflowVisibility.TEAM)
 
-    if membership.role == OrganizationRole.USER:
+    if membership.role in (OrganizationRole.USER, OrganizationRole.CONSULTANT):
         if visibility == WorkflowVisibility.TEAM:
             return True
         if visibility == WorkflowVisibility.PRIVATE:
             return workflow.user_id == user.id
         if visibility == WorkflowVisibility.ASSIGNED:
             return await WorkflowAssignment.exists(workflow=workflow, user=user)
-
-    if membership.role == OrganizationRole.CONSULTANT:
-        # Consultants can only view assigned workflows
-        return await WorkflowAssignment.exists(workflow=workflow, user=user)
 
     return False
 

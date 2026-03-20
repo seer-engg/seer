@@ -10,8 +10,9 @@ Usage:
 """
 import asyncio
 import os
+import signal
 import webbrowser
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import cast
 from urllib.parse import urlencode
 
@@ -50,6 +51,34 @@ if config.mcp_enabled:
 logger = get_logger("api.main")
 
 
+@contextmanager
+def _install_shutdown_signal_handlers(shutdown_event: asyncio.Event):
+    """Set an asyncio event as soon as the process receives a shutdown signal."""
+    previous_handlers: dict[signal.Signals, signal.Handlers] = {}
+
+    def _handle_signal(signum, frame):  # type: ignore[no-untyped-def]  # Reason: signal handlers use stdlib signature
+        shutdown_event.set()
+        previous = previous_handlers.get(signal.Signals(signum))
+        if callable(previous):
+            previous(signum, frame)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            previous_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, _handle_signal)
+        except (ValueError, OSError, RuntimeError):
+            continue
+
+    try:
+        yield
+    finally:
+        for sig, previous in previous_handlers.items():
+            try:
+                signal.signal(sig, previous)
+            except (ValueError, OSError, RuntimeError):
+                continue
+
+
 def _get_clerk_audience() -> list[str] | None:
     """Normalize optional Clerk audience config into a list."""
     audience = cast(str | None, getattr(config, "clerk_audience", None))
@@ -86,32 +115,42 @@ async def open_frontend_after_startup() -> None:
 async def lifespan(fastapi_app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
     logger.info("🚀 Starting Seer API server...")
+    fastapi_app.state.shutdown_event = asyncio.Event()
 
-    async with db_lifespan(fastapi_app):
-        logger.info("✅ Database initialized")
+    with _install_shutdown_signal_handlers(fastapi_app.state.shutdown_event):
+        async with db_lifespan(fastapi_app):
+            logger.info("✅ Database initialized")
 
-        # Capture main event loop for cross-thread async operations
-        # Import inside lifespan to ensure correct initialization order
-        from seer.core.event_loop import set_main_event_loop  # pylint: disable=import-outside-toplevel  # Reason: must run during lifespan after async context is available
-        set_main_event_loop(asyncio.get_running_loop())
-        logger.info("✅ Main event loop captured for cross-thread scheduling")
+            # Capture main event loop for cross-thread async operations
+            # Import inside lifespan to ensure correct initialization order
+            from seer.core.event_loop import set_main_event_loop  # pylint: disable=import-outside-toplevel  # Reason: must run during lifespan after async context is available
+            set_main_event_loop(asyncio.get_running_loop())
+            logger.info("✅ Main event loop captured for cross-thread scheduling")
 
-        async with checkpointer_lifespan() as checkpointer:
-            if checkpointer is not None:
-                fastapi_app.state.checkpointer = checkpointer
-            logger.info("✅ Checkpointer initialized")
+            async with checkpointer_lifespan() as checkpointer:
+                if checkpointer is not None:
+                    fastapi_app.state.checkpointer = checkpointer
+                logger.info("✅ Checkpointer initialized")
 
-            trigger_status = "enabled – handled by Taskiq worker" if config.trigger_poller_enabled else "disabled via configuration"
-            logger.info("Trigger poller %s", trigger_status)
+                trigger_status = "enabled – handled by Taskiq worker" if config.trigger_poller_enabled else "disabled via configuration"
+                logger.info("Trigger poller %s", trigger_status)
 
-            asyncio.create_task(open_frontend_after_startup())
+                asyncio.create_task(open_frontend_after_startup())
 
-            # Nest MCP lifespan if MCP is enabled
-            # The MCP lifespan initializes the session manager for MCP transports
-            if config.mcp_enabled:
-                mcp_lifespan_cm = fastapi_app.state.mcp_lifespan
-                async with mcp_lifespan_cm(fastapi_app):
-                    logger.info("✅ MCP endpoints enabled at /sse and /mcp")
+                # Nest MCP lifespan if MCP is enabled
+                # The MCP lifespan initializes the session manager for MCP transports
+                if config.mcp_enabled:
+                    mcp_lifespan_cm = fastapi_app.state.mcp_lifespan
+                    async with mcp_lifespan_cm(fastapi_app):
+                        logger.info("✅ MCP endpoints enabled at /sse and /mcp")
+                        try:
+                            yield
+                        finally:
+                            if hasattr(fastapi_app.state, "checkpointer"):
+                                delattr(fastapi_app.state, "checkpointer")
+                            from seer.services.browser.pool_manager import BrowserPoolManager  # pylint: disable=import-outside-toplevel  # Reason: shutdown import
+                            await BrowserPoolManager.shutdown_instance()
+                else:
                     try:
                         yield
                     finally:
@@ -119,14 +158,6 @@ async def lifespan(fastapi_app: FastAPI):
                             delattr(fastapi_app.state, "checkpointer")
                         from seer.services.browser.pool_manager import BrowserPoolManager  # pylint: disable=import-outside-toplevel  # Reason: shutdown import
                         await BrowserPoolManager.shutdown_instance()
-            else:
-                try:
-                    yield
-                finally:
-                    if hasattr(fastapi_app.state, "checkpointer"):
-                        delattr(fastapi_app.state, "checkpointer")
-                    from seer.services.browser.pool_manager import BrowserPoolManager  # pylint: disable=import-outside-toplevel  # Reason: shutdown import
-                    await BrowserPoolManager.shutdown_instance()
 
     # Shutdown PostHog client (flush pending events)
     if config.is_posthog_configured:
@@ -329,7 +360,7 @@ async def health_check():
     """
     return {
         "status": "ok",
-        "server": "Seer LangGraph API",
+        "server": "Seer API",
         "version": "1.0.0"
     }
 

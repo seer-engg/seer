@@ -23,6 +23,7 @@ from .memory.router import router as memory_router
 from .organizations.router import router as organizations_router
 from .overage.router import router as overage_router
 from .chat.router import router as chat_router
+from .collaboration.router import router as collaboration_router
 from .public.router import router as public_router
 from .dev.router import router as dev_router
 
@@ -49,5 +50,6 @@ router.include_router(memory_router)
 router.include_router(organizations_router)
 router.include_router(overage_router)
 router.include_router(chat_router)
+router.include_router(collaboration_router)
 router.include_router(public_router)
 router.include_router(dev_router)
