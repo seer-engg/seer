@@ -138,7 +138,7 @@ services:
     volumes:
       - ./:/app  # Mount source code for instant updates in development (overrides COPY in Dockerfile)
       - /app/.venv  # Exclude local .venv (Docker will create its own venv)
-    command: ["api", "--reload"]  # Use --reload for hot-reloading in development
+    command: ["api", "--reload", "--timeout-graceful-shutdown", "2"]  # Use --reload for hot-reloading in development; bound shutdown wait for long-lived dev streams
 
   worker:
     build:

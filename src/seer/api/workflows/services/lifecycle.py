@@ -38,6 +38,7 @@ from seer.database import (
 )
 from seer.core.schema.models import WorkflowSpec
 from seer.database.workflow_models import TriggerSubscription, WorkflowRun, WorkflowRunStatus
+from seer.services.collaboration import CollaborationEventType, publish_collaboration_event
 from seer.tools.base import list_tools as list_all_tools
 
 # ===== Helper Functions =====
@@ -142,6 +143,23 @@ async def _workflow_summary(workflow: Workflow, draft_version: Optional[Workflow
     )
 
 
+async def _publish_workflow_event(
+    workflow: Workflow,
+    *,
+    event_type: CollaborationEventType,
+    actor: User,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    await publish_collaboration_event(
+        organization_id=workflow.organization_id,
+        event_type=event_type,
+        resource_type="workflow",
+        resource_id=workflow.workflow_id,
+        actor=actor,
+        payload=payload,
+    )
+
+
 async def toggle_workflow_published(
     user: User,
     workflow_id: str,
@@ -153,6 +171,12 @@ async def toggle_workflow_published(
     workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
     workflow.is_published = is_published
     await workflow.save(update_fields=["is_published", "updated_at"])
+    await _publish_workflow_event(
+        workflow,
+        event_type=CollaborationEventType.WORKFLOW_PUBLISHED if is_published else CollaborationEventType.WORKFLOW_UNPUBLISHED,
+        actor=user,
+        payload={"is_published": is_published},
+    )
     return await _workflow_summary(workflow)
 
 
@@ -167,6 +191,12 @@ async def toggle_workflow_active(
     workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
     workflow.is_active = is_active
     await workflow.save(update_fields=["is_active", "updated_at"])
+    await _publish_workflow_event(
+        workflow,
+        event_type=CollaborationEventType.WORKFLOW_ACTIVE_CHANGED,
+        actor=user,
+        payload={"is_active": is_active},
+    )
     return await _workflow_summary(workflow)
 
 
@@ -293,6 +323,13 @@ async def create_workflow(
         version_number=0,
     )
 
+    await _publish_workflow_event(
+        workflow,
+        event_type=CollaborationEventType.WORKFLOW_CREATED,
+        actor=user,
+        payload={"name": workflow.name},
+    )
+
     return await _workflow_response(workflow)
 
 
@@ -327,17 +364,14 @@ async def list_workflows(
 
         # For Users and Consultants, apply visibility filters
         if membership and membership.role not in (OrganizationRole.OWNER, OrganizationRole.ADMIN):
-            # Users can see: TEAM visibility, own PRIVATE, or ASSIGNED workflows
-            if membership.role == OrganizationRole.USER:
+            # Users and consultants can see TEAM visibility, own PRIVATE, or ASSIGNED workflows
+            if membership.role in (OrganizationRole.USER, OrganizationRole.CONSULTANT):
                 from tortoise.expressions import Q  # pylint: disable=import-outside-toplevel  # Reason: conditional import for complex query
                 query = query.filter(
                     Q(visibility=WorkflowVisibility.TEAM) |
                     Q(visibility=WorkflowVisibility.PRIVATE, user=user) |
                     Q(visibility=WorkflowVisibility.ASSIGNED, assignments__user=user)
                 )
-            elif membership.role == OrganizationRole.CONSULTANT:
-                # Consultants only see assigned workflows
-                query = query.filter(assignments__user=user)
     else:
         # Legacy user-scoped behavior
         query = Workflow.filter(user=user)
@@ -415,9 +449,17 @@ async def update_workflow(
     membership: Optional[OrganizationMembership] = None,
 ) -> api_models.WorkflowResponse:
     workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
+    changed_fields: list[str] = []
     if payload.name is not None:
         workflow.name = payload.name
+        changed_fields.append("name")
     await workflow.save()
+    await _publish_workflow_event(
+        workflow,
+        event_type=CollaborationEventType.WORKFLOW_UPDATED,
+        actor=user,
+        payload={"name": workflow.name, "changed_fields": changed_fields or ["updated_at"]},
+    )
     return await _workflow_response(workflow)
 
 
@@ -474,6 +516,12 @@ async def patch_workflow_draft(
     # Update draft version in-place
     spec_dict = _spec_to_dict(payload.spec)
     await _update_draft_version(draft_version, spec_dict, user)
+    await _publish_workflow_event(
+        workflow,
+        event_type=CollaborationEventType.WORKFLOW_DRAFT_UPDATED,
+        actor=user,
+        payload={"changed_fields": ["spec"], "draft_version_id": draft_version.id},
+    )
 
     return await _workflow_response(workflow)
 
@@ -511,6 +559,12 @@ async def restore_workflow_version(  # pylint: disable=too-many-positional-argum
     # Update draft to match restored version
     spec_dict = json.loads(json.dumps(version.spec or {}))
     await _update_draft_version(draft_version, spec_dict, user)
+    await _publish_workflow_event(
+        workflow,
+        event_type=CollaborationEventType.WORKFLOW_VERSION_RESTORED,
+        actor=user,
+        payload={"version_id": version.id, "draft_version_id": draft_version.id},
+    )
 
     return await _workflow_response(workflow)
 
@@ -588,6 +642,12 @@ async def publish_workflow(
     # Note: No new DRAFT is created here (on-demand creation)
 
     workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
+    await _publish_workflow_event(
+        workflow,
+        event_type=CollaborationEventType.WORKFLOW_PUBLISHED,
+        actor=user,
+        payload={"release_version_number": release_number},
+    )
     return await _workflow_response(workflow)
 
 
@@ -598,6 +658,9 @@ async def delete_workflow(
     membership: Optional[OrganizationMembership] = None,
 ) -> None:
     workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
+    deleted_workflow_id = workflow.workflow_id
+    deleted_workflow_name = workflow.name
+    deleted_org_id = workflow.organization_id
 
     # Cancel active runs to release DB locks
     active_runs = await WorkflowRun.filter(
@@ -615,6 +678,14 @@ async def delete_workflow(
     await TriggerSubscription.filter(workflow=workflow).delete()
 
     await workflow.delete()
+    await publish_collaboration_event(
+        organization_id=deleted_org_id,
+        event_type=CollaborationEventType.WORKFLOW_DELETED,
+        resource_type="workflow",
+        resource_id=deleted_workflow_id,
+        actor=user,
+        payload={"name": deleted_workflow_name},
+    )
 
 
 async def export_workflow(
@@ -738,6 +809,13 @@ async def import_workflow(
         updated_by=user,
         spec_hash=_hash_spec(spec_dict),
         version_number=0,
+    )
+
+    await _publish_workflow_event(
+        workflow,
+        event_type=CollaborationEventType.WORKFLOW_CREATED,
+        actor=user,
+        payload={"name": workflow.name, "source": "import"},
     )
 
     # 5. Return new workflow
