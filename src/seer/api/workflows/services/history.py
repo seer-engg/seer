@@ -215,6 +215,14 @@ def _build_node_trace_from_value(value: Dict[str, Any], node_id: str) -> Dict[st
     if value.get("artifacts"):
         node_trace["artifacts"] = value["artifacts"]
 
+    # Include agent execution trace data if present
+    if value.get("steps"):
+        node_trace["steps"] = value["steps"]
+    if "iterations" in value:
+        node_trace["iterations"] = value["iterations"]
+    if "prompt" in value:
+        node_trace["prompt"] = value["prompt"]
+
     return node_trace
 
 
