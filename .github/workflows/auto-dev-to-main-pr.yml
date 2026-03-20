@@ -23,7 +23,7 @@ jobs:
           echo "ahead=$AHEAD" >> "$GITHUB_OUTPUT"
 
       - name: Create PR if needed
-        if: steps.check.outputs.ahead > 0
+        if: steps.check.outputs.ahead != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
