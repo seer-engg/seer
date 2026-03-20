@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -746,7 +746,15 @@ class TestDeleteWorkflow:
         from seer.api.workflows.services.lifecycle import delete_workflow
 
         user = MagicMock()
+        user.user_id = "user_123"
+        user.id = 123
+        user.first_name = "Test"
+        user.last_name = "User"
+        user.email = "test@example.com"
         mock_workflow = AsyncMock()
+        mock_workflow.workflow_id = "wf_1"
+        mock_workflow.name = "Workflow One"
+        mock_workflow.organization_id = 456
 
         mock_run = MagicMock()
         mock_run.status = "running"
@@ -769,7 +777,8 @@ class TestDeleteWorkflow:
 
         with patch("seer.api.workflows.services.lifecycle._get_workflow_org_scoped", new=AsyncMock(return_value=mock_workflow)), \
              patch("seer.api.workflows.services.lifecycle.WorkflowRun") as MockWfRun, \
-             patch("seer.api.workflows.services.lifecycle.TriggerSubscription") as MockTrigSub:
+             patch("seer.api.workflows.services.lifecycle.TriggerSubscription") as MockTrigSub, \
+             patch("seer.api.workflows.services.lifecycle.publish_collaboration_event", new=AsyncMock(return_value=None)) as mock_publish:
             active_qs = FakeQuerySet(items=[mock_run])
             all_qs = FakeQuerySet()
             all_qs.update = mock_update
@@ -784,3 +793,11 @@ class TestDeleteWorkflow:
         mock_update.assert_called_once_with(workflow_id=None)
         mock_trig_delete.assert_called_once()
         mock_workflow.delete.assert_called_once()
+        mock_publish.assert_awaited_once_with(
+            organization_id=456,
+            event_type=ANY,
+            resource_type="workflow",
+            resource_id="wf_1",
+            actor=user,
+            payload={"name": "Workflow One"},
+        )
