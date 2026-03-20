@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from seer.database.workflow_models import ChatExecutionStatus
@@ -247,6 +248,39 @@ class TestGetUserSettingsAndContext:
             _, context = await _get_user_settings_and_context(mock_user, "thread-000")
 
         assert context.per_run_cost_cap_usd == 5.0  # Default
+
+
+@pytest.mark.unit
+class TestExecutionErrorPayloads:
+    """Tests for execution error normalization helpers."""
+
+    def test_classifies_upstream_stream_errors(self):
+        """Transport errors from the model stream should persist as upstream failures."""
+        from seer.worker.tasks.chat import _build_execution_error_payload
+
+        payload = _build_execution_error_payload(httpx.ReadError("socket closed"))
+
+        assert payload["type"] == "upstream_stream_error"
+        assert payload["status"] == 502
+        assert payload["detail"] == "Upstream model stream disconnected before completion."
+        assert payload["exception_detail"] == "socket closed"
+        assert payload["exception_type"].endswith("ReadError")
+
+    @pytest.mark.asyncio
+    async def test_mark_chat_execution_running_clears_stale_terminal_fields(self, mock_chat_session):
+        """Starting a new execution should clear stale finished/error fields."""
+        from seer.worker.tasks.chat import _mark_chat_execution_running
+
+        mock_chat_session.current_execution_finished_at = datetime.now(timezone.utc)
+        mock_chat_session.current_execution_error = {"type": "execution_error", "detail": "old", "status": 500}
+
+        await _mark_chat_execution_running(mock_chat_session)
+
+        assert mock_chat_session.current_execution_status == ChatExecutionStatus.RUNNING
+        assert mock_chat_session.current_execution_finished_at is None
+        assert mock_chat_session.current_execution_error is None
+        assert "current_execution_finished_at" in mock_chat_session.save.call_args.kwargs["update_fields"]
+        assert "current_execution_error" in mock_chat_session.save.call_args.kwargs["update_fields"]
 
 
 @pytest.mark.unit
@@ -532,6 +566,79 @@ class TestChatExecutionTask:
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
         assert mock_chat_session.current_execution_error["type"] == "execution_error"
         assert mock_chat_session.current_execution_error["status"] == 500
+
+    @pytest.mark.asyncio
+    async def test_sets_status_to_upstream_stream_error_on_transport_exception(self, mock_user, mock_workflow, mock_chat_session):
+        """Transport read failures should persist a non-empty upstream-stream error payload."""
+        from seer.worker.tasks.chat import chat_execution_task
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat.User") as MockUser, \
+             patch("seer.worker.tasks.chat.Workflow") as MockWorkflow, \
+             patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
+             patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
+             patch("seer.worker.tasks.chat._stream_agent_with_orchestrator", new_callable=AsyncMock) as mock_stream, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
+             patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
+             patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat.clear_chat_runtime_context"):
+
+            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockUser.get = AsyncMock(return_value=mock_user)
+            MockWorkflow.get = AsyncMock(return_value=mock_workflow)
+            mock_settings.return_value = (50, MagicMock())
+            MockPublisher.return_value = AsyncMock()
+            mock_stream.side_effect = httpx.ReadError("socket closed")
+
+            await chat_execution_task(
+                session_id=1,
+                user_id=1,
+                message="Hello",
+                workflow_id=1,
+            )
+
+        assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
+        assert mock_chat_session.current_execution_error["type"] == "upstream_stream_error"
+        assert mock_chat_session.current_execution_error["status"] == 502
+        assert mock_chat_session.current_execution_error["detail"] == "Upstream model stream disconnected before completion."
+        assert mock_chat_session.current_execution_error["exception_detail"] == "socket closed"
+
+    @pytest.mark.asyncio
+    async def test_persists_failure_on_task_cancellation(self, mock_user, mock_workflow, mock_chat_session):
+        """Cancelled chat tasks should persist a terminal state before re-raising."""
+        from seer.worker.tasks.chat import chat_execution_task
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat.User") as MockUser, \
+             patch("seer.worker.tasks.chat.Workflow") as MockWorkflow, \
+             patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
+             patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
+             patch("seer.worker.tasks.chat._stream_agent_with_orchestrator", new_callable=AsyncMock) as mock_stream, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
+             patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
+             patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat.clear_chat_runtime_context"):
+
+            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockUser.get = AsyncMock(return_value=mock_user)
+            MockWorkflow.get = AsyncMock(return_value=mock_workflow)
+            mock_settings.return_value = (50, MagicMock())
+            MockPublisher.return_value = AsyncMock()
+            mock_stream.side_effect = asyncio.CancelledError()
+
+            with pytest.raises(asyncio.CancelledError):
+                await chat_execution_task(
+                    session_id=1,
+                    user_id=1,
+                    message="Hello",
+                    workflow_id=1,
+                )
+
+        assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
+        assert mock_chat_session.current_execution_error["type"] == "execution_cancelled"
+        assert mock_chat_session.current_execution_error["status"] == 503
 
     @pytest.mark.asyncio
     async def test_sets_status_to_interrupted_when_interrupt_detected(self, mock_user, mock_workflow, mock_chat_session):

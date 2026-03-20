@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
+import httpx
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from tortoise.exceptions import DoesNotExist
@@ -61,6 +62,11 @@ from seer.worker.broker_instance import broker, create_redis_client
 from seer.worker.tasks.memory import extract_session_memories
 
 logger = get_logger(__name__)
+
+try:
+    import httpcore
+except ImportError:
+    httpcore = None
 
 _TERMINAL_CHAT_STATUSES = {
     ChatExecutionStatus.COMPLETED,
@@ -332,6 +338,72 @@ async def _persist_failure_if_current_owner(
     ])
 
 
+def _iter_exception_chain(error: BaseException) -> list[BaseException]:
+    """Return the exception, its cause chain, and any linked context exceptions."""
+    exceptions: list[BaseException] = []
+    seen: set[int] = set()
+    current: Optional[BaseException] = error
+
+    while current is not None and id(current) not in seen:
+        exceptions.append(current)
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+
+    return exceptions
+
+
+def _is_upstream_stream_error(error: BaseException) -> bool:
+    """Detect transport-level failures from the upstream LLM streaming stack."""
+    for exc in _iter_exception_chain(error):
+        if isinstance(exc, httpx.HTTPError):
+            return True
+        if httpcore is not None and isinstance(exc, httpcore.NetworkError):
+            return True
+
+        module_name = exc.__class__.__module__
+        class_name = exc.__class__.__name__
+        if module_name.startswith("httpcore") or module_name.startswith("httpx"):
+            return True
+        if module_name.startswith("openai") and class_name in {"APIConnectionError", "APITimeoutError"}:
+            return True
+
+    return False
+
+
+def _build_execution_error_payload(error: BaseException) -> Dict[str, Any]:
+    """Normalize exceptions into a persisted error payload."""
+    raw_detail = str(error).strip()
+    exception_type = f"{error.__class__.__module__}.{error.__class__.__name__}"
+
+    if _is_upstream_stream_error(error):
+        payload: Dict[str, Any] = {
+            "type": "upstream_stream_error",
+            "detail": "Upstream model stream disconnected before completion.",
+            "status": 502,
+            "exception_type": exception_type,
+        }
+        if raw_detail:
+            payload["exception_detail"] = raw_detail
+        return payload
+
+    return {
+        "type": "execution_error",
+        "detail": raw_detail or error.__class__.__name__,
+        "status": 500,
+        "exception_type": exception_type,
+    }
+
+
+def _build_cancelled_execution_error_payload(error: BaseException) -> Dict[str, Any]:
+    """Persist a terminal state when a chat task is cancelled."""
+    return {
+        "type": "execution_cancelled",
+        "detail": "Chat execution was cancelled before completion.",
+        "status": 503,
+        "exception_type": f"{error.__class__.__module__}.{error.__class__.__name__}",
+    }
+
+
 def _should_abort_chat_execution(
     session: WorkflowChatSession,
     session_id: int,
@@ -352,9 +424,13 @@ async def _mark_chat_execution_running(session: WorkflowChatSession) -> None:
     """Persist RUNNING status for a session."""
     session.current_execution_status = ChatExecutionStatus.RUNNING
     session.current_execution_started_at = datetime.now(timezone.utc)
+    session.current_execution_finished_at = None
+    session.current_execution_error = None
     await session.save(update_fields=[
         "current_execution_status",
         "current_execution_started_at",
+        "current_execution_finished_at",
+        "current_execution_error",
     ])
 
 
@@ -526,11 +602,15 @@ async def _mark_chat_resume_running(session: WorkflowChatSession) -> None:
     """Persist RUNNING status for a resumed execution and clear stale interrupt state."""
     session.current_execution_status = ChatExecutionStatus.RUNNING
     session.current_execution_started_at = datetime.now(timezone.utc)
+    session.current_execution_finished_at = None
+    session.current_execution_error = None
     session.pending_interrupt_type = None
     session.pending_interrupt_data = None
     await session.save(update_fields=[
         "current_execution_status",
         "current_execution_started_at",
+        "current_execution_finished_at",
+        "current_execution_error",
         "pending_interrupt_type",
         "pending_interrupt_data",
     ])
@@ -1115,21 +1195,35 @@ async def chat_execution_task(
             context=context,
         )
 
+    except asyncio.CancelledError as e:
+        error_payload = _build_cancelled_execution_error_payload(e)
+        logger.warning(
+            "Chat execution task cancelled",
+            exc_info=True,
+            extra={
+                "session_id": session_id,
+                "execution_task_id": execution_task_id,
+                "error": error_payload["detail"],
+                "error_type": error_payload["type"],
+                "exception_type": error_payload["exception_type"],
+            },
+        )
+        await _persist_failure_if_current_owner(session_id, execution_task_id, error_payload)
+        raise
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Background task must catch all exceptions to avoid worker crash
+        error_payload = _build_execution_error_payload(e)
         logger.error(
             "Chat execution task failed",
             exc_info=True,
-            extra={"session_id": session_id, "error": str(e), "execution_task_id": execution_task_id}
-        )
-        await _persist_failure_if_current_owner(
-            session_id,
-            execution_task_id,
-            {
-                "type": "execution_error",
-                "detail": str(e),
-                "status": 500,
+            extra={
+                "session_id": session_id,
+                "execution_task_id": execution_task_id,
+                "error": error_payload["detail"],
+                "error_type": error_payload["type"],
+                "exception_type": error_payload["exception_type"],
             },
         )
+        await _persist_failure_if_current_owner(session_id, execution_task_id, error_payload)
     finally:
         if lock is not None:
             await lock.release()
@@ -1200,21 +1294,35 @@ async def chat_resume_task(
             context=context,
         )
 
+    except asyncio.CancelledError as e:
+        error_payload = _build_cancelled_execution_error_payload(e)
+        logger.warning(
+            "Chat resume task cancelled",
+            exc_info=True,
+            extra={
+                "session_id": session_id,
+                "execution_task_id": execution_task_id,
+                "error": error_payload["detail"],
+                "error_type": error_payload["type"],
+                "exception_type": error_payload["exception_type"],
+            },
+        )
+        await _persist_failure_if_current_owner(session_id, execution_task_id, error_payload)
+        raise
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Background task must catch all exceptions to avoid worker crash
+        error_payload = _build_execution_error_payload(e)
         logger.error(
             "Chat resume task failed",
             exc_info=True,
-            extra={"session_id": session_id, "error": str(e), "execution_task_id": execution_task_id}
-        )
-        await _persist_failure_if_current_owner(
-            session_id,
-            execution_task_id,
-            {
-                "type": "execution_error",
-                "detail": str(e),
-                "status": 500,
+            extra={
+                "session_id": session_id,
+                "execution_task_id": execution_task_id,
+                "error": error_payload["detail"],
+                "error_type": error_payload["type"],
+                "exception_type": error_payload["exception_type"],
             },
         )
+        await _persist_failure_if_current_owner(session_id, execution_task_id, error_payload)
     finally:
         if lock is not None:
             await lock.release()
