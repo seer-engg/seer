@@ -11,7 +11,7 @@ from seer.logger import get_logger
 from seer.core.triggers.polling import TriggerPollScheduler  # lazy import
 from seer.worker.broker_instance import broker
 from seer.utilities.ml_flow import _ensure_mlflow_autologging
-from seer.utilities.langfuse_tracing import get_nexus_langfuse_callbacks, get_workflow_langfuse_callbacks
+from seer.utilities.langfuse_tracing import get_nexus_langfuse_callbacks
 
 if config.mlflow_enabled:
     _ensure_mlflow_autologging()
@@ -20,14 +20,8 @@ logger = get_logger(__name__)
 
 if config.langfuse_enabled:
     _nexus_callbacks = get_nexus_langfuse_callbacks()
-    _workflow_callbacks = get_workflow_langfuse_callbacks()
-    if _nexus_callbacks or _workflow_callbacks:
-        _projects = []
-        if _nexus_callbacks:
-            _projects.append("nexus")
-        if _workflow_callbacks:
-            _projects.append("workflow")
-        logger.info("Langfuse tracing enabled for worker (projects: %s)", ", ".join(_projects))
+    if _nexus_callbacks:
+        logger.info("Langfuse tracing enabled for worker (project: nexus)")
     else:
         logger.warning("Langfuse enabled but no projects configured")
 

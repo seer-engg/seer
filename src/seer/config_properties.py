@@ -25,16 +25,12 @@ class SeerConfigPropertiesMixin:
 
     @property
     def is_langfuse_configured(self) -> bool:
-        """Check if Langfuse is configured (at least one project has credentials)."""
-        if not self.langfuse_enabled:  # type: ignore[attr-defined]
-            return False
-        nexus_configured = (
-            self.langfuse_nexus_public_key is not None and self.langfuse_nexus_secret_key is not None  # type: ignore[attr-defined]
+        """Check if Langfuse is configured for Nexus tracing."""
+        return (
+            self.langfuse_enabled  # type: ignore[attr-defined]
+            and self.langfuse_nexus_public_key is not None  # type: ignore[attr-defined]
+            and self.langfuse_nexus_secret_key is not None  # type: ignore[attr-defined]
         )
-        workflow_configured = (
-            self.langfuse_workflow_public_key is not None and self.langfuse_workflow_secret_key is not None  # type: ignore[attr-defined]
-        )
-        return nexus_configured or workflow_configured
 
     @property
     def is_langfuse_nexus_configured(self) -> bool:
@@ -43,15 +39,6 @@ class SeerConfigPropertiesMixin:
             self.langfuse_enabled  # type: ignore[attr-defined]
             and self.langfuse_nexus_public_key is not None  # type: ignore[attr-defined]
             and self.langfuse_nexus_secret_key is not None  # type: ignore[attr-defined]
-        )
-
-    @property
-    def is_langfuse_workflow_configured(self) -> bool:
-        """Check if Langfuse is configured for Workflow tracing."""
-        return (
-            self.langfuse_enabled  # type: ignore[attr-defined]
-            and self.langfuse_workflow_public_key is not None  # type: ignore[attr-defined]
-            and self.langfuse_workflow_secret_key is not None  # type: ignore[attr-defined]
         )
 
     @property

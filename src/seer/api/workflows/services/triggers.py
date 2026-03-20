@@ -877,7 +877,9 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
         if existing_subscription:
             existing_subscription.trigger_key = trigger_spec.key  # Update type reference
             existing_subscription.title = definition.title  # Update title for reference resolution from registry
-            existing_subscription.provider_connection_id = trigger_spec.provider_config.get("provider_connection_id")
+            new_connection_id = trigger_spec.provider_config.get("provider_connection_id")
+            if new_connection_id is not None or not existing_subscription.provider_connection_id:
+                existing_subscription.provider_connection_id = new_connection_id
             existing_subscription.enabled = True  # Always enabled when in spec
             existing_subscription.filters = filters
             existing_subscription.provider_config = provider_config

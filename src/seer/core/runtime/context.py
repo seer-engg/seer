@@ -1,12 +1,48 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol
 
 from seer.database import User
 
 if TYPE_CHECKING:
     from seer.core.files.service import WorkflowFileSystem
+
+
+class WorkflowMemoryAccess(Protocol):
+    """Runtime protocol implemented by services-side memory adapters."""
+
+    async def get_prompt_context(self, memory_bank_id: str, current_query: str, max_memories: int | None = None) -> str: ...
+
+    async def search(self, memory_bank_id: str, query: str, limit: int = 5) -> List[Dict[str, Any]]: ...
+
+    async def add(
+        self,
+        memory_bank_id: str,
+        content: str,
+        metadata: Dict[str, Any] | None = None,
+        infer: bool = True,
+    ) -> Dict[str, Any] | None: ...
+
+    async def get(self, memory_bank_id: str, memory_id: str) -> Dict[str, Any] | None: ...
+
+    async def update(
+        self,
+        memory_bank_id: str,
+        memory_id: str,
+        content: str,
+        metadata: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any] | None: ...
+
+    async def delete(self, memory_bank_id: str, memory_id: str) -> bool: ...
+
+
+@dataclass
+class WorkflowRunBudget:
+    """Mutable run-level cost tracking state."""
+
+    per_run_cost_cap_usd: float | None = None
+    accumulated_cost_usd: float = 0.0
 
 
 @dataclass
@@ -19,20 +55,58 @@ class WorkflowRuntimeContext:
         user: The user executing the workflow.
         workflow_run_id: The run ID (e.g., "run_123") for file storage scoping.
         thread_id: LangGraph thread ID for chat contexts.
-        per_run_cost_cap_usd: Maximum cost allowed for this run.
-        accumulated_cost_usd: Running total of costs (mutable).
         organization_id: The organization ID for resolving shared OAuth connections.
+        memory_access: Optional services-side adapter for bank-aware memory access.
     """
 
     user: User
     workflow_run_id: str | None = None
     thread_id: str | None = None  # For chat threads
-    per_run_cost_cap_usd: float | None = None  # Cost limit per execution
-    accumulated_cost_usd: float = 0.0  # Running total (mutable)
     organization_id: int | None = None  # For shared OAuth connection resolution
+    memory_access: WorkflowMemoryAccess | None = None
+    budget: WorkflowRunBudget = field(default_factory=WorkflowRunBudget)
 
     # Private field for lazy-loaded file system
     _file_system: Optional["WorkflowFileSystem"] = field(default=None, repr=False)
+
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments  # Reason: preserve existing constructor contract while storing budget internally
+        self,
+        user: User,
+        workflow_run_id: str | None = None,
+        thread_id: str | None = None,
+        per_run_cost_cap_usd: float | None = None,
+        accumulated_cost_usd: float = 0.0,
+        organization_id: int | None = None,
+        memory_access: WorkflowMemoryAccess | None = None,
+    ) -> None:
+        self.user = user
+        self.workflow_run_id = workflow_run_id
+        self.thread_id = thread_id
+        self.organization_id = organization_id
+        self.memory_access = memory_access
+        self.budget = WorkflowRunBudget(
+            per_run_cost_cap_usd=per_run_cost_cap_usd,
+            accumulated_cost_usd=accumulated_cost_usd,
+        )
+        self._file_system = None
+
+    @property
+    def per_run_cost_cap_usd(self) -> float | None:
+        """Return the configured run-level cost cap."""
+        return self.budget.per_run_cost_cap_usd
+
+    @per_run_cost_cap_usd.setter
+    def per_run_cost_cap_usd(self, value: float | None) -> None:
+        self.budget.per_run_cost_cap_usd = value
+
+    @property
+    def accumulated_cost_usd(self) -> float:
+        """Return the accumulated run cost."""
+        return self.budget.accumulated_cost_usd
+
+    @accumulated_cost_usd.setter
+    def accumulated_cost_usd(self, value: float) -> None:
+        self.budget.accumulated_cost_usd = value
 
     @property
     def file_system(self) -> "WorkflowFileSystem":

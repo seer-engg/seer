@@ -10,10 +10,10 @@ from seer.core.errors import ExecutionError, WorkflowCompilerError
 from seer.database import WorkflowRun, User, WorkflowRunStatus
 from seer.database.models import UserSettings
 from seer.core.runtime.context import WorkflowRuntimeContext
+from seer.services.memory.runtime_adapter import WorkflowMemoryRuntimeAdapter
 
+from seer.analytics.workflow_tracking import capture_workflow_run_event
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
-
-
 
 from seer.logger import get_logger
 logger = get_logger(__name__)
@@ -158,9 +158,7 @@ async def _execute_run(
     config_payload: Dict[str, Any],
     trigger_envelope: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    """
-    Fetches the workflow run object , compiles it using the global compiler instance and executes it.
-    """
+    """Compile and execute a workflow run."""
     logger.debug(
         "Preparing workflow run '%s' (workflow_id=%s) inputs_keys=%s "
         "config_payload_keys=%s user_id=%s",
@@ -175,6 +173,7 @@ async def _execute_run(
         started_at=_now(),
     )
 
+    await capture_workflow_run_event("workflow_run_started", user.email, run.run_id, getattr(run.workflow, "workflow_id", None))
     checkpointer = await get_checkpointer()
     # Get organization_id from workflow for shared connection resolution
     organization_id = getattr(run.workflow, "organization_id", None)
@@ -217,9 +216,12 @@ async def _execute_run(
             per_run_cost_cap_usd=per_run_cost_cap_usd,
             accumulated_cost_usd=0.0,
             organization_id=organization_id,
+            memory_access=WorkflowMemoryRuntimeAdapter(user=user, organization_id=organization_id),
         )
         result = await compiled.ainvoke(
-            config=effective_config, context=runtime_context, trigger=trigger_envelope
+            config=effective_config,
+            context=runtime_context,
+            trigger=trigger_envelope,
         )
 
         # Check for HITL interrupt
@@ -274,14 +276,15 @@ async def _execute_run(
                 finished_at=_now(),
                 error=exc.to_dict(),
             )
+            await capture_workflow_run_event(
+                "workflow_run_failed", user.email, run.run_id,
+                getattr(run.workflow, "workflow_id", None), error=str(exc))
             raise HTTPException(status_code=402, detail=exc.to_dict()) from exc
 
         # Handle other exceptions
         print(f"{traceback.format_exc()}")
 
-        # Extract error trace from ExecutionError if available
-        # This allows persisting node-level error traces to the database
-        # even when LangGraph checkpoints are not written (due to exception)
+        # Extract error trace from ExecutionError (persists node traces when checkpoints aren't written)
         node_traces = None
         if isinstance(exc, ExecutionError) and exc.trace_data:  # pylint: disable=no-member  # Reason: ExecutionError adds trace_data attribute in __init__
             node_traces = exc.trace_data  # pylint: disable=no-member  # Reason: ExecutionError adds trace_data attribute in __init__
@@ -292,12 +295,15 @@ async def _execute_run(
             error=str(exc),
             node_traces=node_traces,
         )
+        await capture_workflow_run_event(
+            "workflow_run_failed", user.email, run.run_id,
+            getattr(run.workflow, "workflow_id", None), error=str(exc))
         raise
 
     return result
 
 
-async def _mark_run_succeeded(run: WorkflowRun, output: Dict[str, Any]) -> None:
+async def _mark_run_succeeded(run: WorkflowRun, output: Dict[str, Any], user: Optional[User] = None) -> None:
     """Persist workflow success state and refresh the run instance."""
     await WorkflowRun.filter(id=run.id).update(
         status=WorkflowRunStatus.SUCCEEDED,
@@ -305,6 +311,8 @@ async def _mark_run_succeeded(run: WorkflowRun, output: Dict[str, Any]) -> None:
         output=output,
     )
     await run.refresh_from_db()
+    if user:
+        await capture_workflow_run_event("workflow_run_completed", user.email, run.run_id, getattr(run.workflow, "workflow_id", None))
 
 
 async def execute_saved_workflow_run(
@@ -343,7 +351,7 @@ async def execute_saved_workflow_run(
             )
             # Run is already marked as INTERRUPTED by _execute_run
             return
-        await _mark_run_succeeded(run, output)
+        await _mark_run_succeeded(run, output, user=user)
     except HTTPException:
         logger.exception(
             "Saved workflow run failed",
@@ -409,6 +417,7 @@ async def _execute_resume(
         per_run_cost_cap_usd=per_run_cost_cap_usd,
         accumulated_cost_usd=0.0,
         organization_id=organization_id,
+        memory_access=WorkflowMemoryRuntimeAdapter(user=user, organization_id=organization_id),
     )
 
     # Resume with user responses using LangGraph's Command

@@ -56,3 +56,39 @@ async def capture_workflow_event(
         event=event,
         properties=enriched,
     )
+
+
+async def capture_workflow_run_event(
+    event: str, user_email: str, run_id: str, workflow_id: Any, error: str | None = None,
+) -> None:
+    """Emit a run-level PostHog event (started/completed/failed)."""
+    props: Dict[str, Any] = {"workflow_run_id": run_id, "workflow_id": workflow_id}
+    if error is not None:
+        props["error"] = error[:500]
+    await capture_workflow_event(event=event, user_email=user_email, properties=props)
+
+
+async def capture_kpi_event(
+    user_email: str,
+    kpi_name: str,
+    value: float,
+    metadata: Dict[str, Any] | None = None,
+) -> None:
+    """
+    Emit a PostHog event for KPI tracking.
+
+    Used to push computed KPIs into PostHog for dashboard visualization.
+    Called after workflow execution completes.
+    """
+    properties: Dict[str, Any] = {
+        "kpi_name": kpi_name,
+        "value": value,
+    }
+    if metadata:
+        properties.update(metadata)
+
+    await capture_workflow_event(
+        event="seer_kpi_recorded",
+        user_email=user_email,
+        properties=properties,
+    )

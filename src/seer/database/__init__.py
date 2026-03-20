@@ -82,6 +82,11 @@ from seer.database.organization_models import (
     WorkflowApprovalPublic,
     WorkflowAssignment,
 )
+from seer.database.memory_models import (
+    MEMORY_BANK_ID_PREFIX,
+    MemoryBank,
+    MemoryBankStatus,
+)
 from seer.logger import get_logger
 
 logger = get_logger("shared.database")
@@ -189,4 +194,8 @@ __all__ = [
     "MemberPublic",
     "InvitationPublic",
     "WorkflowApprovalPublic",
+    # Memory domain
+    "MemoryBank",
+    "MemoryBankStatus",
+    "MEMORY_BANK_ID_PREFIX",
 ]

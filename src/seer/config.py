@@ -156,6 +156,15 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     )
 
     # ============================================================================
+    # Agent Configuration
+    # ============================================================================
+
+    agent_tool_output_max_chars: int = Field(
+        default=50000,
+        description="Max characters per tool output in workflow agent nodes. Prevents context overflow on large API responses.",
+    )
+
+    # ============================================================================
     # Session Configuration (for OAuth flows)
     # ============================================================================
 
@@ -492,19 +501,12 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     langfuse_host: Optional[str] = Field(
         default=None, description="Langfuse host URL (e.g., https://cloud.langfuse.com)"
     )
-    # Nexus Agent tracing (separate project)
+    # Nexus agent tracing
     langfuse_nexus_public_key: Optional[str] = Field(
         default=None, description="Langfuse public key for Nexus agent project (pk-lf-...)"
     )
     langfuse_nexus_secret_key: Optional[str] = Field(
         default=None, description="Langfuse secret key for Nexus agent project (sk-lf-...)"
-    )
-    # Workflow/Compiler tracing (separate project)
-    langfuse_workflow_public_key: Optional[str] = Field(
-        default=None, description="Langfuse public key for Workflow project (pk-lf-...)"
-    )
-    langfuse_workflow_secret_key: Optional[str] = Field(
-        default=None, description="Langfuse secret key for Workflow project (sk-lf-...)"
     )
 
     # ============================================================================

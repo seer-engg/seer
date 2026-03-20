@@ -51,6 +51,27 @@ _JSON_TYPE_TO_PYTHON: Dict[str, type] = {
 }
 
 
+class _RecallMemoriesInput(BaseModel):
+    query: str = Field(description="Semantic search query for relevant memories")
+    limit: int = Field(default=5, ge=1, le=20, description="Maximum number of memories to return")
+
+
+class _RememberFactInput(BaseModel):
+    content: str = Field(description="Memory content to store")
+    infer: bool = Field(default=True, description="Whether to let the memory system infer related facts")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Optional metadata to attach to the memory")
+
+
+class _UpdateMemoryInput(BaseModel):
+    memory_id: str = Field(description="Memory ID to update")
+    content: str = Field(description="Replacement content for the memory")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Optional metadata override")
+
+
+class _DeleteMemoryInput(BaseModel):
+    memory_id: str = Field(description="Memory ID to delete")
+
+
 def _json_schema_to_pydantic_type(prop_schema: Dict[str, Any], model_name_prefix: str = "nested") -> type:
     """Convert JSON schema type to Python type for Pydantic model creation."""
     prop_type = prop_schema.get("type", "string")
@@ -176,6 +197,16 @@ def _parse_tool_spec(spec: Any) -> tuple[str, Optional[int]]:
     raise ExecutionError(f"Invalid tool spec type: {type(spec)}")
 
 
+def _truncate_tool_output(text: str, max_chars: int) -> str:
+    """Truncate tool output to prevent context overflow in agent conversations."""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + (
+        f"\n\n[Output truncated from {len(text)} to {max_chars} characters. "
+        "Ask for more specific queries to get smaller results.]"
+    )
+
+
 def _make_tool_executor(
     base_tool: Any,
     connection_id: Optional[int],
@@ -209,9 +240,11 @@ def _make_tool_executor(
                 context=ctx.runtime_context,
             )
 
+            from seer.config import config as seer_config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+            max_chars = seer_config.agent_tool_output_max_chars
             if isinstance(result, (dict, list)):
-                return json.dumps(result, indent=2, default=str)
-            return str(result)
+                return _truncate_tool_output(json.dumps(result, indent=2, default=str), max_chars)
+            return _truncate_tool_output(str(result), max_chars)
 
         except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Agent needs error as string
             logger.exception("Tool %s execution failed", base_tool.name)
@@ -258,6 +291,143 @@ async def _bind_tools_for_agent(
         bound_tools.append(structured_tool)
 
     return bound_tools
+
+
+def _format_memory_tool_response(memories: List[Dict[str, Any]]) -> str:
+    """Format memory search results for autonomous agent use."""
+    if not memories:
+        return "No relevant memories found."
+
+    lines = [f"Found {len(memories)} relevant memories:"]
+    for index, memory in enumerate(memories, start=1):
+        text = memory.get("memory", memory.get("text", str(memory)))
+        score = memory.get("score")
+        if isinstance(score, (int, float)):
+            lines.append(f"{index}. {text} (relevance {score:.2f})")
+        else:
+            lines.append(f"{index}. {text}")
+    return "\n".join(lines)
+
+
+def _has_explicit_memory_write(steps: List[Dict[str, Any]]) -> bool:
+    """Detect whether the agent explicitly invoked a memory write tool."""
+    for step in steps:
+        for tool_call in step.get("tool_calls") or []:
+            if tool_call.get("tool") == "remember_fact":
+                return True
+    return False
+
+
+def _stringify_memory_output(final_output: Any, result_value: Any) -> str:
+    """Choose the most useful assistant output representation for memory extraction."""
+    if isinstance(final_output, str) and final_output.strip():
+        return final_output.strip()
+    if isinstance(result_value, str) and result_value.strip():
+        return result_value.strip()
+    if result_value is None:
+        return ""
+    if isinstance(result_value, (dict, list)):
+        return json.dumps(result_value, default=str)
+    return str(result_value).strip()
+
+
+async def _persist_attached_memory_conversation(
+    ctx: NodeExecutionContext,
+    *,
+    node_id: str,
+    memory_bank_id: Optional[str],
+    user_prompt: str,
+    assistant_output: str,
+    steps: List[Dict[str, Any]],
+) -> None:
+    """Persist the latest agent exchange into the attached bank for future recall."""
+    if memory_bank_id is None or not user_prompt.strip() or not assistant_output.strip():
+        return
+
+    runtime_context = ctx.runtime_context
+    if runtime_context is None or runtime_context.memory_access is None:
+        return
+
+    if _has_explicit_memory_write(steps):
+        return
+
+    transcript = f"User: {user_prompt.strip()}\n\nAssistant: {assistant_output.strip()}"
+    metadata: Dict[str, Any] = {
+        "source": "workflow_agent_run",
+        "node_id": node_id,
+    }
+    if runtime_context.workflow_run_id:
+        metadata["workflow_run_id"] = runtime_context.workflow_run_id
+    if runtime_context.thread_id:
+        metadata["thread_id"] = runtime_context.thread_id
+
+    try:
+        stored = await runtime_context.memory_access.add(
+            memory_bank_id,
+            transcript,
+            metadata=metadata,
+            infer=True,
+        )
+        if stored is None:
+            logger.warning("Automatic memory persistence returned no result for agent node '%s'", node_id)
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: memory persistence must not fail the workflow run
+        logger.warning("Automatic memory persistence failed for agent node '%s': %s", node_id, exc)
+
+
+async def _build_attached_memory_tools(ctx: NodeExecutionContext, memory_bank_id: str) -> List[StructuredTool]:
+    """Create bank-bound convenience tools for an attached agent node."""
+    runtime_context = ctx.runtime_context
+    if runtime_context is None or runtime_context.memory_access is None:
+        raise ExecutionError("Agent node requires runtime memory access when memory_bank_id is configured")
+
+    memory_access = runtime_context.memory_access
+
+    async def recall_memories(query: str, limit: int = 5) -> str:
+        memories = await memory_access.search(memory_bank_id, query, limit=limit)
+        return _format_memory_tool_response(memories)
+
+    async def remember_fact(content: str, infer: bool = True, metadata: Optional[Dict[str, Any]] = None) -> str:
+        created = await memory_access.add(memory_bank_id, content, metadata=metadata, infer=infer)
+        if not created:
+            return "No memory was stored."
+        return json.dumps(created, indent=2, default=str)
+
+    async def update_memory(memory_id: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> str:
+        updated = await memory_access.update(memory_bank_id, memory_id, content, metadata=metadata)
+        if not updated:
+            return f"Memory {memory_id} was not found."
+        return json.dumps(updated, indent=2, default=str)
+
+    async def delete_memory(memory_id: str) -> str:
+        deleted = await memory_access.delete(memory_bank_id, memory_id)
+        return f"Deleted memory {memory_id}." if deleted else f"Memory {memory_id} was not found."
+
+    return [
+        StructuredTool.from_function(
+            coroutine=recall_memories,
+            name="recall_memories",
+            description="Search the attached memory bank for relevant prior facts and context.",
+            args_schema=_RecallMemoriesInput,
+        ),
+        StructuredTool.from_function(
+            coroutine=remember_fact,
+            name="remember_fact",
+            description="Store a new memory in the attached memory bank.",
+            args_schema=_RememberFactInput,
+        ),
+        StructuredTool.from_function(
+            coroutine=update_memory,
+            name="update_memory",
+            description="Update an existing memory in the attached memory bank.",
+            args_schema=_UpdateMemoryInput,
+        ),
+        StructuredTool.from_function(
+            coroutine=delete_memory,
+            name="delete_memory",
+            description="Delete an existing memory from the attached memory bank.",
+            args_schema=_DeleteMemoryInput,
+        ),
+    ]
 
 
 def _parse_agent_result(messages: List[Any]) -> tuple[str, List[Dict[str, Any]]]:
@@ -439,6 +609,7 @@ def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
     max_iterations = node.inputs.get("max_iterations", 10)
     temperature = node.inputs.get("temperature", 0.2)
     enable_artifacts = bool(node.inputs.get("enable_artifacts", True))
+    memory_bank_id = node.inputs.get("memory_bank_id")
 
     return {
         "model_id": model_id,
@@ -447,6 +618,7 @@ def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
         "max_iterations": max_iterations,
         "temperature": temperature,
         "enable_artifacts": enable_artifacts,
+        "memory_bank_id": memory_bank_id if isinstance(memory_bank_id, str) else None,
     }
 
 
@@ -461,6 +633,7 @@ def _build_inputs_for_trace(config: Dict[str, Any]) -> Dict[str, Any]:
             for spec in tool_specs
         ],
         "max_iterations": config["max_iterations"],
+        "memory_bank_id": config.get("memory_bank_id"),
     }
 
 
@@ -520,6 +693,73 @@ async def _build_human_message(prompt: str, file_contents: List[Any]) -> tuple[s
         content: List[Any] = [{"type": "text", "text": prompt}] + image_blocks
         return prompt, HumanMessage(content=content)
     return prompt, HumanMessage(content=prompt)
+
+
+def _build_agent_eval_context(ctx: NodeExecutionContext) -> Any:
+    """Build the expression-evaluation context visible to the agent node."""
+    # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+    from seer.core.expr.evaluator import EvaluationContext
+    from seer.core.runtime.state import INTERNAL_STATE_PREFIX
+
+    visible_state = {key: value for key, value in ctx.state.items() if not key.startswith(INTERNAL_STATE_PREFIX)}
+    return EvaluationContext(
+        state=visible_state,
+        locals=ctx.locals_ctx or {},
+        config=ctx.config,
+        trigger=ctx.trigger,
+        vars=ctx.vars,
+    )
+
+
+async def _resolve_agent_file_contents(node: AgentNode, eval_ctx: Any, runtime_context: Any) -> list[Dict[str, Any]]:
+    """Evaluate auxiliary inputs and resolve any attached file references."""
+    from seer.core.expr.evaluator import evaluate_value  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+    reserved_keys = {"model", "prompt", "tools", "max_iterations", "temperature", "enable_artifacts", "memory_bank_id"}
+    auxiliary = {
+        key: evaluate_value(eval_ctx, value)
+        for key, value in node.inputs.items()
+        if key not in reserved_keys
+    }
+    _, file_contents = await _resolve_llm_file_inputs(auxiliary, runtime_context)
+    return file_contents
+
+
+async def _build_prompt_bundle(
+    node: AgentNode,
+    ctx: NodeExecutionContext,
+    config: Dict[str, Any],
+) -> tuple[Dict[str, Any], str, str, Any]:
+    """Prepare trace inputs, rendered prompt, final prompt, and HumanMessage."""
+    from seer.core.expr.evaluator import render_template  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+
+    eval_ctx = _build_agent_eval_context(ctx)
+    file_contents = await _resolve_agent_file_contents(node, eval_ctx, ctx.runtime_context)
+    inputs = _build_inputs_for_trace(config)
+    if file_contents:
+        inputs["file_inputs"] = [{"key": item["key"], "filename": item["filename"]} for item in file_contents]
+
+    rendered_prompt = render_template(eval_ctx, config["prompt_template"])
+    prompt = rendered_prompt
+    memory_bank_id = config["memory_bank_id"]
+
+    if memory_bank_id is not None:
+        if ctx.runtime_context is None or ctx.runtime_context.memory_access is None:
+            raise ExecutionError(f"Agent node '{node.id}' requires runtime memory access for memory_bank_id '{memory_bank_id}'")
+        memory_context = await ctx.runtime_context.memory_access.get_prompt_context(
+            memory_bank_id,
+            current_query=prompt,
+        )
+        if memory_context:
+            prompt = f"{memory_context}\n\n{prompt}"
+
+    prompt, human_message = await _build_human_message(prompt, file_contents)
+    return inputs, rendered_prompt, prompt, human_message
+
+
+def _build_recursion_limit(max_iterations: Any) -> int:
+    """Compute the LangGraph recursion limit from max_iterations."""
+    return max_iterations * 3 if isinstance(max_iterations, int) else 30
 
 
 # =============================================================================
@@ -596,6 +836,153 @@ class AgentNodeType(BaseNodeType):
             return None
         return ToolStrategy(_create_output_model_from_schema(node.id, schema))
 
+    async def _build_bound_tools(
+        self,
+        node: AgentNode,
+        ctx: NodeExecutionContext,
+        services: "RuntimeServices",
+        config: Dict[str, Any],
+    ) -> List[StructuredTool]:
+        """Bind registry tools, attached memory tools, and artifact helpers."""
+        bound_tools = await _bind_tools_for_agent(config["tool_specs"], services, ctx)
+
+        if config["memory_bank_id"] is not None:
+            bound_tools.extend(await _build_attached_memory_tools(ctx, config["memory_bank_id"]))
+
+        if config["enable_artifacts"]:
+            # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+            from seer.core.nodes.artifacts.tool import make_create_artifact_tool
+
+            bound_tools.append(make_create_artifact_tool(ctx, node.id))
+
+        return bound_tools
+
+    async def _invoke_agent(
+        self,
+        *,
+        node: AgentNode,
+        ctx: NodeExecutionContext,
+        services: "RuntimeServices",
+        config: Dict[str, Any],
+        bound_tools: List[StructuredTool],
+        human_message: Any,
+    ) -> Dict[str, Any]:
+        """Create and invoke the LangChain agent with usage tracking callbacks."""
+        model_def = services.model_registry.get(config["model_id"])
+        llm = model_def.get_chat_model(
+            temperature=config["temperature"] if isinstance(config["temperature"], (int, float)) else 0.2
+        )
+        # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+        from langchain.agents.middleware import SummarizationMiddleware
+
+        middleware = [
+            SummarizationMiddleware(
+                model=llm,
+                trigger=("tokens", 100000),
+            ),
+        ]
+        agent = create_agent(
+            model=llm,
+            tools=bound_tools,
+            response_format=self._resolve_response_format(node, services),
+            middleware=middleware,
+        )
+
+        recursion_limit = _build_recursion_limit(config["max_iterations"])
+
+        # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+        from seer.agents.nexus.cost_callback import (
+            CostCapCallbackHandler,
+            clear_chat_runtime_context,
+            set_chat_runtime_context,
+        )
+
+        callbacks = []
+        if ctx.runtime_context:
+            set_chat_runtime_context(ctx.runtime_context)
+            callbacks.append(CostCapCallbackHandler())
+
+        try:
+            return await agent.ainvoke(
+                {"messages": [human_message]},
+                config={
+                    "recursion_limit": recursion_limit,
+                    "callbacks": callbacks,
+                },
+            )
+        finally:
+            if ctx.runtime_context:
+                clear_chat_runtime_context()
+
+    async def _parse_execution_result(
+        self,
+        *,
+        node: AgentNode,
+        ctx: NodeExecutionContext,
+        services: "RuntimeServices",
+        config: Dict[str, Any],
+        rendered_prompt: str,
+        result: Dict[str, Any],
+    ) -> tuple[Any, List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Parse the agent result and persist any attached memory transcript."""
+        messages = result.get("messages", [])
+        final_output, steps = _parse_agent_result(messages)
+        artifacts = _collect_artifacts_from_messages(messages) if config["enable_artifacts"] else []
+        result_value: Any = await self._handle_json_output(node, services, result, final_output)
+        await _persist_attached_memory_conversation(
+            ctx,
+            node_id=node.id,
+            memory_bank_id=config["memory_bank_id"],
+            user_prompt=rendered_prompt,
+            assistant_output=_stringify_memory_output(final_output, result_value),
+            steps=steps,
+        )
+        return result_value, steps, artifacts
+
+    def _build_error_trace(
+        self,
+        node: AgentNode,
+        ctx: NodeExecutionContext,
+        inputs: Dict[str, Any],
+        exc: Exception,
+    ) -> Dict[str, Any]:
+        """Build and store trace data for a failed execution."""
+        trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
+        trace_data = _build_agent_trace(
+            node.id,
+            inputs,
+            "failed",
+            error={"type": exc.__class__.__name__, "message": str(exc)},
+        )
+        error_trace = {trace_key: trace_data}
+        ctx.state.update(error_trace)  # type: ignore[arg-type]
+        return error_trace
+
+    def _build_success_output(
+        self,
+        *,
+        node: AgentNode,
+        ctx: NodeExecutionContext,
+        inputs: Dict[str, Any],
+        success_data: Dict[str, Any],
+        enable_artifacts: bool,
+    ) -> Dict[str, Any]:
+        """Build the final workflow output payload, including traces."""
+        trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
+        artifacts = success_data["artifacts"]
+        output: Dict[str, Any] = {
+            node.id: success_data["result_value"],
+            trace_key: _build_agent_trace(
+                node.id,
+                inputs,
+                "succeeded",
+                success_data=success_data,
+            ),
+        }
+        if enable_artifacts:
+            output[f"{node.id}__artifacts"] = artifacts
+        return output
+
     async def _handle_json_output(
         self,
         node: AgentNode,
@@ -626,7 +1013,6 @@ class AgentNodeType(BaseNodeType):
         validate_against_schema(schema, result_value, schema_id=node.id)
         return result_value
 
-    # pylint: disable=too-many-locals  # Reason: Agent execution requires many context variables
     async def execute_async(
         self,
         node: AgentNode,  # type: ignore[override]
@@ -634,147 +1020,45 @@ class AgentNodeType(BaseNodeType):
         services: "RuntimeServices",
     ) -> Dict[str, Any]:
         """Execute agent node with credit checking and usage tracking."""
-        # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
-        from seer.core.expr.evaluator import EvaluationContext, render_template
-        from seer.core.runtime.state import INTERNAL_STATE_PREFIX
-
-        # Check credit limit
         await self._check_credit_limit(ctx.runtime_context)
-
-        # Build eval context
-        visible_state = {k: v for k, v in ctx.state.items() if not k.startswith(INTERNAL_STATE_PREFIX)}
-        eval_ctx = EvaluationContext(
-            state=visible_state,
-            locals=ctx.locals_ctx or {},
-            config=ctx.config,
-            trigger=ctx.trigger,
-            vars=ctx.vars,
-        )
-
-        # Extract and validate agent configuration
         config = _extract_agent_config(node)
-        model_id = config["model_id"]
-        tool_specs_list = config["tool_specs"]
-        max_iterations = config["max_iterations"]
-        temperature = config["temperature"]
-        enable_artifacts = config["enable_artifacts"]
-
-        # Evaluate auxiliary inputs (non-reserved keys) and resolve file references
-        from seer.core.expr.evaluator import evaluate_value  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-        reserved_keys = {"model", "prompt", "tools", "max_iterations", "temperature", "enable_artifacts"}
-        auxiliary = {
-            key: evaluate_value(eval_ctx, value)
-            for key, value in node.inputs.items()
-            if key not in reserved_keys
-        }
-        _, file_contents = await _resolve_llm_file_inputs(auxiliary, ctx.runtime_context)
-
-        # Build inputs for trace
-        inputs = _build_inputs_for_trace(config)
-        if file_contents:
-            inputs["file_inputs"] = [{"key": f["key"], "filename": f["filename"]} for f in file_contents]
-
-        # Render prompt with state values
-        prompt = render_template(eval_ctx, config["prompt_template"])
-
-        # Build HumanMessage, incorporating file contents if present
-        prompt, human_message = await _build_human_message(prompt, file_contents)
+        inputs, rendered_prompt, prompt, human_message = await _build_prompt_bundle(node, ctx, config)
 
         try:
-            # Bind tools with credentials
-            bound_tools = await _bind_tools_for_agent(tool_specs_list, services, ctx)
-
-            # Inject artifact tool if requested (not in public registry)
-            if enable_artifacts:
-                # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
-                from seer.core.nodes.artifacts.tool import make_create_artifact_tool
-                artifact_tool = make_create_artifact_tool(ctx, node.id)
-                bound_tools.append(artifact_tool)
-
-            # Get LLM chat model
-            model_def = services.model_registry.get(model_id)
-            llm = model_def.get_chat_model(temperature=temperature if isinstance(temperature, (int, float)) else 0.2)
-
-            # Determine response_format for structured output
-            response_format = self._resolve_response_format(node, services)
-
-            # Create agent with optional structured output
-            agent = create_agent(
-                model=llm,
-                tools=bound_tools,
-                response_format=response_format,
+            bound_tools = await self._build_bound_tools(node, ctx, services, config)
+            result = await self._invoke_agent(
+                node=node,
+                ctx=ctx,
+                services=services,
+                config=config,
+                bound_tools=bound_tools,
+                human_message=human_message,
             )
-
-            # Execute agent with recursion limit based on max_iterations
-            # Each iteration can have multiple steps (reasoning + tool call + tool response)
-            # So we multiply by 3 to allow for the full loop
-            recursion_limit = max_iterations * 3 if isinstance(max_iterations, int) else 30
-
-            # Set up cost tracking callback for LLM usage tracking
-            # Only enable callback if runtime context is available (needed for user/billing info)
-            # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
-            from seer.agents.nexus.cost_callback import (
-                CostCapCallbackHandler,
-                set_chat_runtime_context,
-                clear_chat_runtime_context,
+            result_value, steps, artifacts = await self._parse_execution_result(
+                node=node,
+                ctx=ctx,
+                services=services,
+                config=config,
+                rendered_prompt=rendered_prompt,
+                result=result,
             )
-
-            callbacks = []
-            if ctx.runtime_context:
-                set_chat_runtime_context(ctx.runtime_context)
-                callbacks.append(CostCapCallbackHandler())
-
-            try:
-                result = await agent.ainvoke(
-                    {"messages": [human_message]},
-                    config={
-                        "recursion_limit": recursion_limit,
-                        "callbacks": callbacks,
-                    },
-                )
-            finally:
-                if ctx.runtime_context:
-                    clear_chat_runtime_context()
-
-            # Parse agent result
-            messages = result.get("messages", [])
-            final_output, steps = _parse_agent_result(messages)
-
-            # Collect artifacts emitted via create_artifact tool calls
-            artifacts = _collect_artifacts_from_messages(messages) if enable_artifacts else []
-
-            # Handle JSON output mode if specified
-            result_value: Any = await self._handle_json_output(node, services, result, final_output)
-
         except Exception as exc:
-            trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
-            trace_data = _build_agent_trace(
-                node.id, inputs, "failed",
-                error={"type": exc.__class__.__name__, "message": str(exc)},
-            )
-            error_trace = {trace_key: trace_data}
-            ctx.state.update(error_trace)  # type: ignore[arg-type]
+            error_trace = self._build_error_trace(node, ctx, inputs, exc)
             raise ExecutionError(f"Agent node '{node.id}' failed: {exc}", trace_data=error_trace) from exc
 
-        # Build output with trace
-        trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
-        output: Dict[str, Any] = {
-            node.id: result_value,
-            trace_key: _build_agent_trace(
-                node.id, inputs, "succeeded",
-                success_data={
-                    "prompt": prompt,
-                    "tool_names": [t.name for t in bound_tools],
-                    "steps": steps,
-                    "result_value": result_value,
-                    "artifacts": artifacts,
-                },
-            ),
-        }
-
-        if enable_artifacts:
-            output[f"{node.id}__artifacts"] = artifacts
-
+        output = self._build_success_output(
+            node=node,
+            ctx=ctx,
+            inputs=inputs,
+            success_data={
+                "prompt": prompt,
+                "tool_names": [tool.name for tool in bound_tools],
+                "steps": steps,
+                "result_value": result_value,
+                "artifacts": artifacts,
+            },
+            enable_artifacts=config["enable_artifacts"],
+        )
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "Agent node '%s' completed with %d steps, %d artifacts",
