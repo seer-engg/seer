@@ -197,6 +197,16 @@ def _parse_tool_spec(spec: Any) -> tuple[str, Optional[int]]:
     raise ExecutionError(f"Invalid tool spec type: {type(spec)}")
 
 
+def _truncate_tool_output(text: str, max_chars: int) -> str:
+    """Truncate tool output to prevent context overflow in agent conversations."""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + (
+        f"\n\n[Output truncated from {len(text)} to {max_chars} characters. "
+        "Ask for more specific queries to get smaller results.]"
+    )
+
+
 def _make_tool_executor(
     base_tool: Any,
     connection_id: Optional[int],
@@ -230,9 +240,11 @@ def _make_tool_executor(
                 context=ctx.runtime_context,
             )
 
+            from seer.config import config as seer_config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+            max_chars = seer_config.agent_tool_output_max_chars
             if isinstance(result, (dict, list)):
-                return json.dumps(result, indent=2, default=str)
-            return str(result)
+                return _truncate_tool_output(json.dumps(result, indent=2, default=str), max_chars)
+            return _truncate_tool_output(str(result), max_chars)
 
         except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Agent needs error as string
             logger.exception("Tool %s execution failed", base_tool.name)
@@ -860,10 +872,20 @@ class AgentNodeType(BaseNodeType):
         llm = model_def.get_chat_model(
             temperature=config["temperature"] if isinstance(config["temperature"], (int, float)) else 0.2
         )
+        # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+        from langchain.agents.middleware import SummarizationMiddleware
+
+        middleware = [
+            SummarizationMiddleware(
+                model=llm,
+                trigger=("tokens", 100000),
+            ),
+        ]
         agent = create_agent(
             model=llm,
             tools=bound_tools,
             response_format=self._resolve_response_format(node, services),
+            middleware=middleware,
         )
 
         recursion_limit = _build_recursion_limit(config["max_iterations"])

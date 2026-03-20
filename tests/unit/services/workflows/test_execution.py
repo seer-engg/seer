@@ -1448,7 +1448,7 @@ class TestExecuteSavedWorkflowRun:
 
             await execute_saved_workflow_run(run_id=123, user_id=1)
 
-            mock_mark.assert_called_once_with(run, output)
+            mock_mark.assert_called_once_with(run, output, user=run.user)
 
     async def test_logs_and_reraises_http_exception(
         self, mock_workflow_run, mock_user, frozen_time

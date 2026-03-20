@@ -58,6 +58,16 @@ async def capture_workflow_event(
     )
 
 
+async def capture_workflow_run_event(
+    event: str, user_email: str, run_id: str, workflow_id: Any, error: str | None = None,
+) -> None:
+    """Emit a run-level PostHog event (started/completed/failed)."""
+    props: Dict[str, Any] = {"workflow_run_id": run_id, "workflow_id": workflow_id}
+    if error is not None:
+        props["error"] = error[:500]
+    await capture_workflow_event(event=event, user_email=user_email, properties=props)
+
+
 async def capture_kpi_event(
     user_email: str,
     kpi_name: str,
