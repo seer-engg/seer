@@ -131,7 +131,7 @@ async def can_manage_workflow(
 
     - Owner/Admin: Can manage all workflows in the org
     - User: Can manage only their own workflows
-    - Consultant: Cannot manage workflows (only assigned for viewing)
+    - Consultant: Can manage their own workflows and assigned workflows
 
     Args:
         user: The user attempting the action
@@ -149,8 +149,9 @@ async def can_manage_workflow(
         return workflow.user_id == user.id
 
     if membership.role == OrganizationRole.CONSULTANT:
-        # Consultants cannot manage workflows
-        return False
+        if workflow.user_id == user.id:
+            return True
+        return await WorkflowAssignment.exists(workflow=workflow, user=user)
 
     return False
 
