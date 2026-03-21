@@ -22,6 +22,7 @@ from seer.database import (
     parse_run_public_id,
 )
 from seer.database.workflow_models import (
+    ChatExecutionStatus,
     WORKFLOW_ID_PREFIX,
     RUN_ID_PREFIX,
 )
@@ -759,6 +760,10 @@ class TestDeleteWorkflow:
         mock_run = MagicMock()
         mock_run.status = "running"
         mock_run.save = AsyncMock()
+        mock_chat_session = MagicMock()
+        mock_chat_session.current_execution_status = ChatExecutionStatus.RUNNING
+        mock_chat_session.current_execution_task_id = "owner-1"
+        mock_chat_session.save = AsyncMock()
 
         mock_update = AsyncMock()
         mock_trig_delete = AsyncMock()
@@ -767,6 +772,7 @@ class TestDeleteWorkflow:
             """Mimics Tortoise QuerySet: sync construction, awaitable."""
             def __init__(self, items=None):
                 self._items = items or []
+                self.all = AsyncMock(return_value=self._items)
                 self.update = AsyncMock()
                 self.delete = AsyncMock()
 
@@ -777,13 +783,16 @@ class TestDeleteWorkflow:
 
         with patch("seer.api.workflows.services.lifecycle._get_workflow_org_scoped", new=AsyncMock(return_value=mock_workflow)), \
              patch("seer.api.workflows.services.lifecycle.WorkflowRun") as MockWfRun, \
+             patch("seer.api.workflows.services.lifecycle.WorkflowChatSession") as MockChatSession, \
              patch("seer.api.workflows.services.lifecycle.TriggerSubscription") as MockTrigSub, \
              patch("seer.api.workflows.services.lifecycle.publish_collaboration_event", new=AsyncMock(return_value=None)) as mock_publish:
             active_qs = FakeQuerySet(items=[mock_run])
             all_qs = FakeQuerySet()
             all_qs.update = mock_update
+            active_chat_qs = FakeQuerySet(items=[mock_chat_session])
 
             MockWfRun.filter = MagicMock(side_effect=[active_qs, all_qs])
+            MockChatSession.filter.return_value = active_chat_qs
             MockTrigSub.filter.return_value.delete = mock_trig_delete
 
             await delete_workflow(user, "wf_1")
@@ -791,6 +800,22 @@ class TestDeleteWorkflow:
         assert mock_run.status == "cancelled"
         mock_run.save.assert_called_once_with(update_fields=["status"])
         mock_update.assert_called_once_with(workflow_id=None)
+        assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
+        assert mock_chat_session.current_execution_task_id is None
+        assert mock_chat_session.current_execution_finished_at is not None
+        assert mock_chat_session.current_execution_error == {
+            "type": "workflow_deleted",
+            "detail": "Chat execution aborted because the workflow was deleted.",
+            "reason": "workflow_deleted",
+            "status": 410,
+            "workflow_id": "wf_1",
+        }
+        mock_chat_session.save.assert_called_once_with(update_fields=[
+            "current_execution_status",
+            "current_execution_finished_at",
+            "current_execution_error",
+            "current_execution_task_id",
+        ])
         mock_trig_delete.assert_called_once()
         mock_workflow.delete.assert_called_once()
         mock_publish.assert_awaited_once_with(

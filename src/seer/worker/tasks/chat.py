@@ -287,7 +287,18 @@ async def _get_session_if_current_owner(
     phase: str,
 ) -> Optional["WorkflowChatSession"]:
     """Return session only if this task still owns the current execution."""
-    session = await WorkflowChatSession.get(id=session_id)
+    session = await WorkflowChatSession.get_or_none(id=session_id)
+    if session is None:
+        logger.info(
+            "Skipping chat task during %s because session no longer exists",
+            phase,
+            extra={
+                "session_id": session_id,
+                "phase": phase,
+                "task_execution_owner": execution_task_id,
+            },
+        )
+        return None
 
     if execution_task_id and session.current_execution_task_id != execution_task_id:
         logger.info(
