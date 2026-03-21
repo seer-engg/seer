@@ -5,7 +5,7 @@ Tests NodeRuntime class, node execution, and trace key generation.
 """
 # pylint: disable=redefined-outer-name
 # Reason: pytest fixture pattern requires name reuse
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -324,10 +324,10 @@ class TestCreditLimitCheck:
         mock_context.user = MagicMock()
         node_runtime._current_context = mock_context
 
-        # check_credit_limit is imported inside the function from seer.observability.credit_gate
-        with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock):
+        with patch("seer.core.runtime.nodes.check_runtime_credit_limit", new_callable=AsyncMock) as mock_check:
             # Should not raise
             await node_runtime._check_llm_credit_limit_async()
+            mock_check.assert_awaited_once_with(mock_context, ANY)
 
 
 # =============================================================================
