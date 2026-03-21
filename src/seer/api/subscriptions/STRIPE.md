@@ -156,7 +156,7 @@ These are the default LLM credit limits per tier (from `constants.py`):
 
 | Tier | Monthly | 5-Hour Window | Weekly Window | Min Polling Interval |
 |------|---------|---------------|---------------|----------------------|
-| Free | $5.00 | $1.00 | $3.00 | 15 minutes |
+| Free | $1.00 | $1.00 | $1.00 | 15 minutes |
 | Pro | $20.00 | $5.00 | $12.00 | 1 minute |
 | Pro+ | $50.00 | $15.00 | $35.00 | 30 seconds |
 

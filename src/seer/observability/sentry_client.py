@@ -37,7 +37,6 @@ EXPECTED_EXCEPTION_TYPES = (
     "WorkflowLimitExceeded",
     "RunLimitExceeded",
     "MessageLimitExceeded",
-    "TrialExpiredError",
     "CreditLimitExceeded",
     "PollingIntervalTooFast",
     "RunCostCapExceeded",
