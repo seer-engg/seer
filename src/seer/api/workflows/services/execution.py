@@ -353,13 +353,6 @@ async def run_saved_workflow(
                 status=500,
             )
 
-        # Sync triggers for DRAFT
-        spec = WorkflowSpec.model_validate(version.spec)
-        if spec.triggers:
-            # pylint: disable-next=import-outside-toplevel # Reason: Avoid circular import
-            from seer.api.workflows.services.triggers import sync_trigger_subscriptions
-            await sync_trigger_subscriptions(user, workflow, spec, skip_validation=True)
-
     spec = WorkflowSpec.model_validate(version.spec)
     # Pass organization_id for shared connection validation
     await validate_workflow_spec(user, spec, organization_id=workflow.organization_id)
