@@ -175,6 +175,31 @@ async def _can_view_workflow(  # pylint: disable=too-many-return-statements  # R
     return False
 
 
+def _get_workflow_visibility(workflow: Workflow) -> WorkflowVisibility:
+    return getattr(workflow, "visibility", WorkflowVisibility.TEAM)
+
+
+async def _is_workflow_assignee(user: User, workflow: Workflow) -> bool:
+    return await WorkflowAssignment.filter(workflow=workflow, user=user).exists()
+
+
+async def _can_user_manage_workflow(user: User, workflow: Workflow) -> bool:
+    visibility = _get_workflow_visibility(workflow)
+    if visibility == WorkflowVisibility.TEAM:
+        return True
+    if visibility == WorkflowVisibility.PRIVATE:
+        return workflow.user_id == user.id
+    if visibility == WorkflowVisibility.ASSIGNED:
+        return await _is_workflow_assignee(user, workflow)
+    return False
+
+
+async def _can_consultant_manage_workflow(user: User, workflow: Workflow) -> bool:
+    if workflow.user_id == user.id:
+        return True
+    return await _is_workflow_assignee(user, workflow)
+
+
 async def _can_manage_workflow(  # pylint: disable=too-many-return-statements  # Reason: distinct RBAC branch per membership role/visibility
     user: User,
     workflow: Workflow,
@@ -210,15 +235,11 @@ async def _can_manage_workflow(  # pylint: disable=too-many-return-statements  #
 
     # Users can manage TEAM-visible workflows (not just their own)
     if membership.role == OrganizationRole.USER:
-        visibility = getattr(workflow, "visibility", WorkflowVisibility.TEAM)
-        if visibility == WorkflowVisibility.TEAM:
-            return True
-        if visibility == WorkflowVisibility.PRIVATE:
-            return workflow.user_id == user.id
-        if visibility == WorkflowVisibility.ASSIGNED:
-            return await WorkflowAssignment.filter(workflow=workflow, user=user).exists()
+        return await _can_user_manage_workflow(user, workflow)
 
-    # Consultants cannot manage workflows
+    if membership.role == OrganizationRole.CONSULTANT:
+        return await _can_consultant_manage_workflow(user, workflow)
+
     return False
 
 
