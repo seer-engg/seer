@@ -530,6 +530,29 @@ class TestMarkRunSucceeded:
 
             run.refresh_from_db.assert_called_once()
 
+    async def test_clears_interrupt_fields_on_success(self, mock_workflow_run, frozen_time):
+        """Interrupt fields are cleared when run succeeds (prevents stale HITL data)."""
+        from seer.services.workflows.execution import _mark_run_succeeded
+
+        run = mock_workflow_run(
+            pending_interrupt_node_id="hitl_approval",
+            pending_interrupt_data={"type": "hitl", "node_id": "hitl_approval"},
+            interrupt_expires_at=frozen_time,
+        )
+        output = {"result": "success"}
+
+        with patch("seer.services.workflows.execution.WorkflowRun") as mock_run_model:
+            mock_filter = MagicMock()
+            mock_filter.update = AsyncMock()
+            mock_run_model.filter.return_value = mock_filter
+
+            await _mark_run_succeeded(run, output)
+
+            call_kwargs = mock_filter.update.call_args.kwargs
+            assert call_kwargs["pending_interrupt_node_id"] is None
+            assert call_kwargs["pending_interrupt_data"] is None
+            assert call_kwargs["interrupt_expires_at"] is None
+
 
 # =============================================================================
 # TestSendHitlNotifications - Fire-and-forget notifications
@@ -1314,6 +1337,9 @@ class TestExecuteResume:
             call_kwargs = mock_filter.update.call_args.kwargs
             assert call_kwargs["status"] == WorkflowRunStatus.SUCCEEDED
             assert call_kwargs["output"] == {"output": "final_result"}
+            assert call_kwargs["pending_interrupt_node_id"] is None
+            assert call_kwargs["pending_interrupt_data"] is None
+            assert call_kwargs["interrupt_expires_at"] is None
 
     async def test_passes_built_config_directly_on_resume(
         self, mock_workflow_run, mock_user, mock_compiled_workflow, frozen_time
