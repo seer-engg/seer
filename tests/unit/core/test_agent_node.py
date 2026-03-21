@@ -8,7 +8,7 @@ tool binding, tracing, and output modes.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1921,3 +1921,17 @@ def test_create_tool_input_model_none_not_passed_for_defaults():
     Model = _create_tool_input_model("web_search", schema)
     instance = Model(query="test")
     assert instance.search_depth == "basic"
+
+
+@pytest.mark.asyncio
+async def test_agent_credit_check_uses_runtime_helper():
+    """Agent node credit checks must preserve workflow org context."""
+    from seer.core.nodes.registry import node_type_registry
+
+    agent_node_type = node_type_registry.get("agent")
+    mock_context = MagicMock()
+    mock_context.user = MagicMock()
+
+    with patch("seer.core.nodes.agent_node.check_runtime_credit_limit", new_callable=AsyncMock) as mock_check:
+        await agent_node_type._check_credit_limit(mock_context)
+        mock_check.assert_awaited_once_with(mock_context, ANY)

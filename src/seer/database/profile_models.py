@@ -33,6 +33,7 @@ class UserProfile(models.Model):
     display_name = fields.CharField(max_length=100, null=True)
     bio = fields.TextField(null=True)
     avatar_url = fields.CharField(max_length=2048, null=True)
+    avatar_file_id = fields.CharField(max_length=36, null=True)
     social_links = fields.JSONField(default=dict)  # {twitter, linkedin, website}
     tags = fields.JSONField(default=list)  # ["productivity", "marketing"]
     is_public = fields.BooleanField(default=False)

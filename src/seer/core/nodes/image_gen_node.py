@@ -20,6 +20,7 @@ from seer.core.errors import ExecutionError
 from seer.core.nodes.base import BaseNodeType, NodeExecutionContext, TypeRegistrationContext, get_trace_key
 from seer.core.nodes.registry import register_node_type
 from seer.core.schema.models import ImageGenNode
+from seer.runtime_credit_limits import check_runtime_credit_limit
 
 if TYPE_CHECKING:
     from seer.core.expr.evaluator import EvaluationContext
@@ -123,17 +124,7 @@ class ImageGenNodeType(BaseNodeType):
 
     async def _check_credit_limit(self, context: Any) -> None:
         """Check credit limit before image generation call."""
-        if not context or not context.user:
-            return
-
-        from seer.observability.credit_gate import check_credit_limit  # pylint: disable=import-outside-toplevel  # Reason: Late import for optional feature
-
-        try:
-            await check_credit_limit(context.user)
-        except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: Log and continue if credit check fails (except CreditLimitExceeded)
-            if exc.__class__.__name__ == "CreditLimitExceeded":
-                raise
-            logger.error("Credit limit check failed: %s", exc)
+        await check_runtime_credit_limit(context, logger)
 
     def _track_usage_async(self, usage_metadata: Dict[str, Any], context: Any) -> None:
         """Track image gen usage asynchronously (fire and forget)."""

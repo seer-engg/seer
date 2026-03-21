@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Request, status as http_status
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from seer.api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
+from seer.config import config
 from seer.database import User
 from seer.database.profile_models import UserProfile, validate_username
 from seer.database.template_models import TemplateSource, WorkflowTemplate
@@ -20,6 +21,7 @@ class UserProfileResponse(BaseModel):
     display_name: Optional[str] = None
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
+    avatar_file_id: Optional[str] = None
     social_links: Dict[str, Any] = {}
     tags: List[str] = []
     is_public: bool = False
@@ -30,7 +32,7 @@ class UserProfileUpdate(BaseModel):
     username: Optional[str] = None
     display_name: Optional[str] = None
     bio: Optional[str] = None
-    avatar_url: Optional[str] = None
+    avatar_file_id: Optional[str] = None
     social_links: Optional[Dict[str, Any]] = None
     tags: Optional[List[str]] = None
     is_public: Optional[bool] = None
@@ -62,7 +64,27 @@ async def get_user_profile(request: Request):
     profile = await UserProfile.filter(user=user).first()
     if profile is None:
         return UserProfileResponse(username="")
-    return UserProfileResponse.model_validate(profile, from_attributes=True)
+    response = UserProfileResponse.model_validate(profile, from_attributes=True)
+    if profile.avatar_file_id and config.is_workflow_file_system_configured:
+        response.avatar_url = await _resolve_avatar_url(profile.avatar_file_id)
+    return response
+
+
+async def _resolve_avatar_url(file_id: str) -> Optional[str]:
+    """Generate a fresh presigned URL for an avatar file_id."""
+    from seer.core.files.service import WorkflowFileSystem  # pylint: disable=import-outside-toplevel  # Avoid circular imports
+
+    try:
+        fs = WorkflowFileSystem.instance()
+        from seer.database.workflow_models import WorkflowFile  # pylint: disable=import-outside-toplevel  # Avoid circular imports
+        from seer.core.files.service import file_to_ref  # pylint: disable=import-outside-toplevel  # Avoid circular imports
+
+        file = await WorkflowFile.filter(file_id=file_id).first()
+        if not file:
+            return None
+        return await fs.get_presigned_url(file_to_ref(file), config.workflow_file_presigned_url_expiry_seconds, inline=True)
+    except Exception:  # pylint: disable=broad-except  # Fallback: don't break profile load if file resolution fails
+        return None
 
 
 async def _check_username_available(username: str) -> None:
@@ -89,7 +111,7 @@ async def _create_profile(user: User, update_data: UserProfileUpdate) -> UserPro
         username=update_data.username,
         display_name=update_data.display_name,
         bio=update_data.bio,
-        avatar_url=update_data.avatar_url,
+        avatar_file_id=update_data.avatar_file_id,
         social_links=update_data.social_links or {},
         tags=update_data.tags or [],
         is_public=update_data.is_public or False,
@@ -100,7 +122,7 @@ async def _apply_profile_updates(profile: UserProfile, update_data: UserProfileU
     if update_data.username is not None and update_data.username != profile.username:
         await _check_username_available(update_data.username)
         profile.username = update_data.username
-    for field in ("display_name", "bio", "avatar_url", "social_links", "tags", "is_public"):
+    for field in ("display_name", "bio", "avatar_file_id", "social_links", "tags", "is_public"):
         value = getattr(update_data, field)
         if value is not None:
             setattr(profile, field, value)
@@ -119,7 +141,10 @@ async def update_user_profile(
         profile = await _create_profile(user, update_data)
     else:
         await _apply_profile_updates(profile, update_data)
-    return UserProfileResponse.model_validate(profile, from_attributes=True)
+    response = UserProfileResponse.model_validate(profile, from_attributes=True)
+    if profile.avatar_file_id and config.is_workflow_file_system_configured:
+        response.avatar_url = await _resolve_avatar_url(profile.avatar_file_id)
+    return response
 
 
 @router.delete("/templates/{slug}", status_code=http_status.HTTP_204_NO_CONTENT)

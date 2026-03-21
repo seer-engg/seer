@@ -3,6 +3,7 @@ Unit tests for BrowserNode implementation.
 
 Tests schema validation, type environment registration, and workflow spec parsing.
 """
+from unittest.mock import ANY
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -1040,9 +1041,9 @@ class TestBrowserNodeCostTracking:
         mock_context = MagicMock()
         mock_context.user = mock_user
 
-        with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock) as mock_check:
+        with patch("seer.core.nodes.browser_node.check_runtime_credit_limit", new_callable=AsyncMock) as mock_check:
             await browser_node_type._check_credit_limit(mock_context)
-            mock_check.assert_called_once_with(mock_user)
+            mock_check.assert_awaited_once_with(mock_context, ANY)
 
     async def test_check_credit_limit_no_context(self):
         """Test credit check is skipped when no context."""
@@ -1050,9 +1051,9 @@ class TestBrowserNodeCostTracking:
 
         browser_node_type = node_type_registry.get("browser")
 
-        with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock) as mock_check:
+        with patch("seer.core.nodes.browser_node.check_runtime_credit_limit", new_callable=AsyncMock) as mock_check:
             await browser_node_type._check_credit_limit(None)
-            mock_check.assert_not_called()
+            mock_check.assert_awaited_once_with(None, ANY)
 
     async def test_check_credit_limit_no_user(self):
         """Test credit check is skipped when context has no user."""
@@ -1063,9 +1064,9 @@ class TestBrowserNodeCostTracking:
         mock_context = MagicMock()
         mock_context.user = None
 
-        with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock) as mock_check:
+        with patch("seer.core.nodes.browser_node.check_runtime_credit_limit", new_callable=AsyncMock) as mock_check:
             await browser_node_type._check_credit_limit(mock_context)
-            mock_check.assert_not_called()
+            mock_check.assert_awaited_once_with(mock_context, ANY)
 
     async def test_track_usage_calls_cost_tracker(self, mock_user):
         """Test that _track_usage_async calls CostTracker with correct params."""
