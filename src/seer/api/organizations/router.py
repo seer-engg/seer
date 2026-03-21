@@ -12,6 +12,7 @@ from typing import List, Optional
 import stripe
 
 from fastapi import APIRouter, Body, HTTPException, Request, status
+from tortoise.transactions import in_transaction
 
 from seer.api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from seer.api.core.middleware.organization import get_membership, get_organization
@@ -119,6 +120,54 @@ def _require_role(membership: OrganizationMembership, allowed_roles: List[Organi
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Requires one of roles: {[r.value for r in allowed_roles]}",
         )
+
+
+def _has_transferable_subscription(
+    personal_org: Organization | None,
+    personal_subscription: BillingSubscription | None,
+) -> bool:
+    """A subscription can only be transferred if billing linkage exists on the source org."""
+    return bool(
+        personal_org is not None
+        and personal_org.stripe_customer_id is not None
+        and personal_subscription is not None
+        and personal_subscription.tier != SubscriptionTier.FREE
+        and personal_subscription.status in [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]
+    )
+
+
+async def _create_team_with_optional_subscription_transfer(
+    user: User,
+    body: CreateOrganizationRequest,
+    personal_org: Organization | None,
+    personal_subscription: BillingSubscription | None,
+) -> tuple[Organization, bool]:
+    """Create a team and transfer billing in one transaction when required."""
+    should_transfer = (
+        body.transfer_subscription
+        and _has_transferable_subscription(personal_org, personal_subscription)
+    )
+
+    if not should_transfer:
+        organization, _ = await create_team_organization(
+            owner=user,
+            name=body.name,
+            slug=body.slug,
+        )
+        return organization, True
+
+    assert personal_org is not None
+
+    async with in_transaction() as conn:
+        organization, _ = await create_team_organization(
+            owner=user,
+            name=body.name,
+            slug=body.slug,
+            conn=conn,
+        )
+        await transfer_subscription_between_orgs(personal_org, organization, conn=conn)
+
+    return organization, False
 
 
 async def _publish_org_event(
@@ -244,38 +293,23 @@ async def create_organization(
     if personal_org:
         personal_subscription = await BillingSubscription.get_or_none(organization=personal_org)
 
-    has_transferable_subscription = (
-        personal_subscription is not None
-        and personal_subscription.tier != SubscriptionTier.FREE
-        and personal_subscription.status in [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]
-    )
-
     # 2. Create the team organization (includes FREE subscription)
     try:
-        organization, _ = await create_team_organization(
-            owner=user,
-            name=body.name,
-            slug=body.slug,
+        organization, checkout_required = await _create_team_with_optional_subscription_transfer(
+            user=user,
+            body=body,
+            personal_org=personal_org,
+            personal_subscription=personal_subscription,
         )
     except ValueError as e:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Invalid organization",
-            detail=str(e),
-            status=400,
-        )
-
-    # 3. Handle subscription based on transfer_subscription flag
-    checkout_required = False
-
-    if has_transferable_subscription and personal_org and body.transfer_subscription:
-        # Transfer the subscription from personal org to team org
-        await transfer_subscription_between_orgs(personal_org, organization)
-        checkout_required = False
-    else:
-        # Team already has FREE tier subscription from create_team_organization
-        # Team needs checkout to get a paid subscription
-        checkout_required = True
+        if str(e).startswith("Organization slug already exists:"):
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Invalid organization",
+                detail=str(e),
+                status=400,
+            )
+        raise
 
     return OrganizationResponse(
         id=organization.id,

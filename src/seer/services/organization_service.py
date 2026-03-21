@@ -9,6 +9,8 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
+from tortoise.backends.base.client import BaseDBAsyncClient
+
 from seer.database import Organization, OrganizationMembership, User
 from seer.database.organization_models import (
     MembershipStatus,
@@ -126,6 +128,7 @@ async def create_team_organization(
     owner: User,
     name: str,
     slug: Optional[str] = None,
+    conn: BaseDBAsyncClient | None = None,
 ) -> Tuple[Organization, OrganizationMembership]:
     """
     Create a team organization.
@@ -149,12 +152,18 @@ async def create_team_organization(
         slug = base_slug
 
         # Check uniqueness and append suffix if needed
-        existing = await Organization.filter(slug=slug).exists()
+        existing_query = Organization.filter(slug=slug)
+        if conn is not None:
+            existing_query = existing_query.using_db(conn)
+        existing = await existing_query.exists()
         if existing:
             slug = f"{base_slug}-{generate_unique_suffix()}"
 
     # Verify slug uniqueness
-    if await Organization.filter(slug=slug).exists():
+    slug_query = Organization.filter(slug=slug)
+    if conn is not None:
+        slug_query = slug_query.using_db(conn)
+    if await slug_query.exists():
         raise ValueError(f"Organization slug already exists: {slug}")
 
     # Create the organization
@@ -164,6 +173,7 @@ async def create_team_organization(
         type=OrganizationType.TEAM,
         owner=owner,
         settings={},
+        using_db=conn,
     )
 
     # Create owner membership
@@ -173,6 +183,7 @@ async def create_team_organization(
         role=OrganizationRole.OWNER,
         status=MembershipStatus.ACTIVE,
         joined_at=datetime.now(timezone.utc),
+        using_db=conn,
     )
 
     # V2: Create FREE subscription for team (checkout required for paid tier)
@@ -183,6 +194,7 @@ async def create_team_organization(
             "tier": SubscriptionTier.FREE,
             "status": SubscriptionStatus.ACTIVE,
         },
+        using_db=conn,
     )
 
     logger.info(

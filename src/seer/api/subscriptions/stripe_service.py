@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Tuple, Union
 
 import stripe
+from tortoise.backends.base.client import BaseDBAsyncClient
 from tortoise.transactions import in_transaction
 
 from seer.config import config
@@ -608,6 +609,7 @@ async def handle_subscription_deleted(stripe_subscription: dict) -> Optional[Bil
 async def transfer_subscription_between_orgs(
     source_org: Organization,
     target_org: Organization,
+    conn: BaseDBAsyncClient | None = None,
 ) -> None:
     """
     Transfer billing from one organization to another.
@@ -627,17 +629,19 @@ async def transfer_subscription_between_orgs(
     if not source_org.stripe_customer_id:
         raise ValueError(f"Source organization {source_org.id} has no Stripe customer")
 
+    get_kwargs = {"using_db": conn} if conn is not None else {}
+
     # Get the source subscription
-    source_sub = await BillingSubscription.get_or_none(organization=source_org)
+    source_sub = await BillingSubscription.get_or_none(organization=source_org, **get_kwargs)
     if not source_sub:
         raise ValueError(f"Source organization {source_org.id} has no subscription")
 
-    stripe_customer = await StripeCustomer.get(id=source_org.stripe_customer_id)
+    stripe_customer = await StripeCustomer.get(id=source_org.stripe_customer_id, **get_kwargs)
 
-    async with in_transaction() as conn:
+    async def _transfer_in_db(tx_conn: BaseDBAsyncClient) -> None:
         # Lock both organizations
-        locked_source = await Organization.select_for_update().using_db(conn).get(id=source_org.id)
-        locked_target = await Organization.select_for_update().using_db(conn).get(id=target_org.id)
+        locked_source = await Organization.select_for_update().using_db(tx_conn).get(id=source_org.id)
+        locked_target = await Organization.select_for_update().using_db(tx_conn).get(id=target_org.id)
 
         # Transfer stripe_customer FK
         locked_target.stripe_customer_id = locked_source.stripe_customer_id
@@ -645,7 +649,7 @@ async def transfer_subscription_between_orgs(
         locked_target.payment_method_added_at = locked_source.payment_method_added_at
         await locked_target.save(
             update_fields=["stripe_customer_id", "has_payment_method", "payment_method_added_at"],
-            using_db=conn
+            using_db=tx_conn
         )
 
         # Clear source org's billing
@@ -654,29 +658,35 @@ async def transfer_subscription_between_orgs(
         locked_source.payment_method_added_at = None
         await locked_source.save(
             update_fields=["stripe_customer_id", "has_payment_method", "payment_method_added_at"],
-            using_db=conn
+            using_db=tx_conn
         )
 
         # Delete any existing subscription on target org (e.g., FREE created by create_team_organization)
-        await BillingSubscription.filter(organization=locked_target).using_db(conn).delete()
+        await BillingSubscription.filter(organization=locked_target).using_db(tx_conn).delete()
 
         # Move subscription to target org
         source_sub.organization = locked_target
-        await source_sub.save(update_fields=["organization_id"], using_db=conn)
+        await source_sub.save(update_fields=["organization_id"], using_db=tx_conn)
 
         # Transfer overage settings if exists
-        source_overage = await OverageSettings.get_or_none(organization=source_org, using_db=conn)
+        source_overage = await OverageSettings.get_or_none(organization=source_org, using_db=tx_conn)
         if source_overage:
             source_overage.organization = locked_target
-            await source_overage.save(update_fields=["organization_id"], using_db=conn)
+            await source_overage.save(update_fields=["organization_id"], using_db=tx_conn)
 
         # Create FREE tier subscription for source org
         await BillingSubscription.create(
             organization=locked_source,
             tier=SubscriptionTier.FREE,
             status=SubscriptionStatus.ACTIVE,
-            using_db=conn,
+            using_db=tx_conn,
         )
+
+    if conn is None:
+        async with in_transaction() as tx_conn:
+            await _transfer_in_db(tx_conn)
+    else:
+        await _transfer_in_db(conn)
 
     # Update Stripe customer metadata (outside transaction)
     try:
