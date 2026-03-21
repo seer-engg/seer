@@ -21,7 +21,6 @@ from seer.database.subscription_models import (
     SubscriptionTier,
 )
 from seer.logger import get_logger
-from seer.services.clerk_service import set_active_organization
 
 logger = get_logger(__name__)
 
@@ -238,8 +237,8 @@ async def switch_user_organization(
     """
     Switch a user to a different organization.
 
-    Updates Clerk metadata so the JWT includes the new org_id.
-    Frontend must call getToken() after this to get updated JWT.
+    Persists the active organization in the database so subsequent
+    requests resolve org context without requiring a token refresh.
 
     Args:
         user: The user switching organizations
@@ -261,8 +260,8 @@ async def switch_user_organization(
     if not membership:
         raise ValueError(f"User is not an active member of organization {org_id}")
 
-    # Update Clerk metadata
-    await set_active_organization(user.user_id, org_id)
+    user.active_organization_id = org_id
+    await user.save(update_fields=["active_organization_id"])
 
     await membership.fetch_related("organization")
 

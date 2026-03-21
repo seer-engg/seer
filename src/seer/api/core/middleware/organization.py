@@ -1,11 +1,11 @@
 """
 Organization context middleware.
 
-This middleware extracts the active organization from JWT claims and
+This middleware extracts the active organization from the database and
 attaches the organization and membership to the request state.
 
-The active_organization_id is stored in Clerk's user.publicMetadata
-and is included in JWT claims via the Clerk JWT template.
+The active_organization_id is stored on the User row and repaired
+automatically when it is missing or points to an invalid membership.
 """
 from typing import Optional
 
@@ -22,13 +22,14 @@ logger = get_logger("api.middleware.organization")
 
 class OrganizationContextMiddleware(BaseHTTPMiddleware):
     """
-    Extracts organization context from JWT claims.
+    Extracts organization context from the authenticated database user.
 
     After authentication, this middleware:
-    1. Reads active_organization_id from JWT claims
+    1. Reads active_organization_id from the database user
     2. Validates user's membership in that organization
     3. Attaches organization and membership to request.state
     4. Falls back to personal org if no valid org is specified
+    5. Repairs persisted active_organization_id when needed
 
     Request State (after middleware):
         - request.state.organization: Organization model instance
@@ -45,9 +46,7 @@ class OrganizationContextMiddleware(BaseHTTPMiddleware):
         if db_user is None:
             return await call_next(request)
 
-        # Get org_id from JWT claims (set via Clerk publicMetadata)
-        auth_user = getattr(request.state, "user", None)
-        org_id = self._extract_org_id(auth_user)
+        org_id = self._extract_org_id(db_user)
 
         if org_id:
             # Validate membership in the specified organization
@@ -58,9 +57,8 @@ class OrganizationContextMiddleware(BaseHTTPMiddleware):
                 request.state.membership = membership
                 return await call_next(request)
             # User claims an org they're not a member of
-            # This could happen if they were removed from a team
             logger.warning(
-                "User %s claims org %s but has no active membership",
+                "User %s has invalid active org %s with no active membership",
                 db_user.user_id,
                 org_id,
             )
@@ -77,23 +75,17 @@ class OrganizationContextMiddleware(BaseHTTPMiddleware):
             )
 
         organization, membership = org_result
+        await self._persist_active_org(db_user, organization.id)
         request.state.organization = organization
         request.state.membership = membership
 
         return await call_next(request)
 
-    def _extract_org_id(self, auth_user) -> Optional[int]:
+    def _extract_org_id(self, db_user) -> Optional[int]:
         """
-        Extract active_organization_id from JWT claims.
-
-        The active_organization_id is set in Clerk publicMetadata
-        and included in JWT via the Clerk JWT template.
+        Extract active_organization_id from the authenticated DB user.
         """
-        if auth_user is None:
-            return None
-
-        claims = getattr(auth_user, "claims", {}) or {}
-        org_id = claims.get("active_organization_id")
+        org_id = getattr(db_user, "active_organization_id", None)
 
         if org_id is None:
             return None
@@ -101,7 +93,7 @@ class OrganizationContextMiddleware(BaseHTTPMiddleware):
         try:
             return int(org_id)
         except (ValueError, TypeError):
-            logger.warning("Invalid active_organization_id in JWT: %s", org_id)
+            logger.warning("Invalid active_organization_id on user %s: %s", db_user.user_id, org_id)
             return None
 
     async def _get_active_membership(
@@ -150,6 +142,14 @@ class OrganizationContextMiddleware(BaseHTTPMiddleware):
         # pylint: disable-next=import-outside-toplevel  # Reason: avoids circular import between middleware and service layer
         from seer.services.organization_service import create_personal_organization
         return await create_personal_organization(db_user)
+
+    async def _persist_active_org(self, db_user, org_id: int) -> None:
+        """Persist active organization when fallback or repair logic changes it."""
+        if getattr(db_user, "active_organization_id", None) == org_id:
+            return
+
+        db_user.active_organization_id = org_id
+        await db_user.save(update_fields=["active_organization_id"])
 
 
 def get_organization(request: Request) -> Organization:
