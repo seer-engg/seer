@@ -41,6 +41,19 @@ async def test_check_runtime_credit_limit_without_organization_uses_user_only():
 
 
 @pytest.mark.asyncio
+async def test_check_runtime_credit_limit_tolerates_sync_test_double_context():
+    """Plain MagicMock contexts should not be treated as async org resolvers."""
+    mock_user = MagicMock()
+    context = MagicMock()
+    context.user = mock_user
+
+    with patch("seer.observability.credit_gate.check_credit_limit", new_callable=AsyncMock) as mock_check:
+        await check_runtime_credit_limit(context, logging.getLogger(__name__))
+
+    mock_check.assert_awaited_once_with(mock_user, context.get_organization.return_value)
+
+
+@pytest.mark.asyncio
 async def test_workflow_runtime_context_caches_organization_lookup():
     """Repeated credit checks should not refetch the same organization."""
     mock_org = MagicMock()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any
 
@@ -14,7 +15,8 @@ async def check_runtime_credit_limit(context: Any, logger: logging.Logger) -> No
     organization = None
     get_organization = getattr(context, "get_organization", None)
     if callable(get_organization):
-        organization = await get_organization()
+        maybe_organization = get_organization()
+        organization = await maybe_organization if inspect.isawaitable(maybe_organization) else maybe_organization
 
     try:
         await check_credit_limit(context.user, organization)
