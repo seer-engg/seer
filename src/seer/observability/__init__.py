@@ -10,13 +10,11 @@ from seer.observability.exceptions import (
     CreditLimitExceeded,
     PollingIntervalTooFast,
     RunLimitExceeded,
-    TrialExpiredError,
     UsageLimitError,
     WorkflowLimitExceeded,
 )
 from seer.observability.models import TierLimits
 from seer.observability.service import (
-    get_account_age_days,
     get_billing_period_for_org,
     get_effective_billing_period,
     get_effective_limits,
@@ -27,7 +25,6 @@ from seer.observability.service import (
     get_limits_for_user,
     get_subscription_for_org,
     get_subscription_for_user,
-    is_trial_expired,
     resolve_org_tier,
     resolve_user_tier,
 )
@@ -70,8 +67,6 @@ __all__ = [
     "get_limits_for_tier",
     "get_limits_for_user",
     "resolve_user_tier",
-    "get_account_age_days",
-    "is_trial_expired",
     "get_subscription_for_user",
     # Service functions - Organization-scoped
     "resolve_org_tier",
@@ -108,7 +103,6 @@ __all__ = [
     "UsageLimitError",
     "WorkflowLimitExceeded",
     "RunLimitExceeded",
-    "TrialExpiredError",
     "CreditLimitExceeded",
     "PollingIntervalTooFast",
     # Sentry error monitoring

@@ -5,7 +5,7 @@ Tests:
 - ClerkAuthMiddleware.dispatch: JWT verification flow
 - _verify_token: Token validation
 - _create_auth_user: User construction from claims
-- _check_access_gates: Trial/payment gates
+- _check_access_gates: Payment gates
 - Token extraction from headers and query params
 - Public path handling
 """
@@ -445,70 +445,43 @@ class TestCheckAccessGates:
     """Tests for _check_access_gates method."""
 
     @pytest.mark.asyncio
-    async def test_check_access_gates_trial_expired(self, mock_request, mock_db_user):
-        """Test that expired trial returns 402."""
-        with patch("seer.auth.clerk_verifier.PyJWKClient"), \
-             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial, \
-             patch("seer.api.core.middleware.auth.get_account_age_days") as mock_age:
-            mock_trial.return_value = True
-            mock_age.return_value = 35
-
+    async def test_check_access_gates_allows_authenticated_user_without_payment_block(self, mock_request, mock_db_user):
+        """Test that account age no longer blocks access."""
+        with patch("seer.auth.clerk_verifier.PyJWKClient"):
             middleware = ClerkAuthMiddleware(
                 app=MagicMock(),
                 jwks_url="https://clerk.example.com/.well-known/jwks.json",
                 issuer="https://clerk.example.com",
             )
-
-            result = await middleware._check_access_gates(mock_request, mock_db_user)
-
-            assert result is not None
-            assert result.status_code == 402
-
-    @pytest.mark.asyncio
-    async def test_check_access_gates_no_trial_expired(self, mock_request, mock_db_user):
-        """Test that valid trial returns None."""
-        with patch("seer.auth.clerk_verifier.PyJWKClient"), \
-             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial:
-            mock_trial.return_value = False
-
-            middleware = ClerkAuthMiddleware(
-                app=MagicMock(),
-                jwks_url="https://clerk.example.com/.well-known/jwks.json",
-                issuer="https://clerk.example.com",
-            )
-            # Mock payment method gate to skip it
             middleware._check_payment_method_gate = AsyncMock(return_value=None)
 
             result = await middleware._check_access_gates(mock_request, mock_db_user)
 
             assert result is None
+            middleware._check_payment_method_gate.assert_awaited_once_with(mock_db_user)
 
     @pytest.mark.asyncio
-    async def test_payment_exempt_path_skips_trial_gate(self, mock_db_user):
-        """Test that payment-exempt paths skip trial expiry gate."""
+    async def test_payment_exempt_path_skips_payment_gate(self, mock_db_user):
+        """Test that payment-exempt paths skip payment gate checks."""
         # Setup request for payment-exempt path
         request = MagicMock()
         request.method = "GET"
         request.url.path = "/api/subscriptions/checkout"
         request.scope = {"path": "/api/subscriptions/checkout"}
 
-        with patch("seer.auth.clerk_verifier.PyJWKClient"), \
-             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial:
-            # Trial is expired, but should be ignored for payment-exempt path
-            mock_trial.return_value = True
-
+        with patch("seer.auth.clerk_verifier.PyJWKClient"):
             middleware = ClerkAuthMiddleware(
                 app=MagicMock(),
                 jwks_url="https://clerk.example.com/.well-known/jwks.json",
                 issuer="https://clerk.example.com",
             )
+            middleware._check_payment_method_gate = AsyncMock(return_value=MagicMock())
 
             result = await middleware._check_access_gates(request, mock_db_user)
 
             # Should return None (no gate applied)
             assert result is None
-            # Trial check should not even be called
-            mock_trial.assert_not_called()
+            middleware._check_payment_method_gate.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_payment_exempt_path_skips_payment_method_gate(self, mock_db_user):
@@ -520,9 +493,7 @@ class TestCheckAccessGates:
         request.scope = {"path": "/api/usage"}
 
         with patch("seer.auth.clerk_verifier.PyJWKClient"), \
-             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial, \
              patch("seer.database.organization_models.Organization.get_or_none") as mock_billing:
-            mock_trial.return_value = False
             # User has no payment method
             mock_billing.return_value = None
 
@@ -548,41 +519,37 @@ class TestCheckAccessGates:
         request.url.path = "/api/usage/analytics/daily"
         request.scope = {"path": "/api/usage/analytics/daily"}
 
-        with patch("seer.auth.clerk_verifier.PyJWKClient"), \
-             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial:
-            mock_trial.return_value = True  # Trial expired
-
+        with patch("seer.auth.clerk_verifier.PyJWKClient"):
             middleware = ClerkAuthMiddleware(
                 app=MagicMock(),
                 jwks_url="https://clerk.example.com/.well-known/jwks.json",
                 issuer="https://clerk.example.com",
             )
+            middleware._check_payment_method_gate = AsyncMock(return_value=MagicMock())
 
             result = await middleware._check_access_gates(request, mock_db_user)
 
             # Should skip gate
             assert result is None
-            mock_trial.assert_not_called()
+            middleware._check_payment_method_gate.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_non_payment_exempt_path_enforces_gates(self, mock_db_user):
-        """Test that non-payment-exempt paths still enforce gates."""
+        """Test that non-payment-exempt paths still enforce payment gate."""
         # Setup request for regular workflow path
         request = MagicMock()
         request.method = "GET"
         request.url.path = "/api/v1/workflows"
         request.scope = {"path": "/api/v1/workflows"}
 
-        with patch("seer.auth.clerk_verifier.PyJWKClient"), \
-             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial, \
-             patch("seer.api.core.middleware.auth.get_account_age_days") as mock_age:
-            mock_trial.return_value = True
-            mock_age.return_value = 35
-
+        with patch("seer.auth.clerk_verifier.PyJWKClient"):
             middleware = ClerkAuthMiddleware(
                 app=MagicMock(),
                 jwks_url="https://clerk.example.com/.well-known/jwks.json",
                 issuer="https://clerk.example.com",
+            )
+            middleware._check_payment_method_gate = AsyncMock(
+                return_value=MagicMock(status_code=402)
             )
 
             result = await middleware._check_access_gates(request, mock_db_user)
@@ -590,8 +557,7 @@ class TestCheckAccessGates:
             # Should return 402 error
             assert result is not None
             assert result.status_code == 402
-            # Trial check should be called
-            mock_trial.assert_called_once()
+            middleware._check_payment_method_gate.assert_awaited_once_with(mock_db_user)
 
 
 # =============================================================================
@@ -653,12 +619,10 @@ class TestDispatch:
 
         with patch("seer.auth.clerk_verifier.PyJWKClient"), \
              patch("seer.api.core.middleware.auth.is_public_path") as mock_is_public, \
-             patch("seer.api.core.middleware.auth.User") as MockUser, \
-             patch("seer.api.core.middleware.auth.is_trial_expired") as mock_trial:
+             patch("seer.api.core.middleware.auth.User") as MockUser:
 
             mock_is_public.return_value = False
             MockUser.get_or_create_from_auth = AsyncMock(return_value=mock_db_user)
-            mock_trial.return_value = False
 
             middleware = ClerkAuthMiddleware(
                 app=MagicMock(),

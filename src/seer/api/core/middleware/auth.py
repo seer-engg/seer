@@ -15,11 +15,6 @@ from seer.database import User
 from seer.database.models import UserSettings
 from seer.database.organization_models import OrganizationType
 from seer.logger import get_logger
-from seer.observability import (
-    TrialExpiredError,
-    get_account_age_days,
-    is_trial_expired,
-)
 
 logger = get_logger("api.middleware.auth")
 
@@ -124,23 +119,14 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
             )
 
     async def _check_access_gates(self, request: Request, db_user: User) -> Optional[JSONResponse]:
-        """Check trial expiry and payment method gates. Returns error response or None."""
+        """Check payment-related access gates. Returns error response or None."""
 
         # Skip all payment gates for payment-exempt paths
         path = request.scope.get("path") or request.url.path
         if is_payment_exempt_path(path):
             return None
 
-        # Phase 2: Account Day Limit Gate
-        if await is_trial_expired(db_user):
-            days_since_signup = await get_account_age_days(db_user)
-            error = TrialExpiredError(days_since_signup=days_since_signup)
-            return JSONResponse(
-                status_code=402,
-                content=error.to_dict(),
-            )
-
-        # Phase 3: Payment Method Gate
+        # Payment Method Gate
         payment_gate_response = await self._check_payment_method_gate(db_user)
         if payment_gate_response:
             return payment_gate_response

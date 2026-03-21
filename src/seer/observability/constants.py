@@ -39,7 +39,7 @@ class TieredUsageLimits(BaseSettings):
     # Account Day Limits
     # ============================================================================
 
-    ACCOUNT_DAY_LIMIT_FREE: int = Field(default=14)  # 14-day trial
+    ACCOUNT_DAY_LIMIT_FREE: int = Field(default=-1)  # No signup-age limit
     ACCOUNT_DAY_LIMIT_PRO: int = Field(default=-1)  # No limit
     ACCOUNT_DAY_LIMIT_PRO_PLUS: int = Field(default=-1)  # No limit
 
@@ -55,7 +55,7 @@ class TieredUsageLimits(BaseSettings):
     # LLM Credit Limits (Monthly, in USD)
     # ============================================================================
 
-    LLM_CREDITS_FREE: float = Field(default=5.00)
+    LLM_CREDITS_FREE: float = Field(default=1.00)
     LLM_CREDITS_PRO: float = Field(default=20.00)
     LLM_CREDITS_PRO_PLUS: float = Field(default=50.00)
 
@@ -71,7 +71,7 @@ class TieredUsageLimits(BaseSettings):
     # LLM Credit Limits (Weekly Rolling Window, in USD)
     # ============================================================================
 
-    LLM_CREDITS_WEEKLY_FREE: float = Field(default=3.00)
+    LLM_CREDITS_WEEKLY_FREE: float = Field(default=1.00)
     LLM_CREDITS_WEEKLY_PRO: float = Field(default=12.00)
     LLM_CREDITS_WEEKLY_PRO_PLUS: float = Field(default=35.00)
 
