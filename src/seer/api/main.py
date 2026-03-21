@@ -214,7 +214,7 @@ if config.is_posthog_configured:
 app.add_middleware(UsageLimitMiddleware)
 logger.info("🔒 Usage limit middleware enabled")
 
-# Organization context middleware - extracts org from JWT claims
+# Organization context middleware - resolves org from persisted user context
 # must be AFTER auth middleware to have db_user set
 app.add_middleware(OrganizationContextMiddleware)
 logger.info("🏢 Organization context middleware enabled")

@@ -11,6 +11,7 @@ import pytest
 from tortoise.exceptions import IntegrityError
 
 from seer.database.models import User, UserSettings
+from seer.database.organization_models import Organization, OrganizationType
 
 
 # =============================================================================
@@ -67,6 +68,7 @@ async def test_user_nullable_fields(db_engine):
     assert user.last_name is None
     assert user.claims is None
     assert user.signup_source is None
+    assert user.active_organization_id is None
 
 
 @pytest.mark.integration
@@ -142,6 +144,27 @@ async def test_user_update(db_engine):
     assert user.email == "new@example.com"
     assert user.first_name == "New"
     assert user.last_name == "Name"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_user_active_organization_id_storage(db_engine):
+    """Test storing the active organization ID on the user record."""
+    user = await User.create(user_id="active_org_user", email="active@example.com")
+    organization = await Organization.create(
+        name="Active Org",
+        slug="active-org-user",
+        type=OrganizationType.PERSONAL,
+        owner=user,
+        settings={},
+    )
+
+    user.active_organization_id = organization.id
+    await user.save(update_fields=["active_organization_id"])
+
+    await user.refresh_from_db()
+
+    assert user.active_organization_id == organization.id
 
 
 # =============================================================================

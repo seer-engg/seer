@@ -24,6 +24,7 @@ class User(models.Model):
     last_name = fields.CharField(max_length=255, null=True)
     claims = fields.JSONField(null=True)
     signup_source = fields.CharField(max_length=50, null=True)
+    active_organization_id = fields.IntField(null=True)
     default_workflow_creation_mode = fields.CharField(max_length=20, default="ASK_FIRST")
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
@@ -47,8 +48,8 @@ class User(models.Model):
         - An owner OrganizationMembership
         - A FREE tier BillingSubscription
 
-        After creation, Clerk metadata is updated with the personal org ID
-        so the JWT includes active_organization_id on subsequent requests.
+        After creation, the user's active organization is initialized to
+        their personal organization.
         """
         defaults: Dict[str, Any] = {
             "email": auth_user.email,
@@ -94,33 +95,21 @@ class User(models.Model):
         - Personal Organization
         - Owner membership
         - Billing profile
-        - Updates Clerk metadata with active_organization_id
+        - Sets active_organization_id to the personal organization
 
         Note: This uses lazy imports to avoid circular dependencies.
         """
         # Lazy import to avoid circular dependency
         # pylint: disable=import-outside-toplevel  # Reason: avoids circular import between database models and service layer
         from seer.services.organization_service import create_personal_organization
-        from seer.services.clerk_service import set_active_organization  # pylint: disable=import-outside-toplevel  # Reason: avoids circular import
         from seer.logger import get_logger  # pylint: disable=import-outside-toplevel  # Reason: avoids circular import
 
         logger = get_logger("database.models")
 
         try:
             organization, _ = await create_personal_organization(user)
-
-            # Set personal org as active in Clerk metadata
-            # This ensures the JWT includes active_organization_id on next token refresh
-            try:
-                await set_active_organization(user.user_id, organization.id)
-            except Exception as clerk_err:  # pylint: disable=broad-exception-caught  # Reason: Clerk API failure shouldn't block user signup
-                # Log but don't fail - Clerk metadata is nice-to-have
-                # The middleware will fall back to personal org anyway
-                logger.warning(
-                    "Failed to set Clerk metadata for user %s: %s",
-                    user.user_id,
-                    clerk_err,
-                )
+            user.active_organization_id = organization.id
+            await user.save(update_fields=["active_organization_id"])
 
             logger.info(
                 "Set up new user %s with personal org %s",

@@ -296,8 +296,7 @@ async def switch_organization(
     """
     Switch to a different organization.
 
-    Updates Clerk user metadata so JWT includes the new org_id.
-    Frontend must call getToken() after this to get updated JWT.
+    Persists the new active organization immediately on the user record.
     """
     user = _require_user(request)
 
@@ -319,7 +318,7 @@ async def switch_organization(
             updated_at=membership.organization.updated_at,
         ),
         role=membership.role,
-        message="Organization switched. Please refresh your token.",
+        message="Organization switched.",
     )
 
 
