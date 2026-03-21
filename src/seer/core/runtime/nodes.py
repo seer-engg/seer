@@ -32,6 +32,7 @@ from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.state import INTERNAL_STATE_PREFIX, WorkflowState
 from seer.core.schema.models import Node
 from seer.core.schema.schema_registry import SchemaRegistry
+from seer.runtime_credit_limits import check_runtime_credit_limit
 
 logger = logging.getLogger(__name__)
 
@@ -146,17 +147,7 @@ class NodeRuntime:
         """
         Run the credit gate in async contexts before an LLM call.
         """
-        if not self._current_context or not self._current_context.user:
-            return
-
-        from seer.observability.credit_gate import check_credit_limit
-
-        try:
-            await check_credit_limit(self._current_context.user)
-        except Exception as exc:  # noqa: BLE001  pylint: disable=broad-exception-caught  # Defensive: propagate credit failures only
-            if exc.__class__.__name__ == "CreditLimitExceeded":
-                raise
-            logger.error("Credit limit check failed: %s", exc)
+        await check_runtime_credit_limit(self._current_context, logger)
 
     def _track_llm_usage_async(self, usage_metadata: Dict[str, Any]) -> None:
         """
