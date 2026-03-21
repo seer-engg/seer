@@ -7,6 +7,7 @@ Tests cover:
 - Team creation with transfer_subscription=false (creates FREE team, requires checkout)
 - checkout_required flag in response
 """
+from contextlib import asynccontextmanager
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,6 +20,12 @@ from seer.database.subscription_models import (
 
 
 pytestmark = pytest.mark.asyncio
+
+
+@asynccontextmanager
+async def mock_transaction(conn):
+    """Mock async context manager for in_transaction()."""
+    yield conn
 
 
 class TestTeamCreationBilling:
@@ -80,6 +87,103 @@ class TestTeamCreationBilling:
         assert has_transferable_subscription is True
         assert request_body.transfer_subscription is True
         # When both are true, checkout_required should be False
+
+    async def test_paid_tier_without_stripe_customer_skips_transfer(self, mocker):
+        """Paid orgs without Stripe linkage must stay on the checkout-required path."""
+        from seer.api.organizations.models import CreateOrganizationRequest
+        from seer.api.organizations.router import _create_team_with_optional_subscription_transfer
+
+        user = MagicMock()
+
+        personal_org = MagicMock(spec=Organization)
+        personal_org.id = 1
+        personal_org.type = OrganizationType.PERSONAL
+        personal_org.stripe_customer_id = None
+
+        personal_subscription = MagicMock(spec=BillingSubscription)
+        personal_subscription.tier = SubscriptionTier.PRO
+        personal_subscription.status = SubscriptionStatus.ACTIVE
+
+        created_org = MagicMock(spec=Organization)
+        create_team = mocker.patch(
+            "seer.api.organizations.router.create_team_organization",
+            new_callable=AsyncMock,
+            return_value=(created_org, MagicMock()),
+        )
+        transfer_subscription = mocker.patch(
+            "seer.api.organizations.router.transfer_subscription_between_orgs",
+            new_callable=AsyncMock,
+        )
+
+        organization, checkout_required = await _create_team_with_optional_subscription_transfer(
+            user=user,
+            body=CreateOrganizationRequest(
+                name="Test Team",
+                slug="test-team",
+                transfer_subscription=True,
+            ),
+            personal_org=personal_org,
+            personal_subscription=personal_subscription,
+        )
+
+        assert organization is created_org
+        assert checkout_required is True
+        create_team.assert_awaited_once_with(owner=user, name="Test Team", slug="test-team")
+        transfer_subscription.assert_not_awaited()
+
+    async def test_transfer_flow_uses_shared_transaction(self, mocker):
+        """Transfer path must create the team and move billing in the same transaction."""
+        from seer.api.organizations.models import CreateOrganizationRequest
+        from seer.api.organizations.router import _create_team_with_optional_subscription_transfer
+
+        user = MagicMock()
+
+        personal_org = MagicMock(spec=Organization)
+        personal_org.id = 1
+        personal_org.type = OrganizationType.PERSONAL
+        personal_org.stripe_customer_id = 10
+
+        personal_subscription = MagicMock(spec=BillingSubscription)
+        personal_subscription.tier = SubscriptionTier.PRO
+        personal_subscription.status = SubscriptionStatus.ACTIVE
+
+        created_org = MagicMock(spec=Organization)
+        shared_conn = MagicMock(name="shared_conn")
+
+        create_team = mocker.patch(
+            "seer.api.organizations.router.create_team_organization",
+            new_callable=AsyncMock,
+            return_value=(created_org, MagicMock()),
+        )
+        transfer_subscription = mocker.patch(
+            "seer.api.organizations.router.transfer_subscription_between_orgs",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "seer.api.organizations.router.in_transaction",
+            side_effect=lambda: mock_transaction(shared_conn),
+        )
+
+        organization, checkout_required = await _create_team_with_optional_subscription_transfer(
+            user=user,
+            body=CreateOrganizationRequest(
+                name="Test Team",
+                slug="test-team",
+                transfer_subscription=True,
+            ),
+            personal_org=personal_org,
+            personal_subscription=personal_subscription,
+        )
+
+        assert organization is created_org
+        assert checkout_required is False
+        create_team.assert_awaited_once_with(
+            owner=user,
+            name="Test Team",
+            slug="test-team",
+            conn=shared_conn,
+        )
+        transfer_subscription.assert_awaited_once_with(personal_org, created_org, conn=shared_conn)
 
     async def test_paid_tier_user_transfer_false_checkout_required(self, mocker):
         """When paid tier user creates team with transfer=false, checkout_required=true."""
@@ -221,3 +325,19 @@ class TestTransferSubscriptionLogic:
         )
 
         assert has_transferable is True
+
+    def test_transfer_condition_requires_stripe_customer_link(self):
+        """Transfer rejects paid subscriptions missing org Stripe linkage."""
+        from seer.api.organizations.router import _has_transferable_subscription
+
+        personal_org = MagicMock(spec=Organization)
+        personal_org.stripe_customer_id = None
+
+        subscription = MagicMock(spec=BillingSubscription)
+        subscription.tier = SubscriptionTier.PRO
+        subscription.status = SubscriptionStatus.ACTIVE
+
+        assert _has_transferable_subscription(personal_org, subscription) is False
+
+        personal_org.stripe_customer_id = 123
+        assert _has_transferable_subscription(personal_org, subscription) is True
