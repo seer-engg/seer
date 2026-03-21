@@ -23,26 +23,14 @@ def _now() -> datetime:
 
 
 def _extract_hitl_interrupt(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Extract HITL interrupt data from workflow execution result.
-
-    LangGraph stores interrupt data in the result's __interrupt__ key when
-    the workflow pauses due to an interrupt() call.
-
-    Returns the interrupt payload if this is an HITL interrupt, None otherwise.
-    """
-    # Check for LangGraph interrupt in result
+    """Extract HITL interrupt payload from LangGraph result, or None."""
     interrupts = result.get("__interrupt__")
     if not interrupts:
         return None
-
-    # interrupts is a tuple of Interrupt objects
     for interrupt_obj in interrupts:
-        # Get the value from the Interrupt object
         interrupt_value = getattr(interrupt_obj, "value", None)
         if isinstance(interrupt_value, dict) and interrupt_value.get("type") == "hitl":
             return interrupt_value
-
     return None
 
 
@@ -58,17 +46,7 @@ async def _send_hitl_notifications(
     user: User,
     interrupt_data: Dict[str, Any],
 ) -> None:
-    """
-    Send HITL notifications via configured delivery channels.
-
-    This is fire-and-forget - errors are logged but don't fail the workflow.
-    The platform HITL (polling /runs/{id}/interrupt) always works as a fallback.
-
-    Args:
-        run: The interrupted workflow run
-        user: The workflow owner (for OAuth connection lookup)
-        interrupt_data: The HITL interrupt payload containing delivery_channels
-    """
+    """Send HITL notifications via delivery channels (fire-and-forget)."""
     delivery_channels = interrupt_data.get("delivery_channels", [])
 
     for channel in delivery_channels:
@@ -113,18 +91,7 @@ async def _compile_workflow(
     checkpointer: Optional[Any] = None,
     organization_id: Optional[int] = None,
 ) -> Any:
-    """
-    Compile a workflow spec using the global compiler instance.
-
-    This is a shared helper to avoid duplicating the compile pattern across
-    history.py and execution.py.
-
-    Args:
-        user: The user compiling the workflow
-        spec: The workflow spec dict
-        checkpointer: Optional LangGraph checkpointer
-        organization_id: Optional organization ID for resolving shared connections
-    """
+    """Compile a workflow spec using the global compiler singleton."""
     compiler = WorkflowCompilerSingleton.instance()
     return await compiler.compile(
         user,
@@ -135,12 +102,7 @@ async def _compile_workflow(
 
 
 def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """
-    Ensure LangGraph defaults (thread_id) are present so checkpoints can be recovered.
-
-    IMPORTANT: Always uses run.run_id as thread_id to ensure checkpoint retrieval works.
-    If config_payload contains a different thread_id, it will be overridden.
-    """
+    """Ensure LangGraph thread_id is set for checkpoint recovery."""
     base_config = dict((config_payload or {}) or {})
     configurable = dict((base_config.get("configurable") or {}) or {})
     # Always use run.run_id as thread_id for checkpoint retrieval consistency
@@ -309,6 +271,9 @@ async def _mark_run_succeeded(run: WorkflowRun, output: Dict[str, Any], user: Op
         status=WorkflowRunStatus.SUCCEEDED,
         finished_at=_now(),
         output=output,
+        pending_interrupt_node_id=None,
+        pending_interrupt_data=None,
+        interrupt_expires_at=None,
     )
     await run.refresh_from_db()
     if user:
@@ -428,8 +393,22 @@ async def _execute_resume(
         context=runtime_context,
     )
 
-    # Check for another HITL interrupt
+    # After resume, LangGraph may leave stale __interrupt__ data in the state
+    # from the previous interrupt that was just resumed. Detect this by checking
+    # if the interrupted node actually produced output (meaning it completed).
     hitl_interrupt = _extract_hitl_interrupt(result)
+    if hitl_interrupt:
+        interrupted_node_id = hitl_interrupt.get("node_id")
+        # If the node that "interrupted" also has output in the result, it actually
+        # completed — the __interrupt__ is stale from the prior pause, not a new one.
+        if interrupted_node_id and interrupted_node_id in result:
+            logger.debug(
+                "Ignoring stale __interrupt__ after resume for run '%s' "
+                "(node '%s' has output, interrupt is from prior pause)",
+                run.run_id,
+                interrupted_node_id,
+            )
+            hitl_interrupt = None
     if hitl_interrupt:
         logger.info(
             "Another HITL interrupt detected for run '%s' at node '%s'",
@@ -447,11 +426,15 @@ async def _execute_resume(
         )
         return {"__interrupted__": True, "__interrupt_data__": hitl_interrupt, **result}
 
-    # Workflow completed successfully
+    # Workflow completed successfully — strip stale __interrupt__ from output
+    clean_output = {k: v for k, v in result.items() if k != "__interrupt__"}
     await WorkflowRun.filter(id=run.id).update(
         status=WorkflowRunStatus.SUCCEEDED,
         finished_at=_now(),
-        output=result,
+        output=clean_output,
+        pending_interrupt_node_id=None,
+        pending_interrupt_data=None,
+        interrupt_expires_at=None,
     )
     return result
 
