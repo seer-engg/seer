@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol
 
-from seer.database import User
+from seer.database import Organization, User
 
 if TYPE_CHECKING:
     from seer.core.files.service import WorkflowFileSystem
@@ -46,6 +46,15 @@ class WorkflowRunBudget:
 
 
 @dataclass
+class WorkflowRuntimeResources:
+    """Lazy-loaded runtime resources resolved on demand."""
+
+    file_system: Optional["WorkflowFileSystem"] = None
+    organization: Optional[Organization] = None
+    organization_loaded: bool = False
+
+
+@dataclass
 class WorkflowRuntimeContext:
     """
     Carries runtime-scoped data that needs to be accessible to LangGraph
@@ -66,8 +75,8 @@ class WorkflowRuntimeContext:
     memory_access: WorkflowMemoryAccess | None = None
     budget: WorkflowRunBudget = field(default_factory=WorkflowRunBudget)
 
-    # Private field for lazy-loaded file system
-    _file_system: Optional["WorkflowFileSystem"] = field(default=None, repr=False)
+    # Private field for lazy-loaded runtime resources
+    _resources: WorkflowRuntimeResources = field(default_factory=WorkflowRuntimeResources, repr=False)
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments  # Reason: preserve existing constructor contract while storing budget internally
         self,
@@ -88,7 +97,7 @@ class WorkflowRuntimeContext:
             per_run_cost_cap_usd=per_run_cost_cap_usd,
             accumulated_cost_usd=accumulated_cost_usd,
         )
-        self._file_system = None
+        self._resources = WorkflowRuntimeResources()
 
     @property
     def per_run_cost_cap_usd(self) -> float | None:
@@ -122,11 +131,11 @@ class WorkflowRuntimeContext:
         Raises:
             ValueError: If workflow file storage is not configured.
         """
-        if self._file_system is None:
+        if self._resources.file_system is None:
             # pylint: disable=import-outside-toplevel  # Avoid circular imports with file service
             from seer.core.files.service import WorkflowFileSystem
-            self._file_system = WorkflowFileSystem.instance()
-        return self._file_system
+            self._resources.file_system = WorkflowFileSystem.instance()
+        return self._resources.file_system
 
     @property
     def has_file_system(self) -> bool:
@@ -139,3 +148,15 @@ class WorkflowRuntimeContext:
         # pylint: disable=import-outside-toplevel  # Avoid circular imports with config
         from seer.config import config
         return config.is_workflow_file_system_configured
+
+    async def get_organization(self) -> "Organization | None":
+        """Resolve and cache the runtime organization when one is available."""
+        if self.organization_id is None:
+            return None
+
+        if self._resources.organization_loaded:
+            return self._resources.organization
+
+        self._resources.organization = await Organization.get_or_none(id=self.organization_id)
+        self._resources.organization_loaded = True
+        return self._resources.organization
