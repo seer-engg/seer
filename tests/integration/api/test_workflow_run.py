@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from seer.api.workflows.services.execution import run_saved_workflow
 from seer.api.workflows import models as api_models
 from seer.database.workflow_models import (
+    TriggerSubscription,
     Workflow,
     WorkflowVersion,
     WorkflowVersionStatus,
@@ -161,6 +162,64 @@ async def test_run_draft_workflow_with_trigger_event_override(db_engine, test_us
                 call_kwargs = mock_task.kiq.call_args[1]
                 assert "trigger_envelope" in call_kwargs
                 assert call_kwargs["trigger_envelope"]["data"] == {"message": "Real event data"}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_run_draft_workflow_with_polling_trigger_does_not_create_live_subscription(db_engine, test_user):
+    """Test that draft runs do not create live trigger subscriptions for polling triggers."""
+    workflow = await Workflow.create(
+        user=test_user,
+        name="Polling Workflow",
+        description="Test",
+    )
+
+    spec_dict = {
+        "version": "2",
+        "nodes": [{"id": "node1", "type": "tool", "tool": "test.tool", "inputs": {}}],
+        "edges": [{"source": "trigger_1", "target": "node1", "type": "trigger"}],
+        "triggers": [
+            {
+                "id": "trigger_1",
+                "key": "schedule.cron",
+                "mode": "schedule",
+                "event_schema": {},
+                "meta": {
+                    "requires_connection": False,
+                },
+                "filters": {},
+                "provider_config": {},
+                "ui_meta": {"title": "Every day"},
+            }
+        ],
+    }
+
+    await WorkflowVersion.create(
+        workflow=workflow,
+        version_number=1,
+        status=WorkflowVersionStatus.DRAFT,
+        spec=spec_dict,
+        spec_hash=_hash_spec(spec_dict),
+    )
+
+    with patch("seer.api.workflows.services.execution.validate_workflow_spec", new_callable=AsyncMock):
+        with patch("seer.api.workflows.services.execution.workflow_execution_task") as mock_task:
+            mock_task.kiq = AsyncMock()
+
+            payload = api_models.RunFromWorkflowRequest(
+                inputs={},
+                config={},
+                trigger_event_override={
+                    "trigger_key": "schedule.cron",
+                    "data": {"now": "2026-03-20T18:09:36Z"},
+                },
+            )
+
+            result = await run_saved_workflow(test_user, workflow.workflow_id, payload)
+
+            assert isinstance(result, api_models.RunResponse)
+            assert result.run_id is not None
+            assert await TriggerSubscription.filter(workflow=workflow).count() == 0
 
 
 @pytest.mark.integration
