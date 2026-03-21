@@ -46,25 +46,13 @@ class TestShortTermLimitConstants:
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_WEEKLY_PRO")
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_WEEKLY_PRO_PLUS")
 
-    def test_5h_limits_are_reasonable_fraction_of_monthly(self):
-        """Test that 5h limits are ~25% of monthly (burst protection)."""
-        # Free tier: 5h=$1, monthly=$5 -> 20%
-        ratio_free = tiered_usage_limits.LLM_CREDITS_5H_FREE / tiered_usage_limits.LLM_CREDITS_FREE
-        assert 0.15 <= ratio_free <= 0.35
+    def test_5h_limits_match_monthly_for_free_tier(self):
+        """Test that free-tier 5h credits match the monthly allowance."""
+        assert tiered_usage_limits.LLM_CREDITS_5H_FREE == tiered_usage_limits.LLM_CREDITS_FREE
 
-        # Pro tier: 5h=$5, monthly=$20 -> 25%
-        ratio_pro = tiered_usage_limits.LLM_CREDITS_5H_PRO / tiered_usage_limits.LLM_CREDITS_PRO
-        assert 0.15 <= ratio_pro <= 0.35
-
-    def test_weekly_limits_are_reasonable_fraction_of_monthly(self):
-        """Test that weekly limits are ~60-70% of monthly."""
-        # Free tier: weekly=$3, monthly=$5 -> 60%
-        ratio_free = tiered_usage_limits.LLM_CREDITS_WEEKLY_FREE / tiered_usage_limits.LLM_CREDITS_FREE
-        assert 0.50 <= ratio_free <= 0.80
-
-        # Pro tier: weekly=$12, monthly=$20 -> 60%
-        ratio_pro = tiered_usage_limits.LLM_CREDITS_WEEKLY_PRO / tiered_usage_limits.LLM_CREDITS_PRO
-        assert 0.50 <= ratio_pro <= 0.80
+    def test_weekly_limits_match_monthly_for_free_tier(self):
+        """Test that free-tier weekly credits match the monthly allowance."""
+        assert tiered_usage_limits.LLM_CREDITS_WEEKLY_FREE == tiered_usage_limits.LLM_CREDITS_FREE
 
 
 # =============================================================================
@@ -222,8 +210,8 @@ class TestCreditLimitExceededException:
     def test_weekly_period_in_message(self):
         """Test that weekly period appears in error message."""
         exc = CreditLimitExceeded(
-            limit=3.0,
-            current=3.6,
+            limit=1.0,
+            current=1.2,
             tier=SubscriptionTier.FREE,
             period=LimitPeriod.WEEKLY,
         )
@@ -232,8 +220,8 @@ class TestCreditLimitExceededException:
     def test_monthly_period_in_message(self):
         """Test that monthly period appears in error message."""
         exc = CreditLimitExceeded(
-            limit=5.0,
-            current=6.0,
+            limit=1.0,
+            current=1.2,
             tier=SubscriptionTier.FREE,
             period=LimitPeriod.MONTHLY,
         )
@@ -322,8 +310,8 @@ class TestCreditGate:
             mock_limits.has_unlimited_5h_credits = False
             mock_limits.has_unlimited_weekly_credits = False
             mock_limits.llm_credits_5h = 1.0
-            mock_limits.llm_credits_weekly = 3.0
-            mock_limits.llm_credits_monthly = 5.0
+            mock_limits.llm_credits_weekly = 1.0
+            mock_limits.llm_credits_monthly = 1.0
             mock_get_limits.return_value = mock_limits
 
             mock_resolve_tier.return_value = SubscriptionTier.FREE
@@ -359,16 +347,16 @@ class TestCreditGate:
             mock_limits.has_unlimited_5h_credits = False
             mock_limits.has_unlimited_weekly_credits = False
             mock_limits.llm_credits_5h = 1.0
-            mock_limits.llm_credits_weekly = 3.0
-            mock_limits.llm_credits_monthly = 5.0
+            mock_limits.llm_credits_weekly = 1.0
+            mock_limits.llm_credits_monthly = 1.0
             mock_get_limits.return_value = mock_limits
 
             mock_resolve_tier.return_value = SubscriptionTier.FREE
 
             # 5h under limit, weekly exceeded
             mock_5h.return_value = Decimal("0.50")  # Under limit
-            mock_weekly.return_value = Decimal("3.60")  # At 120%
-            mock_monthly.return_value = Decimal("3.60")  # Under limit
+            mock_weekly.return_value = Decimal("1.21")  # Above 120%
+            mock_monthly.return_value = Decimal("0.90")  # Under limit
 
             with pytest.raises(CreditLimitExceeded) as exc_info:
                 await check_credit_limit(mock_user)
@@ -391,16 +379,16 @@ class TestCreditGate:
             mock_limits.has_unlimited_5h_credits = False
             mock_limits.has_unlimited_weekly_credits = False
             mock_limits.llm_credits_5h = 1.0
-            mock_limits.llm_credits_weekly = 3.0
-            mock_limits.llm_credits_monthly = 5.0
+            mock_limits.llm_credits_weekly = 1.0
+            mock_limits.llm_credits_monthly = 1.0
             mock_get_limits.return_value = mock_limits
 
             mock_resolve_tier.return_value = SubscriptionTier.FREE
 
             # 5h and weekly under limit, monthly exceeded
             mock_5h.return_value = Decimal("0.50")
-            mock_weekly.return_value = Decimal("2.00")
-            mock_monthly.return_value = Decimal("6.00")  # At 120%
+            mock_weekly.return_value = Decimal("0.90")
+            mock_monthly.return_value = Decimal("1.21")  # Above 120%
 
             with pytest.raises(CreditLimitExceeded) as exc_info:
                 await check_credit_limit(mock_user)
@@ -431,8 +419,8 @@ class TestCreditGate:
 
             # All under limits
             mock_5h.return_value = Decimal("0.50")
-            mock_weekly.return_value = Decimal("1.50")
-            mock_monthly.return_value = Decimal("2.50")
+            mock_weekly.return_value = Decimal("0.70")
+            mock_monthly.return_value = Decimal("0.70")
 
             # Should not raise
             await check_credit_limit(mock_user)
@@ -494,8 +482,8 @@ class TestCreditGate:
 
             # At 80% of 5h limit (should warn but not block)
             mock_5h.return_value = Decimal("0.80")
-            mock_weekly.return_value = Decimal("1.00")
-            mock_monthly.return_value = Decimal("2.00")
+            mock_weekly.return_value = Decimal("0.70")
+            mock_monthly.return_value = Decimal("0.70")
 
             import logging
             with caplog.at_level(logging.WARNING):
@@ -625,16 +613,16 @@ class TestCreditGateOverageAllowance:
             mock_limits.has_unlimited_5h_credits = False
             mock_limits.has_unlimited_weekly_credits = False
             mock_limits.llm_credits_5h = 1.0
-            mock_limits.llm_credits_weekly = 3.0
-            mock_limits.llm_credits_monthly = 5.0
+            mock_limits.llm_credits_weekly = 1.0
+            mock_limits.llm_credits_monthly = 1.0
             mock_get_limits.return_value = mock_limits
 
             mock_resolve_tier.return_value = SubscriptionTier.FREE
 
             # Over monthly limit
             mock_5h.return_value = Decimal("0.50")
-            mock_weekly.return_value = Decimal("2.00")
-            mock_monthly.return_value = Decimal("6.00")
+            mock_weekly.return_value = Decimal("0.90")
+            mock_monthly.return_value = Decimal("1.20")
 
             # Overage not enabled
             from seer.observability.credit_gate import OverageCheckResult
@@ -676,8 +664,8 @@ class TestCheckOverageAllowance:
 
             result = await _check_overage_allowance(
                 user=mock_user,
-                credits_used=Decimal("6.00"),
-                subscription_limit=5.0,
+                credits_used=Decimal("1.20"),
+                subscription_limit=1.0,
             )
 
             assert result.allowed is False
@@ -698,8 +686,8 @@ class TestCheckOverageAllowance:
 
             result = await _check_overage_allowance(
                 user=mock_user,
-                credits_used=Decimal("6.00"),
-                subscription_limit=5.0,
+                credits_used=Decimal("1.20"),
+                subscription_limit=1.0,
             )
 
             assert result.allowed is True

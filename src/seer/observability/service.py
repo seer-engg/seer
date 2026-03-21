@@ -172,55 +172,6 @@ async def resolve_user_tier(user: User) -> SubscriptionTier:
         return SubscriptionTier.FREE
 
 
-async def get_account_age_days(user: User) -> int:
-    """
-    Calculate the number of days since user account creation.
-
-    Args:
-        user: The user to calculate age for
-
-    Returns:
-        Number of days since account creation (rounded down)
-    """
-    now = datetime.now(timezone.utc)
-
-    # Ensure created_at is timezone-aware
-    created_at = user.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-
-    delta = now - created_at
-    return delta.days
-
-
-async def is_trial_expired(user: User) -> bool:
-    """
-    Check if a user's trial period has expired.
-
-    Only applies to FREE tier users. Returns False for:
-    - Paid tier users
-    - Users within trial period
-
-    Args:
-        user: The user to check
-
-    Returns:
-        True if trial is expired, False otherwise
-    """
-    # Check user's tier
-    tier = await resolve_user_tier(user)
-
-    # Only FREE tier has trial limits
-    if tier != SubscriptionTier.FREE:
-        return False
-
-    # Check account age against limit
-    limits = get_limits_for_tier(tier)
-    account_age = await get_account_age_days(user)
-
-    return account_age > limits.account_day_limit
-
-
 async def get_subscription_for_user(user: User) -> Optional[BillingSubscription]:
     """
     Get the active billing subscription for a user via their personal org.

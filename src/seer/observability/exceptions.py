@@ -125,30 +125,6 @@ class RunLimitExceeded(UsageLimitError):
         )
 
 
-class TrialExpiredError(UsageLimitError):
-    """
-    Raised when a Cloud Free user's 14-day trial has expired.
-    """
-
-    def __init__(
-        self,
-        days_since_signup: int,
-        upgrade_url: str = "/pricing",
-    ):
-        message = (
-            f"Your 14-day trial has ended ({days_since_signup} days since signup). "
-            "Upgrade to Pro to continue using Seer."
-        )
-        super().__init__(
-            resource="account_days",
-            limit=14,
-            current=days_since_signup,
-            tier=SubscriptionTier.FREE,
-            message=message,
-            upgrade_url=upgrade_url,
-        )
-
-
 class CreditLimitExceeded(UsageLimitError):
     """
     Raised when user has exhausted their LLM credit allowance for a given period.
