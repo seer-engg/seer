@@ -12,7 +12,7 @@ from seer.api.collaboration.models import (
     WorkflowLockStatusResponse,
 )
 from seer.api.core.middleware.organization import get_membership, get_organization
-from seer.api.workflows.services.shared import _get_workflow_org_scoped
+from seer.api.workflows.services.shared import _can_manage_workflow, _get_workflow_org_scoped
 from seer.database import User
 from seer.services.collaboration import (
     CollaborationEventType,
@@ -30,6 +30,27 @@ def _require_user(request: Request) -> User:
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     return user
+
+
+async def _get_editable_workflow_for_lock(request: Request, workflow_id: str):
+    """
+    Resolve a workflow for lock mutation endpoints.
+
+    We keep 404 semantics for missing/non-viewable workflows, but return 403
+    when the workflow exists and the current user only has read access.
+    """
+    user = _require_user(request)
+    organization = get_organization(request)
+    membership = get_membership(request)
+    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=False)
+
+    if not await _can_manage_workflow(user, workflow, membership):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to edit this workflow",
+        )
+
+    return user, organization, membership, workflow
 
 
 @router.get("/events")
@@ -89,10 +110,8 @@ async def acquire_workflow_lock(
     workflow_id: str,
     payload: WorkflowLockAcquireRequest = Body(default_factory=WorkflowLockAcquireRequest),
 ) -> WorkflowLockResponse:
-    user = _require_user(request)
-    organization = get_organization(request)
-    membership = get_membership(request)
-    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
+    user, organization, membership, workflow = await _get_editable_workflow_for_lock(request, workflow_id)
+    del membership
 
     service = WorkflowLockService()
     try:
@@ -129,10 +148,8 @@ async def heartbeat_workflow_lock(
     workflow_id: str,
     payload: WorkflowLockHeartbeatRequest = Body(default_factory=WorkflowLockHeartbeatRequest),
 ) -> WorkflowLockResponse:
-    user = _require_user(request)
-    organization = get_organization(request)
-    membership = get_membership(request)
-    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
+    user, organization, membership, workflow = await _get_editable_workflow_for_lock(request, workflow_id)
+    del membership
 
     service = WorkflowLockService()
     try:
@@ -156,10 +173,8 @@ async def release_workflow_lock(
     workflow_id: str,
     tab_id: str | None = Query(None),
 ) -> None:
-    user = _require_user(request)
-    organization = get_organization(request)
-    membership = get_membership(request)
-    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
+    user, organization, membership, workflow = await _get_editable_workflow_for_lock(request, workflow_id)
+    del membership
 
     service = WorkflowLockService()
     try:

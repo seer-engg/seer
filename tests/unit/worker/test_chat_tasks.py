@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from seer.database.workflow_models import ChatExecutionStatus
@@ -250,6 +251,39 @@ class TestGetUserSettingsAndContext:
 
 
 @pytest.mark.unit
+class TestExecutionErrorPayloads:
+    """Tests for execution error normalization helpers."""
+
+    def test_classifies_upstream_stream_errors(self):
+        """Transport errors from the model stream should persist as upstream failures."""
+        from seer.worker.tasks.chat import _build_execution_error_payload
+
+        payload = _build_execution_error_payload(httpx.ReadError("socket closed"))
+
+        assert payload["type"] == "upstream_stream_error"
+        assert payload["status"] == 502
+        assert payload["detail"] == "Upstream model stream disconnected before completion."
+        assert payload["exception_detail"] == "socket closed"
+        assert payload["exception_type"].endswith("ReadError")
+
+    @pytest.mark.asyncio
+    async def test_mark_chat_execution_running_clears_stale_terminal_fields(self, mock_chat_session):
+        """Starting a new execution should clear stale finished/error fields."""
+        from seer.worker.tasks.chat import _mark_chat_execution_running
+
+        mock_chat_session.current_execution_finished_at = datetime.now(timezone.utc)
+        mock_chat_session.current_execution_error = {"type": "execution_error", "detail": "old", "status": 500}
+
+        await _mark_chat_execution_running(mock_chat_session)
+
+        assert mock_chat_session.current_execution_status == ChatExecutionStatus.RUNNING
+        assert mock_chat_session.current_execution_finished_at is None
+        assert mock_chat_session.current_execution_error is None
+        assert "current_execution_finished_at" in mock_chat_session.save.call_args.kwargs["update_fields"]
+        assert "current_execution_error" in mock_chat_session.save.call_args.kwargs["update_fields"]
+
+
+@pytest.mark.unit
 class TestInvokeAgentWithOrchestrator:
     """Tests for _invoke_agent_with_orchestrator function."""
 
@@ -404,7 +438,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.extract_session_memories") as mock_extract, \
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -448,7 +482,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
             mock_extract.kiq = AsyncMock()
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -485,7 +519,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"):
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -518,7 +552,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.Workflow") as MockWorkflow, \
              patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(side_effect=RuntimeError("Database error"))
 
@@ -532,6 +566,79 @@ class TestChatExecutionTask:
         assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
         assert mock_chat_session.current_execution_error["type"] == "execution_error"
         assert mock_chat_session.current_execution_error["status"] == 500
+
+    @pytest.mark.asyncio
+    async def test_sets_status_to_upstream_stream_error_on_transport_exception(self, mock_user, mock_workflow, mock_chat_session):
+        """Transport read failures should persist a non-empty upstream-stream error payload."""
+        from seer.worker.tasks.chat import chat_execution_task
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat.User") as MockUser, \
+             patch("seer.worker.tasks.chat.Workflow") as MockWorkflow, \
+             patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
+             patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
+             patch("seer.worker.tasks.chat._stream_agent_with_orchestrator", new_callable=AsyncMock) as mock_stream, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
+             patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
+             patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat.clear_chat_runtime_context"):
+
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
+            MockUser.get = AsyncMock(return_value=mock_user)
+            MockWorkflow.get = AsyncMock(return_value=mock_workflow)
+            mock_settings.return_value = (50, MagicMock())
+            MockPublisher.return_value = AsyncMock()
+            mock_stream.side_effect = httpx.ReadError("socket closed")
+
+            await chat_execution_task(
+                session_id=1,
+                user_id=1,
+                message="Hello",
+                workflow_id=1,
+            )
+
+        assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
+        assert mock_chat_session.current_execution_error["type"] == "upstream_stream_error"
+        assert mock_chat_session.current_execution_error["status"] == 502
+        assert mock_chat_session.current_execution_error["detail"] == "Upstream model stream disconnected before completion."
+        assert mock_chat_session.current_execution_error["exception_detail"] == "socket closed"
+
+    @pytest.mark.asyncio
+    async def test_persists_failure_on_task_cancellation(self, mock_user, mock_workflow, mock_chat_session):
+        """Cancelled chat tasks should persist a terminal state before re-raising."""
+        from seer.worker.tasks.chat import chat_execution_task
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat.User") as MockUser, \
+             patch("seer.worker.tasks.chat.Workflow") as MockWorkflow, \
+             patch("seer.worker.tasks.chat.get_checkpointer", new_callable=AsyncMock), \
+             patch("seer.worker.tasks.chat.create_nexus_chat_agent"), \
+             patch("seer.worker.tasks.chat._get_user_settings_and_context", new_callable=AsyncMock) as mock_settings, \
+             patch("seer.worker.tasks.chat._stream_agent_with_orchestrator", new_callable=AsyncMock) as mock_stream, \
+             patch("seer.worker.tasks.chat.StreamPublisher") as MockPublisher, \
+             patch("seer.worker.tasks.chat.langfuse_user_context", mock_langfuse_context), \
+             patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
+             patch("seer.worker.tasks.chat.clear_chat_runtime_context"):
+
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
+            MockUser.get = AsyncMock(return_value=mock_user)
+            MockWorkflow.get = AsyncMock(return_value=mock_workflow)
+            mock_settings.return_value = (50, MagicMock())
+            MockPublisher.return_value = AsyncMock()
+            mock_stream.side_effect = asyncio.CancelledError()
+
+            with pytest.raises(asyncio.CancelledError):
+                await chat_execution_task(
+                    session_id=1,
+                    user_id=1,
+                    message="Hello",
+                    workflow_id=1,
+                )
+
+        assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
+        assert mock_chat_session.current_execution_error["type"] == "execution_cancelled"
+        assert mock_chat_session.current_execution_error["status"] == 503
 
     @pytest.mark.asyncio
     async def test_sets_status_to_interrupted_when_interrupt_detected(self, mock_user, mock_workflow, mock_chat_session):
@@ -553,7 +660,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"):
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -594,7 +701,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -645,7 +752,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -692,7 +799,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.extract_session_memories") as mock_extract, \
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -730,7 +837,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context") as mock_clear:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -770,7 +877,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal, \
              patch("seer.worker.tasks.chat._set_sentry_context_for_chat") as mock_sentry:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -811,7 +918,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.extract_session_memories") as mock_extract, \
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -855,7 +962,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat.set_chat_runtime_context"), \
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"):
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -893,7 +1000,7 @@ class TestChatExecutionTask:
 
         with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
              patch("seer.worker.tasks.chat.create_nexus_chat_agent") as mock_create_agent:
-            MockSession.get = AsyncMock(return_value=stale_session)
+            MockSession.get_or_none = AsyncMock(return_value=stale_session)
 
             await chat_execution_task(
                 session_id=1,
@@ -917,7 +1024,7 @@ class TestChatExecutionTask:
              patch("seer.worker.tasks.chat._acquire_execution_single_flight_lock", new=AsyncMock(return_value=None)), \
              patch("seer.worker.tasks.chat.create_nexus_chat_agent") as mock_create_agent:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
 
             await chat_execution_task(
                 session_id=1,
@@ -965,7 +1072,7 @@ class TestChatResumeTask:
              patch("seer.worker.tasks.chat._current_thread_id") as mock_thread_var, \
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -1014,7 +1121,7 @@ class TestChatResumeTask:
              patch("seer.worker.tasks.chat._current_thread_id") as mock_thread_var, \
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -1064,7 +1171,7 @@ class TestChatResumeTask:
              patch("seer.worker.tasks.chat._current_thread_id") as mock_thread_var, \
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -1112,7 +1219,7 @@ class TestChatResumeTask:
              patch("seer.worker.tasks.chat.clear_chat_runtime_context"), \
              patch("seer.worker.tasks.chat._current_thread_id"):
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -1159,7 +1266,7 @@ class TestChatResumeTask:
              patch("seer.worker.tasks.chat._current_thread_id"), \
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -1217,7 +1324,7 @@ class TestChatResumeTask:
              patch("seer.worker.tasks.chat.config") as mock_config, \
              patch("seer.worker.tasks.chat.asyncio.wait_for", side_effect=fake_wait_for):
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -1254,7 +1361,7 @@ class TestChatResumeTask:
              patch("seer.worker.tasks.chat.User") as MockUser, \
              patch("seer.worker.tasks.chat.Workflow") as MockWorkflow:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(side_effect=RuntimeError("DB error"))
 
@@ -1283,7 +1390,7 @@ class TestChatResumeTask:
              patch("seer.worker.tasks.chat._acquire_execution_single_flight_lock", new=AsyncMock(return_value=None)), \
              patch("seer.worker.tasks.chat.create_nexus_chat_agent") as mock_create_agent:
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
 
             await chat_resume_task(
                 session_id=1,
@@ -1341,7 +1448,7 @@ class TestChatResumeTask:
              patch("seer.worker.tasks.chat.WorkflowProposal") as MockProposal, \
              patch("seer.worker.tasks.chat._acquire_execution_single_flight_lock", new=lock_acquire):
 
-            MockSession.get = AsyncMock(return_value=mock_chat_session)
+            MockSession.get_or_none = AsyncMock(return_value=mock_chat_session)
             MockUser.get = AsyncMock(return_value=mock_user)
             MockWorkflow.get = AsyncMock(return_value=mock_workflow)
             mock_settings.return_value = (50, MagicMock())
@@ -1389,6 +1496,24 @@ class TestPersistFailureIfCurrentOwner:
     """Tests for terminal-state failure persistence protections."""
 
     @pytest.mark.asyncio
+    async def test_missing_session_is_treated_as_noop(self):
+        """Deleted sessions should not raise during ownership checks."""
+        from seer.worker.tasks.chat import _get_session_if_current_owner
+
+        with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession, \
+             patch("seer.worker.tasks.chat.logger") as mock_logger:
+            MockSession.get_or_none = AsyncMock(return_value=None)
+
+            session = await _get_session_if_current_owner(
+                session_id=1,
+                execution_task_id="owner-1",
+                phase="save_completion",
+            )
+
+        assert session is None
+        mock_logger.info.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_skips_failure_persistence_when_session_already_completed(self):
         """A late loser attempt must not overwrite a completed session."""
         from seer.worker.tasks.chat import _persist_failure_if_current_owner
@@ -1399,7 +1524,7 @@ class TestPersistFailureIfCurrentOwner:
         session.save = AsyncMock()
 
         with patch("seer.worker.tasks.chat.WorkflowChatSession") as MockSession:
-            MockSession.get = AsyncMock(return_value=session)
+            MockSession.get_or_none = AsyncMock(return_value=session)
 
             await _persist_failure_if_current_owner(
                 session_id=1,

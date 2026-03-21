@@ -178,12 +178,11 @@ async def get_current_subscription(request: Request):
     """
     Get current organization's subscription status.
 
-    Returns the subscription for the user's current organization context
-    (determined by JWT's current_organization_id claim).
+    Returns the subscription for the user's current organization context.
     """
     _require_user(request)
 
-    # Get the current organization from request context (set by middleware from JWT)
+    # Get the current organization from request context (set by middleware)
     organization = get_organization(request)
 
     subscription = await get_org_subscription(organization)
