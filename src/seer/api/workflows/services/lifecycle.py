@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from datetime import timezone
 from decimal import Decimal, InvalidOperation
 import json
 from typing import Any, Dict, Optional
@@ -37,9 +38,12 @@ from seer.database import (
     parse_workflow_public_id,
 )
 from seer.core.schema.models import WorkflowSpec
-from seer.database.workflow_models import TriggerSubscription, WorkflowRun, WorkflowRunStatus
+from seer.database.workflow_models import ChatExecutionStatus, TriggerSubscription, WorkflowChatSession, WorkflowRun, WorkflowRunStatus
+from seer.logger import get_logger
 from seer.services.collaboration import CollaborationEventType, publish_collaboration_event
 from seer.tools.base import list_tools as list_all_tools
+
+logger = get_logger(__name__)
 
 # ===== Helper Functions =====
 
@@ -158,6 +162,50 @@ async def _publish_workflow_event(
         actor=actor,
         payload=payload,
     )
+
+
+def _build_workflow_deleted_chat_error(workflow_id: str) -> dict[str, Any]:
+    """Build an error payload for chat executions aborted by workflow deletion."""
+    return {
+        "type": "workflow_deleted",
+        "detail": "Chat execution aborted because the workflow was deleted.",
+        "reason": "workflow_deleted",
+        "status": 410,
+        "workflow_id": workflow_id,
+    }
+
+
+async def _abort_active_chat_executions(workflow: Workflow) -> int:
+    """Mark active chat executions as failed before deleting the workflow."""
+    active_sessions = await WorkflowChatSession.filter(
+        workflow=workflow,
+        current_execution_status__in=[ChatExecutionStatus.QUEUED, ChatExecutionStatus.RUNNING],
+    ).all()
+
+    if not active_sessions:
+        return 0
+
+    finished_at = _now().astimezone(timezone.utc)
+    error_payload = _build_workflow_deleted_chat_error(workflow.workflow_id)
+
+    for session in active_sessions:
+        session.current_execution_status = ChatExecutionStatus.FAILED
+        session.current_execution_finished_at = finished_at
+        session.current_execution_error = error_payload
+        session.current_execution_task_id = None
+        await session.save(update_fields=[
+            "current_execution_status",
+            "current_execution_finished_at",
+            "current_execution_error",
+            "current_execution_task_id",
+        ])
+
+    logger.info(
+        "Aborted %d active workflow chat executions before deleting workflow %s",
+        len(active_sessions),
+        workflow.workflow_id,
+    )
+    return len(active_sessions)
 
 
 async def toggle_workflow_published(
@@ -673,6 +721,8 @@ async def delete_workflow(
 
     # Nullify FK on workflow_runs (constraint dropped in migration 6, but column remains)
     await WorkflowRun.filter(workflow=workflow).update(workflow_id=None)
+
+    await _abort_active_chat_executions(workflow)
 
     # Delete trigger subscriptions before workflow
     await TriggerSubscription.filter(workflow=workflow).delete()
