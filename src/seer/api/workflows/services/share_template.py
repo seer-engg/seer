@@ -22,7 +22,6 @@ class ShareAsTemplateRequest(BaseModel):
     category: TemplateCategory
     tags: list[str] = []
     icon: Optional[str] = None
-    is_published: bool = False
 
 
 class ShareAsTemplateResponse(BaseModel):
@@ -39,7 +38,6 @@ class WorkflowTemplateMetaResponse(BaseModel):
     category: str
     tags: list[str]
     icon: Optional[str]
-    is_published: bool
     public_url: str
 
 
@@ -69,7 +67,6 @@ async def get_workflow_template_meta(user: User, workflow_id: str) -> Optional[W
         category=template.category.value if hasattr(template.category, "value") else template.category,
         tags=template.tags or [],
         icon=template.icon,
-        is_published=template.is_published,
         public_url=f"https://getseer.dev/u/{username}/{template.slug}",
     )
 
@@ -127,13 +124,11 @@ async def share_workflow_as_template(user: User, workflow_id: str, payload: Shar
         existing.category = payload.category
         existing.tags = payload.tags
         existing.icon = payload.icon
-        existing.visibility = "public" if payload.is_published else "private"
         existing.spec = spec_version.spec
         existing.required_integrations = required_integrations
-        existing.is_published = payload.is_published
         await existing.save(update_fields=[
             "name", "description", "category", "tags", "icon",
-            "visibility", "spec", "required_integrations", "is_published",
+            "spec", "required_integrations",
         ])
         template = existing
         is_update = True
@@ -161,18 +156,11 @@ async def share_workflow_as_template(user: User, workflow_id: str, payload: Shar
             source=TemplateSource.COMMUNITY,
             created_by=user,
             organization=org,
-            visibility="public" if payload.is_published else "private",
             spec=spec_version.spec,
             required_integrations=required_integrations,
-            is_published=payload.is_published,
             source_workflow_id=workflow.id,
         )
         is_update = False
-
-    # Set Workflow.is_published flag
-    if not workflow.is_published:
-        workflow.is_published = True
-        await workflow.save(update_fields=["is_published"])
 
     return ShareAsTemplateResponse(
         slug=template.slug,
@@ -220,7 +208,7 @@ Respond with JSON only:
 
 async def generate_template_description(user: User, workflow_id: str) -> GenerateTemplateDescriptionResponse:
     """Use LLM to generate template metadata from the workflow spec."""
-    # pylint: disable=import-outside-toplevel # same pattern as generate_schema_metadata
+    # pylint: disable=import-outside-toplevel,too-many-locals # same pattern as generate_schema_metadata
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from seer.llm import get_llm
@@ -256,7 +244,21 @@ async def generate_template_description(user: User, workflow_id: str) -> Generat
             SystemMessage(content=_TEMPLATE_GEN_SYSTEM_PROMPT),
             HumanMessage(content=user_prompt),
         ])
-        result = json.loads(response.content)
+        raw = response.content
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError:
+            # LLM may wrap JSON in markdown code fences — strip them and retry
+            if "```" in raw:
+                start = raw.find("```json")
+                if start != -1:
+                    start += 7
+                else:
+                    start = raw.find("```") + 3
+                end = raw.find("```", start)
+                if end > start:
+                    raw = raw[start:end].strip()
+            result = json.loads(raw)
         return GenerateTemplateDescriptionResponse(
             name=result.get("name", workflow.name),
             description=result.get("description", ""),

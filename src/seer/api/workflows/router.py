@@ -220,7 +220,8 @@ async def import_workflow(
     payload: api_models.WorkflowImportRequest,
 ):
     user = _require_user(request)
-    return await services.import_workflow(user, payload)
+    org, _ = _get_org_context(request)
+    return await services.import_workflow(user, payload, organization=org)
 
 
 @router.get("/workflows", response_model=api_models.WorkflowListResponse)
@@ -312,18 +313,6 @@ async def publish_workflow(
     user = _require_user(request)
     org, membership = _get_org_context(request)
     return await services.publish_workflow(user, workflow_id, payload, organization=org, membership=membership)
-
-
-@router.patch("/workflows/{workflow_id}/published", response_model=api_models.WorkflowSummary)
-async def toggle_workflow_published(
-    request: Request,
-    workflow_id: str,
-    payload: api_models.WorkflowPublishedToggleRequest,
-):
-    """Toggle whether a workflow is published as a template."""
-    user = _require_user(request)
-    org, membership = _get_org_context(request)
-    return await services.toggle_workflow_published(user, workflow_id, payload.is_published, organization=org, membership=membership)
 
 
 @router.patch("/workflows/{workflow_id}/active", response_model=api_models.WorkflowSummary)

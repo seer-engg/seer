@@ -40,8 +40,8 @@ def _build_scope_query(scope: Optional[str], user: Optional[User]):
     if scope == "mine" and user:
         return WorkflowTemplate.filter(created_by=user)
     if scope == "community" and user:
-        return WorkflowTemplate.filter(is_published=True, visibility="public").exclude(created_by=user)
-    return WorkflowTemplate.filter(is_published=True)
+        return WorkflowTemplate.exclude(created_by=user)
+    return WorkflowTemplate.all()
 
 
 async def list_templates(  # pylint: disable=too-many-arguments  # legitimate filter params
@@ -106,7 +106,7 @@ async def list_templates(  # pylint: disable=too-many-arguments  # legitimate fi
 
 async def get_template(slug: str) -> api_models.TemplateDetailResponse:
     """Get template details by slug."""
-    template = await WorkflowTemplate.filter(slug=slug, is_published=True).first()
+    template = await WorkflowTemplate.filter(slug=slug).first()
     if not template:
         _raise_not_found(slug)
 
@@ -118,7 +118,7 @@ async def get_template_categories() -> api_models.TemplateCategoriesResponse:
     categories = []
 
     for cat in TemplateCategory:
-        count = await WorkflowTemplate.filter(category=cat, is_published=True).count()
+        count = await WorkflowTemplate.filter(category=cat).count()
         categories.append(
             api_models.TemplateCategoryInfo(
                 key=cat.value,
@@ -135,7 +135,7 @@ async def check_requirements(
     slug: str,
 ) -> api_models.TemplateRequirementsResponse:
     """Check if user has required integrations for a template."""
-    template = await WorkflowTemplate.filter(slug=slug, is_published=True).first()
+    template = await WorkflowTemplate.filter(slug=slug).first()
     if not template:
         _raise_not_found(slug)
 
@@ -187,7 +187,7 @@ async def instantiate_template(
     organization: Optional[Organization] = None,
 ) -> api_models.TemplateInstantiateResponse:
     """Create a workflow from a template."""
-    template = await WorkflowTemplate.filter(slug=slug, is_published=True).first()
+    template = await WorkflowTemplate.filter(slug=slug).first()
     if not template:
         _raise_not_found(slug)
 
@@ -280,7 +280,6 @@ def _build_template_fields(template: WorkflowTemplate) -> Dict[str, Any]:
         "icon": template.icon,
         "is_featured": template.is_featured,
         "usage_count": template.usage_count,
-        "visibility": template.visibility,
         "required_integrations": [
             api_models.RequiredIntegration(
                 provider=r.get("provider", ""),
@@ -310,7 +309,6 @@ def _to_summary(template: WorkflowTemplate) -> api_models.TemplateSummary:
         icon=template.icon,
         is_featured=template.is_featured,
         usage_count=template.usage_count,
-        visibility=template.visibility,
         required_integrations=[
             api_models.RequiredIntegration(
                 provider=r.get("provider", ""),

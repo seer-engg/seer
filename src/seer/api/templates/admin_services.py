@@ -159,20 +159,16 @@ def _detect_required_integrations(spec: Dict[str, Any]) -> List[Dict[str, str]]:
 async def list_all_templates(
     *,
     category: Optional[str] = None,
-    include_unpublished: bool = True,
     limit: int = 50,
     cursor: Optional[str] = None,
 ) -> api_models.TemplateAdminListResponse:
-    """List all templates (including unpublished) for admin."""
+    """List all templates for admin."""
     limit = max(1, min(limit, 100))
 
     query = WorkflowTemplate.all()
 
     if category:
         query = query.filter(category=category)
-
-    if not include_unpublished:
-        query = query.filter(is_published=True)
 
     if cursor:
         try:
@@ -274,26 +270,9 @@ async def delete_template(slug: str) -> None:
     await template.delete()
 
 
-async def toggle_publish(
-    slug: str,
-    payload: api_models.TemplatePublishRequest,
-) -> api_models.TemplateAdminResponse:
-    """Publish or unpublish a template."""
-    template = await WorkflowTemplate.filter(slug=slug).first()
-    if not template:
-        _raise_not_found(slug)
-
-    await WorkflowTemplate.filter(id=template.id).update(is_published=payload.is_published)
-
-    # Refetch to get updated values
-    template = await WorkflowTemplate.get(id=template.id)
-    return _to_admin_response(template)
-
-
 def _to_admin_response(template: WorkflowTemplate) -> api_models.TemplateAdminResponse:
     """Convert a template to an admin response."""
     fields = _build_template_fields(template)
-    fields["is_published"] = template.is_published
     return api_models.TemplateAdminResponse(**fields)
 
 
@@ -302,7 +281,6 @@ __all__ = [
     "get_template_admin",
     "update_template",
     "delete_template",
-    "toggle_publish",
     # Helper functions for testing
     "_get_workflow_for_template",
     "_get_workflow_spec",
