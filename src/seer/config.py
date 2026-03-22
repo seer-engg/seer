@@ -163,6 +163,14 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=50000,
         description="Max characters per tool output in workflow agent nodes. Prevents context overflow on large API responses.",
     )
+    agent_supervisor_mode: bool = Field(
+        default=True,
+        description="Enable supervisor-style tool execution isolation. Failed tool calls are retried by a cheap worker LLM with corrected params.",
+    )
+    agent_tool_max_retries: int = Field(
+        default=1,
+        description="Max retries per tool call in supervisor mode. 1 = 2 total attempts.",
+    )
 
     # ============================================================================
     # Session Configuration (for OAuth flows)
