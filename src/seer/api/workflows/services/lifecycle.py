@@ -789,6 +789,7 @@ async def _ensure_unique_name(user: User, base_name: str) -> str:
 async def import_workflow(
     user: User,
     payload: api_models.WorkflowImportRequest,
+    organization: Optional[Organization] = None,
 ) -> api_models.WorkflowResponse:
     """
     Import workflow from exported JSON.
@@ -832,9 +833,15 @@ async def import_workflow(
     workflow_name = payload.name or import_data["workflow"]["name"]
     workflow_name = await _ensure_unique_name(user, workflow_name)
 
+    # Match normal workflow creation semantics for org ownership.
+    if not organization:
+        organization = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
+
     workflow = await Workflow.create(
         user=user,
         name=workflow_name,
+        organization=organization,
+        visibility=WorkflowVisibility.TEAM if organization else WorkflowVisibility.PRIVATE,
     )
 
     # 4. Create draft with spec
