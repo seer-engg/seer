@@ -90,6 +90,7 @@ class _CachedPrice:  # pylint: disable=too-many-instance-attributes  # Reason: m
     """Parsed price metadata from a Stripe Price."""
 
     price_id: str
+    product_id: str
     tier: str
     variant: str  # "regular" or "early_adopter"
     interval: str  # "month" or "year"
@@ -216,8 +217,14 @@ def _parse_price(price: dict) -> Optional[_CachedPrice]:
     if interval not in ("month", "year"):
         return None
 
+    product = price.get("product")
+    product_id = product.get("id") if isinstance(product, dict) else product
+    if not product_id:
+        return None
+
     return _CachedPrice(
         price_id=price["id"],
+        product_id=product_id,
         tier=tier,
         variant=variant,
         interval=interval,
@@ -276,7 +283,19 @@ def _parse_overage_metered_price(price: dict) -> Optional[_CachedMeteredPrice]:
     )
 
 
-def _fetch_prices_from_stripe() -> tuple[list[_CachedPrice], dict[str, str], dict[str, str], Optional[_CachedMeteredPrice]]:
+def _is_active_catalog_product(price: dict, active_product_ids: set[str]) -> bool:
+    """Return True when a Stripe price belongs to an active Stripe product."""
+    product = price.get("product")
+    if isinstance(product, dict):
+        product_id = product.get("id")
+        return bool(product.get("active")) and product_id in active_product_ids
+
+    return isinstance(product, str) and product in active_product_ids
+
+
+def _fetch_prices_from_stripe(
+    active_product_ids: set[str],
+) -> tuple[list[_CachedPrice], dict[str, str], dict[str, str], Optional[_CachedMeteredPrice]]:
     """
     Fetch and parse all active prices from Stripe.
 
@@ -292,6 +311,10 @@ def _fetch_prices_from_stripe() -> tuple[list[_CachedPrice], dict[str, str], dic
         price_response = stripe.Price.list(active=True, limit=100, expand=["data.product"])
         price_data = price_response.data if hasattr(price_response, "data") else price_response.get("data", [])
         for raw_price in price_data:
+            if not _is_active_catalog_product(raw_price, active_product_ids):
+                logger.info("Skipping price %s because its product is inactive", raw_price.get("id"))
+                continue
+
             # Try to parse as overage metered price first
             overage = _parse_overage_metered_price(raw_price)
             if overage:
@@ -324,7 +347,8 @@ def _fetch_and_cache_from_stripe() -> None:
 
     # Fetch products and prices from Stripe
     products_by_tier = _fetch_products_from_stripe()
-    prices, price_id_to_tier, lookup_key_to_price_id, overage_metered_price = _fetch_prices_from_stripe()
+    active_product_ids = {product.product_id for product in products_by_tier.values()}
+    prices, price_id_to_tier, lookup_key_to_price_id, overage_metered_price = _fetch_prices_from_stripe(active_product_ids)
 
     # Build and store cache
     _cache = _PricingCache(
