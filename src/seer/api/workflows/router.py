@@ -220,7 +220,8 @@ async def import_workflow(
     payload: api_models.WorkflowImportRequest,
 ):
     user = _require_user(request)
-    return await services.import_workflow(user, payload)
+    org, _ = _get_org_context(request)
+    return await services.import_workflow(user, payload, organization=org)
 
 
 @router.get("/workflows", response_model=api_models.WorkflowListResponse)
