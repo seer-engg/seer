@@ -126,7 +126,7 @@ async def _template_count_for_profile(profile: UserProfile) -> int:
     return await WorkflowTemplate.filter(
         created_by_id=profile.user_id,
         source=TemplateSource.COMMUNITY,
-        is_published=True,
+
     ).count()
 
 
@@ -212,7 +212,7 @@ async def get_creator(username: str) -> PublicCreatorDetail:
     templates = await WorkflowTemplate.filter(
         created_by_id=profile.user_id,
         source=TemplateSource.COMMUNITY,
-        is_published=True,
+
     )
     template_summaries = [await _template_summary(t, {profile.user_id: profile.username}) for t in templates]
 
@@ -235,7 +235,7 @@ async def list_templates(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> TemplateListResponse:
-    qs = WorkflowTemplate.filter(source=TemplateSource.COMMUNITY, is_published=True)
+    qs = WorkflowTemplate.filter(source=TemplateSource.COMMUNITY)
     if category:
         qs = qs.filter(category=category)
     if search:
@@ -257,7 +257,7 @@ async def list_templates(
 
 @router.get("/templates/{slug}", response_model=PublicTemplateDetail)
 async def get_template(slug: str) -> PublicTemplateDetail:
-    t = await WorkflowTemplate.filter(slug=slug, source=TemplateSource.COMMUNITY, is_published=True).first()
+    t = await WorkflowTemplate.filter(slug=slug, source=TemplateSource.COMMUNITY).first()
     if not t:
         raise HTTPException(status_code=404, detail="Template not found")
 
@@ -317,7 +317,7 @@ def _sanitize_spec(spec: dict, name: str, description: str, icon: str | None) ->
 
 @router.get("/templates/{slug}/preview", response_model=PublicWorkflowPreview)
 async def get_template_preview(slug: str) -> PublicWorkflowPreview:
-    t = await WorkflowTemplate.filter(slug=slug, source=TemplateSource.COMMUNITY, is_published=True).first()
+    t = await WorkflowTemplate.filter(slug=slug, source=TemplateSource.COMMUNITY).first()
     if not t:
         raise HTTPException(status_code=404, detail="Template not found")
     return _sanitize_spec(t.spec or {}, t.name, t.description, t.icon)

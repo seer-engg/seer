@@ -42,7 +42,6 @@ class TemplateSummary(BaseModel):
     icon: Optional[str] = None
     is_featured: bool
     usage_count: int
-    visibility: str = "public"  # "private" | "public"
     required_integrations: List[RequiredIntegration]
 
 
@@ -130,9 +129,7 @@ class TemplateCreateRequest(BaseModel):
     required_integrations: Optional[List[RequiredIntegration]] = None  # Optional override, auto-detected if None
     icon: Optional[str] = None
     preview_image_url: Optional[str] = None
-    is_published: bool = False
     is_featured: bool = False
-    visibility: str = "private"
 
 
 class TemplateUpdateRequest(BaseModel):
@@ -150,16 +147,8 @@ class TemplateUpdateRequest(BaseModel):
     is_featured: Optional[bool] = None
 
 
-class TemplatePublishRequest(BaseModel):
-    """Request to publish/unpublish a template (admin only)."""
-
-    is_published: bool
-
-
 class TemplateAdminResponse(TemplateDetailResponse):
     """Admin response including all template fields."""
-
-    is_published: bool
 
 
 class TemplateAdminListResponse(BaseModel):
@@ -192,7 +181,6 @@ __all__ = [
     "TemplateListResponse",
     "TemplateCreateRequest",
     "TemplateUpdateRequest",
-    "TemplatePublishRequest",
     "TemplateAdminResponse",
     "TemplateAdminListResponse",
     "CATEGORY_LABELS",

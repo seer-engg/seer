@@ -104,15 +104,13 @@ async def instantiate_template(
 async def admin_list_templates(
     request: Request,
     category: Optional[str] = Query(None, description="Filter by category"),
-    include_unpublished: bool = Query(True, description="Include unpublished templates"),
     limit: int = Query(50, ge=1, le=100, description="Max items to return"),
     cursor: Optional[str] = Query(None, description="Pagination cursor"),
 ):
-    """List all templates (admin view, includes unpublished)."""
+    """List all templates (admin view)."""
     _require_user(request)
     return await admin_services.list_all_templates(
         category=category,
-        include_unpublished=include_unpublished,
         limit=limit,
         cursor=cursor,
     )
@@ -142,17 +140,6 @@ async def admin_delete_template(request: Request, slug: str):
     _require_user(request)
     await admin_services.delete_template(slug)
     return {"ok": True}
-
-
-@router.patch("/admin/templates/{slug}/publish", response_model=api_models.TemplateAdminResponse)
-async def admin_toggle_publish(
-    request: Request,
-    slug: str,
-    payload: api_models.TemplatePublishRequest,
-):
-    """Publish or unpublish a template."""
-    _require_user(request)
-    return await admin_services.toggle_publish(slug, payload)
 
 
 __all__ = ["router"]

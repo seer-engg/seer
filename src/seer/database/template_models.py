@@ -41,13 +41,11 @@ class WorkflowTemplate(models.Model):
     source = fields.CharEnumField(TemplateSource, max_length=20, default=TemplateSource.SYSTEM)
     created_by = fields.ForeignKeyField("models.User", related_name="templates", null=True, on_delete=fields.SET_NULL)
     organization = fields.ForeignKeyField("models.Organization", related_name="templates", null=True, on_delete=fields.SET_NULL)
-    visibility = fields.CharField(max_length=10, default="private")  # "private" | "public"
     spec = fields.JSONField()  # WorkflowSpec with ${config.xxx} placeholders
     required_integrations = fields.JSONField(default=list)
     # Format: [{"provider": "google", "integration_type": "gmail", "reason": "..."}]
     icon = fields.CharField(max_length=50, null=True)
     preview_image_url = fields.CharField(max_length=500, null=True)
-    is_published = fields.BooleanField(default=False)
     is_featured = fields.BooleanField(default=False)
     usage_count = fields.IntField(default=0)
     source_workflow = fields.ForeignKeyField(
@@ -60,8 +58,8 @@ class WorkflowTemplate(models.Model):
         table = "workflow_templates"
         ordering = ("-created_at",)
         indexes = (
-            ("category", "is_published"),
-            ("is_featured", "is_published"),
+            ("category",),
+            ("is_featured",),
         )
 
     def __str__(self) -> str:
@@ -99,7 +97,6 @@ class WorkflowTemplatePublic(BaseModel):
     preview_image_url: str | None
     is_featured: bool
     usage_count: int
-    visibility: str
 
     @classmethod
     def from_orm(cls, obj: WorkflowTemplate) -> "WorkflowTemplatePublic":
@@ -116,5 +113,4 @@ class WorkflowTemplatePublic(BaseModel):
             preview_image_url=obj.preview_image_url,
             is_featured=obj.is_featured,
             usage_count=obj.usage_count,
-            visibility=obj.visibility,
         )

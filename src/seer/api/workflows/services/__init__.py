@@ -53,7 +53,6 @@ from .lifecycle import (
     publish_workflow,
     restore_workflow_version,
     toggle_workflow_active,
-    toggle_workflow_published,
     update_workflow,
 )
 
