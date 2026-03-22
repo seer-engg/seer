@@ -177,10 +177,6 @@ class WorkflowPublishRequest(BaseModel):
     pass
 
 
-class WorkflowPublishedToggleRequest(BaseModel):
-    is_published: bool
-
-
 class WorkflowActiveToggleRequest(BaseModel):
     is_active: bool
 
@@ -212,7 +208,6 @@ class WorkflowSummary(BaseModel):
     name: str
     created_at: datetime
     updated_at: datetime
-    is_published: bool = False
     is_active: bool = True
     integrations: List[str] = Field(default_factory=list)
 

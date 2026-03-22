@@ -314,18 +314,6 @@ async def publish_workflow(
     return await services.publish_workflow(user, workflow_id, payload, organization=org, membership=membership)
 
 
-@router.patch("/workflows/{workflow_id}/published", response_model=api_models.WorkflowSummary)
-async def toggle_workflow_published(
-    request: Request,
-    workflow_id: str,
-    payload: api_models.WorkflowPublishedToggleRequest,
-):
-    """Toggle whether a workflow is published as a template."""
-    user = _require_user(request)
-    org, membership = _get_org_context(request)
-    return await services.toggle_workflow_published(user, workflow_id, payload.is_published, organization=org, membership=membership)
-
-
 @router.patch("/workflows/{workflow_id}/active", response_model=api_models.WorkflowSummary)
 async def toggle_workflow_active(
     request: Request,

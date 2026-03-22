@@ -14,7 +14,6 @@ import pytest
 
 from seer.api.templates.models import (
     TemplateUpdateRequest,
-    TemplatePublishRequest,
 )
 
 
@@ -272,11 +271,9 @@ async def test_update_template_success():
     mock_template.icon = None
     mock_template.preview_image_url = None
     mock_template.is_featured = False
-    mock_template.is_published = True
     mock_template.usage_count = 5
     mock_template.required_integrations = []
     mock_template.spec = {}
-    mock_template.visibility = "private"
     mock_template.created_at = MagicMock()
     mock_template.updated_at = MagicMock()
 
@@ -342,43 +339,6 @@ async def test_delete_template_not_found():
 
 
 @pytest.mark.unit
-@pytest.mark.asyncio
-async def test_toggle_publish():
-    """Test publishing and unpublishing a template."""
-    from seer.api.templates.admin_services import toggle_publish
-    from seer.database import TemplateCategory, TemplateSource
-
-    mock_template = MagicMock()
-    mock_template.id = 1
-    mock_template.slug = "test-template"
-    mock_template.name = "Test Template"
-    mock_template.description = "Test"
-    mock_template.category = TemplateCategory.MARKETING
-    mock_template.source = TemplateSource.SYSTEM
-    mock_template.tags = []
-    mock_template.icon = None
-    mock_template.preview_image_url = None
-    mock_template.is_featured = False
-    mock_template.is_published = True  # After toggle
-    mock_template.usage_count = 0
-    mock_template.required_integrations = []
-    mock_template.spec = {}
-    mock_template.visibility = "private"
-    mock_template.created_at = MagicMock()
-    mock_template.updated_at = MagicMock()
-
-    with patch("seer.api.templates.admin_services.WorkflowTemplate") as MockTemplate:
-        MockTemplate.filter.return_value.first = AsyncMock(return_value=mock_template)
-        MockTemplate.filter.return_value.update = AsyncMock()
-        MockTemplate.get = AsyncMock(return_value=mock_template)
-
-        payload = TemplatePublishRequest(is_published=True)
-        result = await toggle_publish("test-template", payload)
-
-        assert result.is_published is True
-
-
-@pytest.mark.unit
 def test_to_admin_response_helper():
     """Test _to_admin_response helper function."""
     from seer.api.templates.admin_services import _to_admin_response
@@ -396,13 +356,11 @@ def test_to_admin_response_helper():
     mock_template.icon = "icon"
     mock_template.preview_image_url = "https://example.com/image.png"
     mock_template.is_featured = True
-    mock_template.is_published = False  # Admin can see unpublished
     mock_template.usage_count = 5
     mock_template.required_integrations = [
         {"provider": "google", "integration_type": "gmail", "reason": "Send"}
     ]
     mock_template.spec = {"version": "2"}
-    mock_template.visibility = "private"
     mock_template.created_at = datetime.now(timezone.utc)
     mock_template.updated_at = datetime.now(timezone.utc)
 
@@ -410,7 +368,6 @@ def test_to_admin_response_helper():
 
     assert response.template_id == "tpl_1"
     assert response.slug == "test-template"
-    assert response.is_published is False  # Includes publish status
     assert response.is_featured is True
     assert response.category == "marketing"
     assert len(response.required_integrations) == 1
