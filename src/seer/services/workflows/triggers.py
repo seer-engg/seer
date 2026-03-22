@@ -167,15 +167,18 @@ async def process_trigger_event(subscription_id: int, event_id: int) -> None:
             config_payload={},
             trigger_envelope=envelope,
         )
-        await _mark_run_succeeded(run, output)
+        if not output.get("__interrupted__"):
+            await _mark_run_succeeded(run, output)
         await TriggerEvent.filter(id=event.id).update(status=TriggerEventStatus.PROCESSED)
         logger.info(
-            "Trigger job completed: workflow execution succeeded",
+            "Trigger job completed: workflow execution %s",
+            "interrupted" if output.get("__interrupted__") else "succeeded",
             extra={
                 "subscription_id": subscription_id,
                 "event_id": event_id,
                 "workflow_id": workflow.id,
                 "run_id": run.id,
+                "interrupted": bool(output.get("__interrupted__")),
             }
         )
     except HTTPException as exc:
