@@ -146,12 +146,37 @@ class GmailSendEmailTool(GoogleAPIClient):
         # Resolve file attachments
         resolved_attachments = await self._resolve_attachments(arguments.get("attachments") or [], context)
 
+        # Inject email tracking if in a workflow context
+        subject = str(arguments.get("subject") or "")
+        body_html = str(arguments["body_html"]) if arguments.get("body_html") else None
+        tracking_id = None
+
+        if context:
+            try:
+                # pylint: disable-next=import-outside-toplevel  # Reason: tools layer should not hard-depend on services
+                from seer.services.email_tracking import create_tracking_record, inject_tracking
+
+                tracking_id = await create_tracking_record(
+                    provider="gmail",
+                    email_type="workflow",
+                    recipient=to[0],
+                    subject=subject,
+                    organization_id=context.organization_id,
+                    workflow_run_id=context.workflow_run_id,
+                    user_id=getattr(context.user, "user_id", None) if context.user else None,
+                )
+                if body_html:
+                    body_html = inject_tracking(body_html, tracking_id)
+            except Exception:  # pylint: disable=broad-exception-caught  # Reason: tracking failures must not block email send
+                logger.warning("Failed to set up email tracking, sending without tracking")
+                tracking_id = None
+
         # Build MIME email with arguments passed directly
         mime_msg = _build_mime_email(
             to=to,
-            subject=str(arguments.get("subject") or ""),
+            subject=subject,
             body_text=str(arguments.get("body_text") or ""),
-            body_html=str(arguments["body_html"]) if arguments.get("body_html") else None,
+            body_html=body_html,
             cc=_coerce_str_list(arguments.get("cc"), []),
             bcc=_coerce_str_list(arguments.get("bcc"), []),
             from_email=str(arguments["from_email"]) if arguments.get("from_email") else None,
@@ -169,7 +194,17 @@ class GmailSendEmailTool(GoogleAPIClient):
         logger.info("Sending Gmail email to=%s subject='%s' attachments=%d", to, arguments.get("subject", "")[:80], len(resolved_attachments))
 
         resp = await self._make_request("POST", f"{GMAIL_API_BASE}/messages/send", access_token, json_body=body)
-        return resp.json()
+        result = resp.json()
+
+        # Finalize tracking record with Gmail message ID
+        if tracking_id:
+            try:
+                from seer.services.email_tracking import finalize_send  # pylint: disable=import-outside-toplevel  # Reason: lazy import to match tracking setup above
+                await finalize_send(tracking_id, provider_email_id=result.get("id"))
+            except Exception:  # pylint: disable=broad-exception-caught  # Reason: tracking failures must not affect email result
+                logger.warning("Failed to finalize email tracking for %s", tracking_id)
+
+        return result
 
     async def _resolve_attachments(
         self,

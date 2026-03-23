@@ -27,6 +27,7 @@ DEFAULT_PUBLIC_PREFIXES = (
     "/mcp",  # MCP HTTP transport (has its own auth)
     "/api/browser/recordings/shared",  # Public replay links
     "/api/public",
+    "/v1/track",  # Email tracking pixel/click endpoints (recipients aren't Seer users)
 )
 
 # Payment-exempt paths: require auth but skip payment gates and usage limits.
