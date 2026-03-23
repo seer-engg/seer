@@ -233,6 +233,29 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
             "scope_keywords": ["w_member_social", "linkedin"]
         }
     },
+    # Oura Ring integration
+    "oura": {
+        "display_name": "Oura Ring",
+        "oauth_provider": "oura",
+        "requires_oauth": True,
+        "icon": {"type": "url", "value": "https://img.logo.dev/ouraring.com?token=pk_Ovp4v2MYQDqQ0D6xdN7OJA"},
+        "brand_color": "#1A1A2E",
+        "default_scopes": ["daily", "heartrate", "spo2", "stress", "session", "personal"],
+        "scopes": [
+            {"value": "daily", "display_name": "Daily summaries", "description": "Sleep, readiness, and activity scores"},
+            {"value": "heartrate", "display_name": "Heart rate", "description": "Heart rate and HRV data"},
+            {"value": "spo2", "display_name": "Blood oxygen", "description": "SpO2 readings"},
+            {"value": "stress", "display_name": "Stress", "description": "Stress level data"},
+            {"value": "workout", "display_name": "Workouts", "description": "Workout sessions"},
+            {"value": "session", "display_name": "Sessions", "description": "Meditation and breathing sessions"},
+            {"value": "tag", "display_name": "Tags", "description": "User-created tags"},
+            {"value": "personal", "display_name": "Personal info", "description": "Profile information"},
+        ],
+        "detection_patterns": {
+            "tool_name_patterns": ["oura_"],
+            "scope_keywords": ["oura", "health", "sleep", "heart_rate"]
+        }
+    },
     # Discord integration
     "discord": {
         "display_name": "Discord",

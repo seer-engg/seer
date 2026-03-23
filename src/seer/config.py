@@ -223,6 +223,13 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=None, description="LinkedIn OAuth client secret"
     )
 
+    oura_client_id: Optional[str] = Field(
+        default=None, description="Oura Ring OAuth client ID"
+    )
+    oura_client_secret: Optional[str] = Field(
+        default=None, description="Oura Ring OAuth client secret"
+    )
+
     slack_client_id: Optional[str] = Field(
         default=None, description="Slack OAuth client ID"
     )

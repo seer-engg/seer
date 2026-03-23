@@ -9,6 +9,7 @@ from .discord import DiscordProvider
 from .github import GitHubProvider
 from .google import GoogleProvider
 from .linkedin import LinkedInProvider
+from .oura import OuraProvider
 from .slack import SlackProvider
 from .supabase import SupabaseProvider
 
@@ -18,6 +19,7 @@ _registry.register(GitHubProvider())
 _registry.register(SupabaseProvider())
 _registry.register(DiscordProvider())
 _registry.register(LinkedInProvider())
+_registry.register(OuraProvider())
 _registry.register(SlackProvider())
 _registry.register(AirtableProvider())
 _registry.register(NotionProvider())
