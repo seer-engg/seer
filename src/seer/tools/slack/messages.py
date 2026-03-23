@@ -10,11 +10,15 @@ from fastapi import HTTPException
 from seer.logger import get_logger
 from seer.tools.credential_resolver import ResolvedCredentials
 from seer.tools.slack.base import SlackAPIClient
+from seer.utils.rich_text import Platform, RichTextConverter
 
 if TYPE_CHECKING:
     from seer.core.runtime.context import WorkflowRuntimeContext
 
 logger = get_logger("shared.tools.slack.messages")
+
+# Shared converter instance for Slack tools
+_rich_text_converter = RichTextConverter()
 
 
 class SlackSendChannelMessageTool(SlackAPIClient):
@@ -39,8 +43,10 @@ class SlackSendChannelMessageTool(SlackAPIClient):
                 },
                 "text": {
                     "type": "string",
-                    "description": "Message text (supports Slack markdown formatting)",
+                    "description": "Message text (supports formatting: bold, italic, strikethrough, links, lists, quotes, code)",
                     "maxLength": 40000,
+                    "x-ui-type": "rich_text",
+                    "x-rich-text-platform": "slack",
                 },
                 "thread_ts": {
                     "type": "string",
@@ -115,9 +121,12 @@ class SlackSendChannelMessageTool(SlackAPIClient):
             channel_id
         )
 
+        # Convert markdown to Slack mrkdwn format
+        formatted_text = _rich_text_converter.convert(text, Platform.SLACK)
+
         body: Dict[str, Any] = {
             "channel": channel_id,
-            "text": text,
+            "text": formatted_text,
             "unfurl_links": unfurl_links,
         }
         if thread_ts:
@@ -153,8 +162,10 @@ class SlackSendDirectMessageTool(SlackAPIClient):
                 },
                 "text": {
                     "type": "string",
-                    "description": "Message text (supports Slack markdown formatting)",
+                    "description": "Message text (supports formatting: bold, italic, strikethrough, links, lists, quotes, code)",
                     "maxLength": 40000,
+                    "x-ui-type": "rich_text",
+                    "x-rich-text-platform": "slack",
                 },
             },
             "required": ["workspace_id", "user_id", "text"],
@@ -229,6 +240,9 @@ class SlackSendDirectMessageTool(SlackAPIClient):
                 detail="Failed to open DM channel: no channel ID in response"
             )
 
+        # Convert markdown to Slack mrkdwn format
+        formatted_text = _rich_text_converter.convert(text, Platform.SLACK)
+
         # Step 2: Send message to DM channel
         return await self._make_request(
             "POST",
@@ -236,6 +250,6 @@ class SlackSendDirectMessageTool(SlackAPIClient):
             credentials=credentials,
             json_body={
                 "channel": dm_channel_id,
-                "text": text,
+                "text": formatted_text,
             }
         )

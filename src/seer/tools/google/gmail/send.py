@@ -61,12 +61,18 @@ class GmailSendEmailTool(GoogleAPIClient):
                 },
                 "body_text": {
                     "type": "string",
-                    "description": "Plain-text body."
+                    "description": (
+                        "Email body (supports formatting: bold, italic, underline, strikethrough,"
+                        " links, lists, quotes, code, headings). Automatically converted to HTML."
+                    ),
+                    "x-ui-type": "rich_text",
+                    "x-rich-text-platform": "email",
                 },
                 "body_html": {
                     "type": "string",
-                    "description": "Optional HTML body.",
-                    "default": None
+                    "description": "Optional HTML body (overrides body_text formatting). Use the HTML toggle in the editor instead.",
+                    "default": None,
+                    "x-ui-hidden": True,
                 },
                 "cc": {
                     "type": "array",
