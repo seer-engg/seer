@@ -56,10 +56,10 @@ async def _get_editable_workflow_for_lock(request: Request, workflow_id: str):
 @router.get("/events")
 async def stream_collaboration_events(
     request: Request,
+    tab_id: str | None = Query(None, max_length=255),
     last_event_id: Optional[str] = Header(None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     user = _require_user(request)
-    del user  # auth check only
     organization = get_organization(request)
     membership = get_membership(request)
     if membership.status.value != "active":
@@ -76,6 +76,8 @@ async def stream_collaboration_events(
             organization.id,
             last_event_id=last_event_id,
             should_stop=_should_stop,
+            user=user,
+            tab_id=tab_id,
         ):
             yield chunk
 
@@ -113,6 +115,11 @@ async def acquire_workflow_lock(
     user, organization, membership, workflow = await _get_editable_workflow_for_lock(request, workflow_id)
     del membership
 
+    # Build SSE connection ID for lock association (enables automatic release on SSE disconnect)
+    sse_connection_id: str | None = None
+    if payload.tab_id:
+        sse_connection_id = f"{organization.id}:{user.user_id}:{payload.tab_id}"
+
     service = WorkflowLockService()
     try:
         acquired, lock = await service.acquire_lock(
@@ -120,6 +127,7 @@ async def acquire_workflow_lock(
             workflow_id=workflow.workflow_id,
             user=user,
             tab_id=payload.tab_id,
+            sse_connection_id=sse_connection_id,
         )
     finally:
         await service.close()
@@ -142,12 +150,18 @@ async def acquire_workflow_lock(
     return WorkflowLockResponse(lock=lock)
 
 
-@router.post("/workflows/{workflow_id}/lock/heartbeat", response_model=WorkflowLockResponse)
+@router.post("/workflows/{workflow_id}/lock/heartbeat", response_model=WorkflowLockResponse, deprecated=True)
 async def heartbeat_workflow_lock(
     request: Request,
     workflow_id: str,
     payload: WorkflowLockHeartbeatRequest = Body(default_factory=WorkflowLockHeartbeatRequest),
 ) -> WorkflowLockResponse:
+    """Deprecated: Lock renewal is now handled automatically via SSE connection lifecycle.
+
+    This endpoint remains functional for backward compatibility but clients should
+    remove heartbeat polling. Locks are automatically released when the SSE connection
+    disconnects.
+    """
     user, organization, membership, workflow = await _get_editable_workflow_for_lock(request, workflow_id)
     del membership
 
