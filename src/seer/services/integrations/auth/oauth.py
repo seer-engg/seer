@@ -159,6 +159,7 @@ _INTEGRATION_TO_PROVIDER: dict[str, str] = {
     'slack': 'slack',
     'airtable': 'airtable',
     'notion': 'notion',
+    'oura': 'oura',
 }
 
 
