@@ -562,7 +562,7 @@ def test_validate_references_hitl_in_workflow():
         nodes=[
             AgentNode(
                 id="llm1",
-                inputs={"model": "openai/gpt-oss-120b", "prompt": "Generate text"},
+                inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Generate text"},
             ),
             HITLNode(
                 id="review",
@@ -628,7 +628,7 @@ def test_workflow_spec_mixed_nodes():
         nodes=[
             AgentNode(
                 id="llm1",
-                inputs={"model": "openai/gpt-oss-120b", "prompt": "Generate"},
+                inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Generate"},
             ),
             HITLNode(
                 id="review",

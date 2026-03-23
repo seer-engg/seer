@@ -830,7 +830,7 @@ Login and extract account data:
 - `id` (string): Unique identifier for this node
 - `type`: Must be `"agent"`
 - `inputs` (object): Must contain:
-  - `model` (string): Model ID (e.g., `"openai/gpt-oss-120b"`, `"openai/gpt-oss-120b"`, `"z-ai/glm-5"`)
+  - `model` (string): Model ID (e.g., `"qwen/qwen3-235b-a22b-2507"`, `"google/gemini-2.0-flash-001"`, `"mistralai/mistral-small-3.2-24b-instruct"`)
   - `prompt` (string): Task description with `${...}` expressions for dynamic content
 
 **Optional Input Fields:**

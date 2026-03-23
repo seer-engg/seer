@@ -1331,7 +1331,7 @@ class TestChatResumeTask:
             mock_merge.return_value = {}
             mock_thinking.return_value = []
             MockPublisher.return_value = AsyncMock()
-            mock_config.default_llm_model = "z-ai/glm-5"
+            mock_config.default_llm_model = "qwen/qwen3-235b-a22b-2507"
             mock_config.nexus_chat_timeout_seconds = 2700
 
             mock_agent = MagicMock()

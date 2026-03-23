@@ -27,7 +27,7 @@ from seer.core.schema.schema_registry import SchemaRegistry
 
 pytestmark = pytest.mark.unit
 
-TEST_AGENT_MODEL = "openai/gpt-oss-120b"
+TEST_AGENT_MODEL = "qwen/qwen3-235b-a22b-2507"
 INVALID_AGENT_MODEL = "openai/gpt-4o"
 
 

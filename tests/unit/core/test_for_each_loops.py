@@ -764,7 +764,7 @@ async def test_for_each_loop_iteration_traces() -> None:
     mock_chat_model = MagicMock()
 
     model_def = ModelDefinition(
-        model_id="openai/gpt-oss-120b",
+        model_id="qwen/qwen3-235b-a22b-2507",
         chat_model_factory=lambda: mock_chat_model,
     )
 
@@ -793,7 +793,7 @@ async def test_for_each_loop_iteration_traces() -> None:
                 "id": "process",
                 "type": "agent",
                 "inputs": {
-                    "model": "openai/gpt-oss-120b",
+                    "model": "qwen/qwen3-235b-a22b-2507",
                     "prompt": "Say: ${item}",
                 },
                 "outputs": {

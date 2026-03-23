@@ -430,7 +430,7 @@ class TestListModels:
         assert len(result.models) >= 2
 
         model_ids = [m.id for m in result.models]
-        assert "openai/gpt-oss-120b" in model_ids
+        assert "qwen/qwen3-235b-a22b-2507" in model_ids
 
     @pytest.mark.asyncio
     async def test_list_models_includes_custom_default(self):
@@ -603,7 +603,7 @@ class TestGraphPreview:
         """Test generating preview creates sequential edges."""
         nodes = [
             ToolNode(id="n1", tool="test.tool"),
-            AgentNode(id="n2", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"}),
+            AgentNode(id="n2", inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "test"}),
         ]
         spec = WorkflowSpec(nodes=nodes, edges=[])
 
@@ -616,7 +616,7 @@ class TestGraphPreview:
 
     def test_graph_preview_node_structure(self):
         """Test preview nodes have correct structure."""
-        node = AgentNode(id="llm1", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"})
+        node = AgentNode(id="llm1", inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "test"})
         spec = WorkflowSpec(nodes=[node], edges=[])
 
         preview = catalog._graph_preview(spec)
