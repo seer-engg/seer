@@ -58,7 +58,7 @@ class AccountPickerAccountInfo(BaseModel):
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
     message: str = Field(..., description="User's chat message")
-    model: Optional[str] = Field(default=None, description="Model to use for chat (e.g., 'openai/gpt-oss-120b', 'claude-opus-4-5')")
+    model: Optional[str] = Field(default=None, description="Model to use for chat (e.g., 'qwen/qwen3-235b-a22b-2507', 'moonshotai/kimi-k2.5')")
     session_id: Optional[int] = Field(default=None, description="Chat session ID to resume conversation")
     thread_id: Optional[str] = Field(default=None, description="LangGraph thread ID to resume conversation")
     resume_thread: bool = Field(default=True, description="Whether to resume existing thread if thread_id provided")

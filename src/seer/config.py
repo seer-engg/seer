@@ -616,7 +616,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Auto-extract memories from completed chat sessions"
     )
     memory_extraction_model: str = Field(
-        default="openai/gpt-oss-120b",
+        default="qwen/qwen3-235b-a22b-2507",
         description="LLM model for memory extraction (used by Mem0, works with OpenRouter)"
     )
     mem0_llm_provider: str = Field(

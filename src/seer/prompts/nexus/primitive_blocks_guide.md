@@ -814,7 +814,7 @@ Login and extract account data:
   "id": "unique_node_id",
   "type": "agent",
   "inputs": {
-    "model": "openai/gpt-oss-120b",
+    "model": "qwen/qwen3-235b-a22b-2507",
     "prompt": "Research ${topic} and compile a summary with key findings",
     "tools": ["web_search", "gmail_send_email"],
     "max_iterations": 10,
@@ -911,7 +911,7 @@ Tools can be specified in two formats:
   "id": "research_agent",
   "type": "agent",
   "inputs": {
-    "model": "openai/gpt-oss-120b",
+    "model": "qwen/qwen3-235b-a22b-2507",
     "prompt": "Research the company ${webhook_trigger.data.company_name}. Find their:\n1. Main products/services\n2. Recent news or announcements\n3. Key leadership\n\nCompile a brief executive summary.",
     "tools": ["web_search"],
     "max_iterations": 15
@@ -941,7 +941,7 @@ Tools can be specified in two formats:
   "id": "email_processor",
   "type": "agent",
   "inputs": {
-    "model": "openai/gpt-oss-120b",
+    "model": "qwen/qwen3-235b-a22b-2507",
     "prompt": "Process the email thread ${email_thread.id}:\n1. Read all messages in the thread\n2. Summarize the key points\n3. Draft a professional response addressing the main concerns\n4. Save the draft (do not send)",
     "tools": [
       {"name": "gmail_get_thread", "connection_id": 42},
@@ -960,7 +960,7 @@ Tools can be specified in two formats:
   "id": "enrich_contact",
   "type": "agent",
   "inputs": {
-    "model": "openai/gpt-oss-120b",
+    "model": "qwen/qwen3-235b-a22b-2507",
     "prompt": "Enrich the contact information for ${item.email}:\n1. Search for their LinkedIn profile\n2. Find their current company and title\n3. Look for recent professional activity\nReturn structured data.",
     "tools": ["web_search"],
     "max_iterations": 8
@@ -1055,7 +1055,7 @@ This will fail because arithmetic is not allowed in template expressions.
   "id": "compute_row",
   "type": "agent",
   "inputs": {
-    "model": "openai/gpt-oss-120b",
+    "model": "qwen/qwen3-235b-a22b-2507",
     "prompt": "Calculate and return only the number: ${index} + 2"
   },
   "outputs": {"mode": "text"}
@@ -1093,7 +1093,7 @@ Arithmetic works in `if` conditions!
 {
   "nodes": [
     {"id": "fetch", "type": "tool", "tool": "gmail_get_message", "inputs": {"message_id": "${email_trigger.data.id}"}},
-    {"id": "analyze", "type": "agent", "inputs": {"model": "openai/gpt-oss-120b", "prompt": "Analyze: ${fetch.body}"}, "outputs": {"mode": "json", ...}}
+    {"id": "analyze", "type": "agent", "inputs": {"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Analyze: ${fetch.body}"}, "outputs": {"mode": "json", ...}}
   ],
   "edges": [
     {"source": "fetch", "target": "analyze"}
@@ -1125,7 +1125,7 @@ Arithmetic works in `if` conditions!
     {"id": "fetch_list", "type": "tool", "tool": "list_items", "inputs": {}},
     {"id": "loop", "type": "for_each", "items": "${fetch_list.items}"},
     {"id": "process", "type": "tool", "tool": "update_item", "inputs": {"id": "${item.id}", "status": "processed"}},
-    {"id": "complete", "type": "agent", "inputs": {"model": "openai/gpt-oss-120b", "prompt": "Summarize: processed all items"}, "outputs": {"mode": "text"}}
+    {"id": "complete", "type": "agent", "inputs": {"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Summarize: processed all items"}, "outputs": {"mode": "text"}}
   ],
   "edges": [
     {"source": "fetch_list", "target": "loop"},
