@@ -21,3 +21,11 @@ DEFAULT_AGENT_MODELS = (
 )
 
 DEFAULT_AGENT_MODEL_IDS = frozenset(model.id for model in DEFAULT_AGENT_MODELS)
+
+# Legacy models that should be transparently remapped at runtime.
+DEPRECATED_MODEL_MAP: dict[str, str] = {
+    "openai/gpt-oss-120b": "qwen/qwen3-235b-a22b-2507",
+    "z-ai/glm-5": "qwen/qwen3-235b-a22b-2507",
+    "gpt-4": "qwen/qwen3-235b-a22b-2507",
+    "gpt-5-mini": "qwen/qwen3-235b-a22b-2507",
+}

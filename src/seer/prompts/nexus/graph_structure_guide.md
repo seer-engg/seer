@@ -277,7 +277,7 @@ Two paths that merge back to a single node:
   "id": "merge",
   "type": "agent",
   "inputs": {
-    "model": "openai/gpt-oss-120b",
+    "model": "qwen/qwen3-235b-a22b-2507",
     "prompt": "Result from path A: ${path_a}, Result from path B: ${path_b}"
   }
 }

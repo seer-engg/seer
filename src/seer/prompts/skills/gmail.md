@@ -189,7 +189,7 @@ Process support emails and draft intelligent replies.
     {
       "id": "classify_email",
       "type": "agent",
-      "model": "openai/gpt-oss-120b",
+      "model": "qwen/qwen3-235b-a22b-2507",
       "prompt": "Classify this email: ${trigger.data.message.body}",
       "output": {
         "mode": "json",
@@ -238,7 +238,7 @@ Generate and send daily report on schedule.
     {
       "id": "generate_report",
       "type": "agent",
-      "model": "openai/gpt-oss-120b",
+      "model": "qwen/qwen3-235b-a22b-2507",
       "prompt": "Generate daily summary for ${trigger.data.scheduled_time}",
       "out": "report"
     },
@@ -304,14 +304,14 @@ Monitor support emails, fetch conversation threads, search KB, and reply with co
     {
       "id": "analyze_thread",
       "type": "agent",
-      "model": "openai/gpt-oss-120b",
+      "model": "qwen/qwen3-235b-a22b-2507",
       "prompt": "Extract the customer's main issue from this thread: ${thread.messages}",
       "out": "context"
     },
     {
       "id": "generate_response",
       "type": "agent",
-      "model": "openai/gpt-oss-120b",
+      "model": "qwen/qwen3-235b-a22b-2507",
       "prompt": "Generate helpful response for: ${context.issue}",
       "out": "response"
     },
@@ -352,7 +352,7 @@ Classify support emails with AI and organize with labels.
     {
       "id": "classify_email",
       "type": "agent",
-      "model": "openai/gpt-oss-120b",
+      "model": "qwen/qwen3-235b-a22b-2507",
       "prompt": "Classify urgency and category: ${trigger.data.body}",
       "output": {
         "mode": "json",
@@ -400,7 +400,7 @@ Send immediate auto-responses for FAQs, create drafts for complex issues.
     {
       "id": "classify",
       "type": "agent",
-      "model": "openai/gpt-oss-120b",
+      "model": "qwen/qwen3-235b-a22b-2507",
       "prompt": "Can this be auto-responded? ${email.body}",
       "out": "can_auto_respond"
     },

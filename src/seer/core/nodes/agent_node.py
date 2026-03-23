@@ -22,6 +22,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 from seer.core.errors import ExecutionError
+from seer.core.registry.default_models import DEPRECATED_MODEL_MAP
 from seer.core.expr.typecheck import schema_from_output_contract
 from seer.core.nodes.base import BaseNodeType, NodeExecutionContext, TypeRegistrationContext, get_trace_key
 from seer.core.nodes.registry import register_node_type
@@ -712,6 +713,7 @@ def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
     model_id = node.inputs.get("model")
     if not isinstance(model_id, str):
         raise ExecutionError(f"AgentNode {node.id}: 'model' must be a string in inputs")
+    model_id = DEPRECATED_MODEL_MAP.get(model_id, model_id)
 
     prompt_template = node.inputs.get("prompt")
     if not isinstance(prompt_template, str):
