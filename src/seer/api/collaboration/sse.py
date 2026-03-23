@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import AsyncIterator, Optional
+from typing import TYPE_CHECKING, AsyncIterator, Optional
 
 from seer.logger import get_logger
 from seer.services.collaboration.models import CollaborationEventType
 from seer.services.collaboration.publisher import ORG_STREAM_KEY_PREFIX
+
+if TYPE_CHECKING:
+    from seer.database import User
 
 logger = get_logger(__name__)
 
@@ -94,6 +97,8 @@ async def stream_org_events_sse(
     organization_id: int,
     last_event_id: Optional[str] = None,
     should_stop: Callable[[], Awaitable[bool]] | None = None,
+    user: Optional["User"] = None,
+    tab_id: Optional[str] = None,
 ) -> AsyncIterator[str]:
     import redis.asyncio as aioredis  # pylint: disable=import-outside-toplevel # Reason: optional lazy import
     from seer.config import config  # pylint: disable=import-outside-toplevel # Reason: avoid circular import at module load time
@@ -101,6 +106,11 @@ async def stream_org_events_sse(
     stream_key = _build_stream_key(organization_id)
     redis = aioredis.from_url(config.redis_url, decode_responses=True)
     last_heartbeat_at = asyncio.get_running_loop().time() - HEARTBEAT_INTERVAL_SECONDS
+
+    # Build SSE connection ID for lock association
+    sse_connection_id: str | None = None
+    if user and tab_id:
+        sse_connection_id = f"{organization_id}:{user.user_id}:{tab_id}"
 
     try:
         cursor, sync_event = await _get_initial_cursor_and_sync_event(redis, stream_key, last_event_id, organization_id)
@@ -123,7 +133,45 @@ async def stream_org_events_sse(
             for chunk in chunks:
                 yield chunk
     finally:
+        # Release workflow locks held by this SSE connection
+        if sse_connection_id and user:
+            await _release_locks_on_disconnect(organization_id, sse_connection_id, user)
+
         try:
             await redis.aclose()
         except Exception:  # pylint: disable=broad-exception-caught # Reason: close is best-effort
             pass
+
+
+async def _release_locks_on_disconnect(
+    organization_id: int,
+    sse_connection_id: str,
+    user: "User",
+) -> None:
+    """Release all workflow locks held by the disconnected SSE connection and publish events."""
+    from seer.services.collaboration import (  # pylint: disable=import-outside-toplevel # Reason: avoid circular import
+        WorkflowLockService,
+        publish_collaboration_event,
+    )
+
+    lock_service = WorkflowLockService()
+    try:
+        released = await lock_service.release_locks_for_connection(organization_id, sse_connection_id)
+        for workflow_id, lock in released:
+            await publish_collaboration_event(
+                organization_id=organization_id,
+                actor=user,
+                event_type=CollaborationEventType.WORKFLOW_LOCK_RELEASED,
+                resource_type="workflow",
+                resource_id=workflow_id,
+                payload={"tab_id": lock.tab_id, "holder_name": lock.holder_name, "reason": "sse_disconnected"},
+            )
+    except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: lock cleanup is best-effort
+        logger.warning(
+            "Failed to release locks on SSE disconnect for org=%s connection=%s: %s",
+            organization_id,
+            sse_connection_id,
+            exc,
+        )
+    finally:
+        await lock_service.close()

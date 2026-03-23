@@ -67,9 +67,16 @@ class WorkflowLockService:
         workflow_id: str,
         user: User,
         tab_id: str | None = None,
+        sse_connection_id: str | None = None,
     ) -> tuple[bool, WorkflowLockMetadata]:
         redis = await self._get_redis()
-        lock = self._build_lock(organization_id=organization_id, workflow_id=workflow_id, user=user, tab_id=tab_id)
+        lock = self._build_lock(
+            organization_id=organization_id,
+            workflow_id=workflow_id,
+            user=user,
+            tab_id=tab_id,
+            sse_connection_id=sse_connection_id,
+        )
         key = self.build_lock_key(organization_id, workflow_id)
 
         acquired = await redis.set(key, lock.model_dump_json(), ex=LOCK_TTL_SECONDS, nx=True)
@@ -106,6 +113,7 @@ class WorkflowLockService:
             user=user,
             tab_id=current_lock.tab_id or tab_id,
             acquired_at=current_lock.acquired_at,
+            sse_connection_id=current_lock.sse_connection_id,
         )
         redis = await self._get_redis()
         await redis.set(
@@ -132,6 +140,43 @@ class WorkflowLockService:
         await redis.delete(self.build_lock_key(organization_id, workflow_id))
         return current_lock
 
+    async def release_locks_for_connection(
+        self,
+        organization_id: int,
+        sse_connection_id: str,
+    ) -> list[tuple[str, WorkflowLockMetadata]]:
+        """Release all workflow locks held by an SSE connection.
+
+        Returns list of (workflow_id, lock_metadata) tuples for released locks.
+        """
+        redis = await self._get_redis()
+        pattern = f"org:{organization_id}:workflow:*:lock"
+        released: list[tuple[str, WorkflowLockMetadata]] = []
+
+        async for key in redis.scan_iter(match=pattern):
+            raw = await redis.get(key)
+            if not raw:
+                continue
+
+            # Extract workflow_id from key pattern "org:{org_id}:workflow:{workflow_id}:lock"
+            parts = key.split(":")
+            if len(parts) < 4:
+                continue
+            workflow_id = parts[3]
+
+            lock = self._decode_lock(raw, organization_id=organization_id, workflow_id=workflow_id)
+            if lock and lock.sse_connection_id == sse_connection_id:
+                await redis.delete(key)
+                released.append((workflow_id, lock))
+                logger.info(
+                    "Released workflow lock on SSE disconnect: org=%s workflow=%s connection=%s",
+                    organization_id,
+                    workflow_id,
+                    sse_connection_id,
+                )
+
+        return released
+
     def _build_lock(
         self,
         *,
@@ -140,6 +185,7 @@ class WorkflowLockService:
         user: User,
         tab_id: str | None = None,
         acquired_at: datetime | None = None,
+        sse_connection_id: str | None = None,
     ) -> WorkflowLockMetadata:
         return WorkflowLockMetadata(
             organization_id=organization_id,
@@ -150,6 +196,7 @@ class WorkflowLockService:
             acquired_at=acquired_at or _now_utc(),
             expires_at=_expires_at(),
             tab_id=tab_id,
+            sse_connection_id=sse_connection_id,
         )
 
     @staticmethod
