@@ -28,6 +28,7 @@ from seer.api.core.middleware.organization import OrganizationContextMiddleware
 from seer.api.core.middleware.usage_limit import UsageLimitMiddleware
 from seer.api.router import router
 from seer.api.tools.router import router as tools_router
+from seer.api.tracking.router import router as tracking_router
 from seer.config import config
 from seer.database import db_lifespan
 from seer.logger import get_logger
@@ -180,6 +181,7 @@ app = FastAPI(
 
 app.include_router(router)
 app.include_router(tools_router)
+app.include_router(tracking_router)
 
 # =============================================================================
 # MCP Server Integration (setup - mount happens after all routes are defined)

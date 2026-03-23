@@ -61,6 +61,24 @@ class HITLEmailService:
         body_html = self._render_email_html(interrupt_data, form_url)
         body_text = self._render_email_text(interrupt_data, form_url)
 
+        # Inject email tracking
+        tracking_id = None
+        try:
+            from seer.services.email_tracking import create_tracking_record, inject_tracking  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import at module level
+
+            tracking_id = await create_tracking_record(
+                provider="gmail",
+                email_type="hitl",
+                recipient=gmail_config.recipient_email,
+                subject=subject,
+                workflow_run_id=workflow_run.run_id,
+                user_id=user.user_id,
+            )
+            body_html = inject_tracking(body_html, tracking_id)
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: tracking failures must not block HITL email
+            logger.warning("Failed to set up HITL email tracking for run '%s'", workflow_run.run_id)
+            tracking_id = None
+
         # Get Gmail OAuth connection (auto-select user's Google connection)
         connection, access_token = await get_oauth_token(
             user,
@@ -80,7 +98,7 @@ class HITLEmailService:
         )
 
         # Send via Gmail API
-        await self._gmail_tool.execute(
+        result = await self._gmail_tool.execute(
             access_token=access_token,
             arguments={
                 "to": [gmail_config.recipient_email],
@@ -89,6 +107,14 @@ class HITLEmailService:
                 "body_html": body_html,
             },
         )
+
+        # Finalize tracking
+        if tracking_id:
+            try:
+                from seer.services.email_tracking import finalize_send  # pylint: disable=import-outside-toplevel  # Reason: lazy import to match tracking setup above
+                await finalize_send(tracking_id, provider_email_id=result.get("id"))
+            except Exception:  # pylint: disable=broad-exception-caught  # Reason: tracking failures must not affect HITL flow
+                logger.warning("Failed to finalize HITL email tracking for run '%s'", workflow_run.run_id)
 
         logger.info(
             "HITL email sent successfully for run '%s'",
