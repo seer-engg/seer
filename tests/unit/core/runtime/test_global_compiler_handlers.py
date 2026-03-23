@@ -248,7 +248,7 @@ class TestAgentModelValidation:
                         "id": "agent1",
                         "type": "agent",
                         "inputs": {
-                            "model": "openai/gpt-oss-120b",
+                            "model": "qwen/qwen3-235b-a22b-2507",
                             "prompt": "Summarize this",
                         },
                     }

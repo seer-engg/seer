@@ -89,10 +89,25 @@ MODEL_PRICING: Dict[str, ModelPricing] = {
         output_per_1m=Decimal("2.00"),
         reasoning_per_1m=Decimal("2.00"),
     ),
-    # OpenRouter - GLM models
+    # OpenRouter - GLM models (legacy, kept for historical cost tracking)
     "z-ai/glm-5": ModelPricing(
-        input_per_1m=Decimal("0.80"),
-        output_per_1m=Decimal("0.80"),
+        input_per_1m=Decimal("0.72"),
+        output_per_1m=Decimal("2.30"),
+    ),
+    # OpenRouter - Gemini models
+    "google/gemini-2.0-flash-001": ModelPricing(
+        input_per_1m=Decimal("0.10"),
+        output_per_1m=Decimal("0.40"),
+    ),
+    # OpenRouter - Qwen models
+    "qwen/qwen3-235b-a22b-2507": ModelPricing(
+        input_per_1m=Decimal("0.07"),
+        output_per_1m=Decimal("0.10"),
+    ),
+    # OpenRouter - Mistral models
+    "mistralai/mistral-small-3.2-24b-instruct": ModelPricing(
+        input_per_1m=Decimal("0.075"),
+        output_per_1m=Decimal("0.20"),
     ),
     # OpenRouter - Qwen VL models
     "qwen/qwen3-vl-8b-thinking": ModelPricing(

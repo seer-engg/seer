@@ -100,7 +100,7 @@ def sample_spec_dict():
             {
                 "id": "n2",
                 "type": "agent",
-                "inputs": {"model": "openai/gpt-oss-120b", "prompt": "Test"},
+                "inputs": {"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Test"},
                 "meta": {"label": "Node 2", "position": {"x": 200, "y": 200}},
             },
         ],

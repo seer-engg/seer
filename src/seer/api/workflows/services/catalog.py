@@ -103,6 +103,7 @@ DEFAULT_MODEL_REGISTRY = [
         id=model.id,
         title=model.title,
         supports_json_schema=model.supports_json_schema,
+        category=model.category,
     )
     for model in DEFAULT_AGENT_MODELS
 ]

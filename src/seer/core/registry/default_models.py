@@ -10,13 +10,14 @@ class DefaultModelDescriptor:
     id: str
     title: str
     supports_json_schema: bool = True
+    category: str | None = None  # "fast", "smart", "balanced"
 
 
 DEFAULT_AGENT_MODELS = (
-    DefaultModelDescriptor(id="openai/gpt-oss-120b", title="GPT OSS 120B", supports_json_schema=True),
-    DefaultModelDescriptor(id="z-ai/glm-5", title="GLM 5", supports_json_schema=True),
-    DefaultModelDescriptor(id="moonshotai/kimi-k2.5", title="Kimi K2.5", supports_json_schema=True),
-    DefaultModelDescriptor(id="minimax/minimax-m2.5", title="MiniMax M2.5", supports_json_schema=True),
+    DefaultModelDescriptor(id="qwen/qwen3-235b-a22b-2507", title="Qwen 3", category="smart"),
+    DefaultModelDescriptor(id="google/gemini-2.0-flash-001", title="Gemini", category="fast"),
+    DefaultModelDescriptor(id="mistralai/mistral-small-3.2-24b-instruct", title="Mistral", category="balanced"),
+    DefaultModelDescriptor(id="moonshotai/kimi-k2.5", title="Kimi"),
 )
 
 DEFAULT_AGENT_MODEL_IDS = frozenset(model.id for model in DEFAULT_AGENT_MODELS)

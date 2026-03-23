@@ -374,7 +374,7 @@ async def test_execute_workflow_with_agent_text_output() -> None:
     tracking_tool = create_tracking_tool(call_tracker)
 
     model_def = ModelDefinition(
-        model_id="openai/gpt-oss-120b",
+        model_id="qwen/qwen3-235b-a22b-2507",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -387,7 +387,7 @@ async def test_execute_workflow_with_agent_text_output() -> None:
                 "id": "generate",
                 "type": "agent",
                 "inputs": {
-                    "model": "openai/gpt-oss-120b",
+                    "model": "qwen/qwen3-235b-a22b-2507",
                     "prompt": "Generate something for: ${test_trigger.message}",
                 },
                 "outputs": {"mode": "text"},
@@ -436,7 +436,7 @@ async def test_execute_workflow_with_agent_json_output() -> None:
     tracking_tool = create_tracking_tool(call_tracker)
 
     model_def = ModelDefinition(
-        model_id="openai/gpt-oss-120b",
+        model_id="qwen/qwen3-235b-a22b-2507",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -449,7 +449,7 @@ async def test_execute_workflow_with_agent_json_output() -> None:
                 "id": "generate",
                 "type": "agent",
                 "inputs": {
-                    "model": "openai/gpt-oss-120b",
+                    "model": "qwen/qwen3-235b-a22b-2507",
                     "prompt": "Extract data from: ${test_trigger.message}",
                 },
                 "outputs": {
@@ -510,7 +510,7 @@ async def test_execute_workflow_with_agent_json_output() -> None:
 async def test_execute_workflow_with_agent_memory_bank_attachment() -> None:
     """Test attached agent memory wiring in a compiled workflow execution."""
     model_def = ModelDefinition(
-        model_id="openai/gpt-oss-120b",
+        model_id="qwen/qwen3-235b-a22b-2507",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -522,7 +522,7 @@ async def test_execute_workflow_with_agent_memory_bank_attachment() -> None:
                 "id": "generate",
                 "type": "agent",
                 "inputs": {
-                    "model": "openai/gpt-oss-120b",
+                    "model": "qwen/qwen3-235b-a22b-2507",
                     "prompt": "Answer: ${test_trigger.message}",
                     "memory_bank_id": "mb_123",
                 },

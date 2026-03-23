@@ -89,7 +89,7 @@ async def test_tool_to_agent_to_tool_pipeline() -> None:
     echo_tool = create_echo_tool()
 
     model_def = ModelDefinition(
-        model_id="openai/gpt-oss-120b",
+        model_id="qwen/qwen3-235b-a22b-2507",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -108,7 +108,7 @@ async def test_tool_to_agent_to_tool_pipeline() -> None:
                 "id": "process_llm",
                 "type": "agent",
                 "inputs": {
-                    "model": "openai/gpt-oss-120b",
+                    "model": "qwen/qwen3-235b-a22b-2507",
                     "prompt": "Process: ${fetch.message}",
                 },
                 "outputs": {"mode": "text"},
@@ -162,7 +162,7 @@ async def test_agent_generates_data_for_loop_iteration() -> None:
     tracking_tool = create_tracking_tool(call_tracker)
 
     model_def = ModelDefinition(
-        model_id="openai/gpt-oss-120b",
+        model_id="qwen/qwen3-235b-a22b-2507",
         chat_model_factory=lambda: MagicMock(),
     )
 
@@ -176,7 +176,7 @@ async def test_agent_generates_data_for_loop_iteration() -> None:
                 "id": "generate_tasks",
                 "type": "agent",
                 "inputs": {
-                    "model": "openai/gpt-oss-120b",
+                    "model": "qwen/qwen3-235b-a22b-2507",
                     "prompt": "Generate tasks for: ${test_trigger.message}",
                 },
                 "outputs": {
