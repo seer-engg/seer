@@ -279,7 +279,7 @@ def test_type_env_browser_node_in_workflow():
             AgentNode(
                 id="process",
                 inputs={
-                    "model": "openai/gpt-oss-120b",
+                    "model": "qwen/qwen3-235b-a22b-2507",
                     "prompt": "Summarize: ${scrape.result}",
                 },
             ),
@@ -417,7 +417,7 @@ def test_type_env_browser_node_extracted_data_reference():
             AgentNode(
                 id="llm-1",
                 inputs={
-                    "model": "openai/gpt-oss-120b",
+                    "model": "qwen/qwen3-235b-a22b-2507",
                     "prompt": "What are these features? ${browser-1.extracted_data.features}",
                 },
             ),
@@ -476,7 +476,7 @@ def test_type_env_browser_node_rejects_invalid_property_access():
             AgentNode(
                 id="format_data",
                 inputs={
-                    "model": "openai/gpt-oss-120b",
+                    "model": "qwen/qwen3-235b-a22b-2507",
                     # WRONG: should be ${scrape_maps.extracted_data.shops}
                     "prompt": "Format these shops: ${scrape_maps.shops}",
                 },
@@ -553,7 +553,7 @@ def test_workflow_spec_browser_with_llm_chain():
                 "id": "summarize",
                 "type": "agent",
                 "inputs": {
-                    "model": "openai/gpt-oss-120b",
+                    "model": "qwen/qwen3-235b-a22b-2507",
                     "prompt": "Summarize these messages: ${scrape_slack.result}",
                 },
                 "outputs": {"mode": "text"},
@@ -693,7 +693,7 @@ def test_node_discriminator_identifies_browser():
         "nodes": [
             {"id": "n1", "type": "browser", "task": "Test task"},
             {"id": "n2", "type": "tool", "tool": "test_tool"},
-            {"id": "n3", "type": "agent", "inputs": {"model": "openai/gpt-oss-120b", "prompt": "Hello"}},
+            {"id": "n3", "type": "agent", "inputs": {"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Hello"}},
         ],
         "edges": [],
     }

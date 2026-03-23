@@ -92,7 +92,7 @@ async def test_update_default_model_valid():
     with (
         patch("seer.api.users.settings.UserSettings") as MockSettings,
         patch("seer.api.users.settings.DEFAULT_MODEL_REGISTRY", [
-            MagicMock(id="z-ai/glm-5"),
+            MagicMock(id="qwen/qwen3-235b-a22b-2507"),
             MagicMock(id="openai/gpt-4o"),
         ]),
     ):
@@ -120,7 +120,7 @@ async def test_update_default_model_invalid():
     with (
         patch("seer.api.users.settings.UserSettings") as MockSettings,
         patch("seer.api.users.settings.DEFAULT_MODEL_REGISTRY", [
-            MagicMock(id="z-ai/glm-5"),
+            MagicMock(id="qwen/qwen3-235b-a22b-2507"),
         ]),
     ):
         from seer.api.users.settings import _VALID_MODEL_IDS

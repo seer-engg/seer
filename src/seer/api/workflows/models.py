@@ -79,6 +79,7 @@ class ModelDescriptor(BaseModel):
     id: str
     title: str
     supports_json_schema: bool = True
+    category: Optional[str] = None
 
 
 class ModelRegistryResponse(BaseModel):

@@ -127,7 +127,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=128, description="OpenAI embedding batch size"
     )
 
-    default_llm_model: str = Field(default="z-ai/glm-5", description="Default LLM model")
+    default_llm_model: str = Field(default="qwen/qwen3-235b-a22b-2507", description="Default LLM model")
 
     # Taskiq / Valkey configuration
     redis_url: str = Field(

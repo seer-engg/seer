@@ -64,7 +64,7 @@ class TestBuildNodeLabel:
         """Test building label for AgentNode returns node ID."""
         node = AgentNode(
             id="ai_agent",
-            inputs={"model": "openai/gpt-oss-120b", "prompt": "Test prompt"}
+            inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Test prompt"}
         )
         label = _build_node_label(node)
         assert label == "ai_agent"
@@ -93,7 +93,7 @@ class TestFindNodeInSpec:
         """Test finding existing node in spec nodes list."""
         nodes: List[Node] = [
             ToolNode(id="n1", tool="test.tool", inputs={}),
-            AgentNode(id="n2", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"}),
+            AgentNode(id="n2", inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "test"}),
         ]
 
         found = _find_node_in_spec(nodes, "n1")
@@ -124,7 +124,7 @@ class TestFindNodeInSpec:
         """Test finding LLM node."""
         nodes: List[Node] = [
             ToolNode(id="tool_1", tool="test.tool", inputs={}),
-            AgentNode(id="llm_1", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"}),
+            AgentNode(id="llm_1", inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "test"}),
         ]
 
         found = _find_node_in_spec(nodes, "llm_1")
@@ -272,7 +272,7 @@ class TestCollectGraphNodes:
 
     def test_collect_graph_nodes_llm_node(self):
         """Test collecting LLM node info for graph."""
-        node = AgentNode(id="ai_chat", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"})
+        node = AgentNode(id="ai_chat", inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "test"})
         nodes_list = []
 
         _collect_graph_nodes(node, nodes_list)
@@ -286,7 +286,7 @@ class TestCollectGraphNodes:
         """Test collecting multiple nodes."""
         nodes = [
             ToolNode(id="t1", tool="tool1", inputs={}),
-            AgentNode(id="l1", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"}),
+            AgentNode(id="l1", inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "test"}),
         ]
         nodes_list = []
 
@@ -327,7 +327,7 @@ class TestBuildExecutionGraph:
             version="2",
             nodes=[
                 ToolNode(id="n1", tool="tool1", inputs={}),
-                AgentNode(id="n2", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"}),
+                AgentNode(id="n2", inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "test"}),
             ],
             edges=[
                 Edge(source="n1", target="n2", type=EdgeType.default),
@@ -556,7 +556,7 @@ class TestParseWorkflowSpec:
             "version": "2",
             "nodes": [
                 {"id": "tool_1", "type": "tool", "tool": "github.issues", "inputs": {"repo": "test"}},
-                {"id": "llm_1", "type": "agent", "inputs": {"model": "openai/gpt-oss-120b", "prompt": "Analyze"}},
+                {"id": "llm_1", "type": "agent", "inputs": {"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Analyze"}},
             ],
             "edges": [
                 {"source": "tool_1", "target": "llm_1", "type": "default"}
@@ -799,7 +799,7 @@ class TestBuildHistoryResponse:
             version="2",
             nodes=[
                 ToolNode(id="n1", tool="test.tool", inputs={}),
-                AgentNode(id="n2", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"}),
+                AgentNode(id="n2", inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "test"}),
             ],
             edges=[Edge(source="n1", target="n2")],
         )

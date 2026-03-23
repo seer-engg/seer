@@ -62,11 +62,11 @@ class TestAgentNodeAnalyticsProperties:
     def test_returns_model_as_agent_type(self):
         node = AgentNode(
             id="n1",
-            inputs={"model": "openai/gpt-oss-120b", "prompt": "Do something", "tools": []},
+            inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Do something", "tools": []},
         )
         ctx = _make_ctx()
         props = AgentNodeType().get_analytics_properties(node, ctx)
-        assert props["agent_type"] == "openai/gpt-oss-120b"
+        assert props["agent_type"] == "qwen/qwen3-235b-a22b-2507"
 
     def test_falls_back_when_model_key_absent_from_inputs(self):
         """get_analytics_properties returns 'unknown' when inputs.get('model') is None."""

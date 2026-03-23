@@ -112,7 +112,7 @@ class TestNodeRuntimeBuildRunner:
         """Test runner has correct name from node ID."""
         from seer.core.schema.models import AgentNode
 
-        node = AgentNode(id="llm_node_abc", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"})
+        node = AgentNode(id="llm_node_abc", inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "test"})
         runner = node_runtime.build_runner(node)
 
         assert "llm_node_abc" in runner.name
@@ -278,7 +278,7 @@ class TestRunNodeAsyncDispatch:
         from seer.core.schema.models import AgentNode
         from seer.core.nodes.registry import node_type_registry
 
-        node = AgentNode(id="agent_async_1", inputs={"model": "openai/gpt-oss-120b", "prompt": "test"})
+        node = AgentNode(id="agent_async_1", inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "test"})
         state = {}
 
         # Get the registered agent node type and mock its execute_async
@@ -547,7 +547,7 @@ class TestErrorTraceCapture:
 
         node = AgentNode(
             id="llm_fail",
-            inputs={"model": "openai/gpt-oss-120b", "prompt": "Hello ${user}"},
+            inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Hello ${user}"},
             outputs=OutputContract(mode=OutputMode.text),
         )
         state = {"user": "Alice"}
@@ -577,7 +577,7 @@ class TestErrorTraceCapture:
 
         node = AgentNode(
             id="llm_success",
-            inputs={"model": "openai/gpt-oss-120b", "prompt": "Hello"},
+            inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Hello"},
             outputs=OutputContract(mode=OutputMode.text),
         )
         state = {}
@@ -709,7 +709,7 @@ class TestErrorTraceStatePersistence:
 
         node = AgentNode(
             id='failing_llm',
-            inputs={'prompt': 'test prompt', 'model': 'openai/gpt-oss-120b'},
+            inputs={'prompt': 'test prompt', 'model': 'qwen/qwen3-235b-a22b-2507'},
             outputs=OutputContract(mode=OutputMode.text),
         )
         state = {}

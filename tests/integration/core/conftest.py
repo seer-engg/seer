@@ -369,7 +369,7 @@ def compiler_context(
 def mock_llm_model(model_registry: ModelRegistry) -> ModelDefinition:
     """Register and return a mock LLM model with deterministic handlers."""
     model = ModelDefinition(
-        model_id="openai/gpt-oss-120b",
+        model_id="qwen/qwen3-235b-a22b-2507",
         text_handler=create_mock_text_llm_handler("mock llm response"),
         json_handler=create_mock_json_llm_handler({"result": "mock json"}),
     )

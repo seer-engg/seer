@@ -43,7 +43,7 @@ DRY_RUN = "--dry-run" in sys.argv
 
 ALLOWED_BROWSER_MODEL_IDS = frozenset(model.id for model in DEFAULT_BROWSER_MODEL_REGISTRY)
 
-AGENT_FALLBACK_MODEL = "z-ai/glm-5"
+AGENT_FALLBACK_MODEL = "qwen/qwen3-235b-a22b-2507"
 BROWSER_FALLBACK_MODEL = "qwen/qwen3-vl-8b-thinking"
 IMAGE_GEN_FALLBACK_MODEL = "sourceful/riverflow-v2-fast"
 
