@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from seer.logger import get_logger
 from seer.tools.credential_resolver import ResolvedCredentials
-from seer.tools.github.base import GitHubAPIClient
+from seer.tools.github.base import OWNER_PARAM, PAGINATION_PARAMS, REPO_PARAM, GitHubAPIClient
 
 if TYPE_CHECKING:
     from seer.core.runtime.context import WorkflowRuntimeContext
@@ -29,14 +29,8 @@ class GitHubListCommitsTool(GitHubAPIClient):
         return {
             "type": "object",
             "properties": {
-                "owner": {
-                    "type": "string",
-                    "description": "Repository owner (username or organization)",
-                },
-                "repo": {
-                    "type": "string",
-                    "description": "Repository name",
-                },
+                "owner": OWNER_PARAM,
+                "repo": REPO_PARAM,
                 "sha": {
                     "type": "string",
                     "description": "Branch name or commit SHA to start listing from. Defaults to the default branch.",
@@ -53,17 +47,7 @@ class GitHubListCommitsTool(GitHubAPIClient):
                     "type": "string",
                     "description": "Only commits before this date (ISO 8601 format, e.g., '2024-01-21T23:59:59Z')",
                 },
-                "per_page": {
-                    "type": "integer",
-                    "description": "Number of commits per page (max 100)",
-                    "default": 30,
-                    "maximum": 100,
-                },
-                "page": {
-                    "type": "integer",
-                    "description": "Page number for pagination",
-                    "default": 1,
-                },
+                **PAGINATION_PARAMS,
             },
             "required": ["owner", "repo"],
         }
@@ -169,14 +153,8 @@ class GitHubGetCommitTool(GitHubAPIClient):
         return {
             "type": "object",
             "properties": {
-                "owner": {
-                    "type": "string",
-                    "description": "Repository owner (username or organization)",
-                },
-                "repo": {
-                    "type": "string",
-                    "description": "Repository name",
-                },
+                "owner": OWNER_PARAM,
+                "repo": REPO_PARAM,
                 "sha": {
                     "type": "string",
                     "description": "Commit SHA (full or abbreviated)",
