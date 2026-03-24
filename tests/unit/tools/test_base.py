@@ -408,7 +408,7 @@ class TestToolSignatureStandard:
         import seer.tools.slack  # noqa: F401
         import seer.tools.discord  # noqa: F401
         import seer.tools.knowledge  # noqa: F401
-        import seer.tools.github.github  # noqa: F401
+        import seer.tools.github  # noqa: F401
         import seer.tools.supabase  # noqa: F401
 
     def test_all_tools_have_credentials_parameter(self):
