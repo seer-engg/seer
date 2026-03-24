@@ -47,9 +47,18 @@ def _require_user(request: Request) -> User:  # pylint: disable=duplicate-code  
 @router.get("/settings", response_model=UserSettingsPublic)
 async def get_user_settings(request: Request):
     """Get current user's settings."""
+    from seer.config import config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import at module load time
+
     user = _require_user(request)
     settings, _ = await UserSettings.get_or_create(user=user)
-    return UserSettingsPublic.model_validate(settings, from_attributes=True)
+    result = UserSettingsPublic.model_validate(settings, from_attributes=True)
+    if config.disable_usage_limits:
+        prefs = result.preferences or {}
+        prefs.setdefault("onboarding", {})
+        prefs["onboarding"]["completed"] = True
+        prefs["onboarding"]["payment_method_added"] = True
+        result.preferences = prefs
+    return result
 
 
 def _validate_max_agent_steps(value: int) -> None:

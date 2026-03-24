@@ -269,6 +269,14 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         ),
     )
 
+    disable_usage_limits: bool = Field(
+        default=False,
+        description=(
+            "Skip all usage limit enforcement (workflow creation, run limits, credit checks). "
+            "MUST only be enabled in local/dev environments. Never enable in production."
+        ),
+    )
+
     nexus_max_agent_steps: int = Field(
         default=75,
         description="Default maximum agent steps for Nexus chat (LangGraph recursion_limit)"
