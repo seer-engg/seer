@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # Reason: unified tool registry with all discovery, schema, and workflow tools
 """
 Unified tool implementations for both Nexus (LangGraph) and MCP (FastMCP) surfaces.
 
@@ -113,12 +114,12 @@ async def search_tools_impl(
         JSON with top_match (highest confidence tool) and alternatives
     """
     from seer.tools.discovery_shared import (  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-        search_tools_intent,
+        async_search_tools_intent,
         get_available_integrations,
     )
 
     try:
-        results = search_tools_intent(
+        results = await async_search_tools_intent(
             query=query,
             integration_filter=integration_filter,
             top_k=top_k,
@@ -132,7 +133,7 @@ async def search_tools_impl(
                 "alternatives": [],
                 "message": f"No tools found for: {query}",
                 "available_integrations": get_available_integrations(),
-                "suggestion": "Try rephrasing with action verbs (create, send, list, search, etc.)"
+                "suggestion": "No tools matched the integration filter. Try without a filter or use list_tools()."
             })
 
         # Format top match with rich details including resource_pickers
@@ -337,18 +338,32 @@ async def list_workflow_templates_impl() -> str:
 
 async def get_workflow_schema_impl() -> str:
     """
-    Get the WorkflowSpec JSON schema for building valid workflows.
+    Get the WorkflowSpec reference for building valid workflows.
 
-    Use this to understand the structure of valid workflow specifications.
-    The schema defines nodes, edges, triggers, and all their required fields.
+    Returns structured documentation of all node types (tool, agent, hitl,
+    for_each, if, mcp, browser, image_gen), trigger specification, and
+    edge types with their required/optional fields.
+
+    Call this BEFORE building any workflow spec.
 
     Returns:
-        JSON schema for WorkflowSpec with key validation rules
+        Formatted reference for all workflow node types, triggers, and edges
     """
-    from seer.agents.nexus.schema_context import get_workflow_spec_schema_text  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.agents.nexus.schema_context import (  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+        generate_node_type_reference,
+        generate_trigger_reference,
+        generate_edge_reference,
+        generate_validation_checklist_from_model,
+    )
 
     try:
-        return get_workflow_spec_schema_text()
+        parts = [
+            generate_node_type_reference(),
+            generate_trigger_reference(),
+            generate_edge_reference(),
+            generate_validation_checklist_from_model(),
+        ]
+        return "\n\n".join(parts)
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
         logger.exception("Error getting workflow schema: %s", e)
         return json.dumps({

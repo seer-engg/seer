@@ -27,7 +27,23 @@ from seer.logger import get_logger
 logger = get_logger(__name__)
 
 # Keys that keep the schema digestible while conveying the structure.
-_SCHEMA_KEYS = ("title", "type", "properties", "required", "definitions", "$defs", "default")
+# Excludes "definitions" and "$defs" — they contain $ref pointers that
+# Gemini/Google's function calling API rejects in tool responses.
+_SCHEMA_KEYS = ("title", "type", "properties", "required", "default")
+
+
+def _strip_refs(obj: Any) -> Any:
+    """Recursively strip $ref pointers and $defs references so the
+    schema is self-contained and compatible with all LLM providers
+    (Gemini rejects $ref in function responses)."""
+    if isinstance(obj, dict):
+        if "$ref" in obj:
+            return {"type": "object"}
+        return {k: _strip_refs(v) for k, v in obj.items()
+                if k not in ("$defs", "definitions", "discriminator")}
+    if isinstance(obj, list):
+        return [_strip_refs(item) for item in obj]
+    return obj
 
 
 @lru_cache(maxsize=1)
@@ -38,7 +54,8 @@ def get_workflow_spec_schema() -> Dict[str, Any]:
     """
 
     schema = WorkflowSpec.model_json_schema()
-    return {key: schema.get(key) for key in _SCHEMA_KEYS if key in schema}
+    filtered = {key: schema.get(key) for key in _SCHEMA_KEYS if key in schema}
+    return _strip_refs(filtered)
 
 
 def get_workflow_spec_schema_text(max_chars: int = 4000) -> str:
