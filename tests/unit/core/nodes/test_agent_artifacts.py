@@ -438,7 +438,7 @@ class TestExecuteAsyncArtifacts:
     def _base_patches(self, mock_agent: AsyncMock) -> List[Any]:
         """Return patch context managers needed for all execute_async tests."""
         return [
-            patch("seer.core.nodes.agent_node._bind_tools_for_agent", new=AsyncMock(return_value=[])),
+            patch("seer.core.nodes.agent_node._bind_tools_for_agent", new=AsyncMock(return_value=([], {}))),
             patch("seer.core.nodes.agent_node.create_agent", return_value=mock_agent),
             patch("seer.core.nodes.agent_node._resolve_llm_file_inputs", new=AsyncMock(return_value=({}, []))),
             patch("seer.core.nodes.agent_node.AgentNodeType._check_credit_limit", new=AsyncMock()),
