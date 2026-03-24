@@ -5,8 +5,6 @@ RUN_IN_TRANSACTION = True
 
 async def upgrade(db: BaseDBAsyncClient) -> str:
     return """
-        DROP INDEX IF EXISTS "idx_workflow_te_is_feat_8ea99d";
-        DROP INDEX IF EXISTS "idx_workflow_te_categor_267f1d";
         CREATE TABLE IF NOT EXISTS "email_events" (
     "id" UUID NOT NULL PRIMARY KEY,
     "tracking_id" UUID NOT NULL,
@@ -26,25 +24,12 @@ async def upgrade(db: BaseDBAsyncClient) -> str:
 CREATE INDEX IF NOT EXISTS "idx_email_event_trackin_6defeb" ON "email_events" ("tracking_id");
 CREATE INDEX IF NOT EXISTS "idx_email_event_organiz_5c7e67" ON "email_events" ("organization_id");
 CREATE INDEX IF NOT EXISTS "idx_email_event_workflo_6ead5a" ON "email_events" ("workflow_run_id");
-COMMENT ON TABLE "email_events" IS 'Tracks email send and engagement events (opens, clicks).';
-        ALTER TABLE "workflows" DROP COLUMN "is_published";
-        ALTER TABLE "workflow_templates" DROP COLUMN "visibility";
-        ALTER TABLE "workflow_templates" DROP COLUMN "is_published";
-        CREATE INDEX IF NOT EXISTS "idx_workflow_te_is_feat_ebecdb" ON "workflow_templates" ("is_featured");
-        CREATE INDEX IF NOT EXISTS "idx_workflow_te_categor_1fcd26" ON "workflow_templates" ("category");"""
+COMMENT ON TABLE "email_events" IS 'Tracks email send and engagement events (opens, clicks).';"""
 
 
 async def downgrade(db: BaseDBAsyncClient) -> str:
     return """
-        DROP INDEX IF EXISTS "idx_workflow_te_categor_1fcd26";
-        DROP INDEX IF EXISTS "idx_workflow_te_is_feat_ebecdb";
-        ALTER TABLE "workflows" ADD "is_published" BOOL NOT NULL DEFAULT False;
-        ALTER TABLE "workflow_templates" ADD "visibility" VARCHAR(10) NOT NULL DEFAULT 'private';
-        ALTER TABLE "workflow_templates" ADD "is_published" BOOL NOT NULL DEFAULT False;
-        COMMENT ON COLUMN "workflows"."is_published" IS 'Whether this workflow is published as a template';
-        DROP TABLE IF EXISTS "email_events";
-        CREATE INDEX IF NOT EXISTS "idx_workflow_te_categor_267f1d" ON "workflow_templates" ("category", "is_published");
-        CREATE INDEX IF NOT EXISTS "idx_workflow_te_is_feat_8ea99d" ON "workflow_templates" ("is_featured", "is_published");"""
+        DROP TABLE IF EXISTS "email_events";"""
 
 
 MODELS_STATE = (
