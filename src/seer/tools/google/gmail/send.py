@@ -146,36 +146,17 @@ class GmailSendEmailTool(GoogleAPIClient):
         # Resolve file attachments
         resolved_attachments = await self._resolve_attachments(arguments.get("attachments") or [], context)
 
-        # Inject email tracking if in a workflow context
         subject = str(arguments.get("subject") or "")
+        body_text = str(arguments.get("body_text") or "")
         body_html = str(arguments["body_html"]) if arguments.get("body_html") else None
-        tracking_id = None
 
-        if context:
-            try:
-                # pylint: disable-next=import-outside-toplevel  # Reason: tools layer should not hard-depend on services
-                from seer.services.email_tracking import create_tracking_record, inject_tracking
-
-                tracking_id = await create_tracking_record(
-                    provider="gmail",
-                    email_type="workflow",
-                    recipient=to[0],
-                    subject=subject,
-                    organization_id=context.organization_id,
-                    workflow_run_id=context.workflow_run_id,
-                    user_id=getattr(context.user, "user_id", None) if context.user else None,
-                )
-                if body_html:
-                    body_html = inject_tracking(body_html, tracking_id)
-            except Exception:  # pylint: disable=broad-exception-caught  # Reason: tracking failures must not block email send
-                logger.warning("Failed to set up email tracking, sending without tracking")
-                tracking_id = None
+        tracking_id, body_html = await self._setup_tracking(to, subject, body_text, body_html, context)
 
         # Build MIME email with arguments passed directly
         mime_msg = _build_mime_email(
             to=to,
             subject=subject,
-            body_text=str(arguments.get("body_text") or ""),
+            body_text=body_text,
             body_html=body_html,
             cc=_coerce_str_list(arguments.get("cc"), []),
             bcc=_coerce_str_list(arguments.get("bcc"), []),
@@ -205,6 +186,44 @@ class GmailSendEmailTool(GoogleAPIClient):
                 logger.warning("Failed to finalize email tracking for %s", tracking_id)
 
         return result
+
+    @staticmethod
+    async def _setup_tracking(
+        to: List[str],
+        subject: str,
+        body_text: str,
+        body_html: Optional[str],
+        context: Optional["WorkflowRuntimeContext"],
+    ) -> tuple[Optional[Any], Optional[str]]:
+        """Prepare email tracking: create record, convert text to HTML if needed, inject pixel."""
+        from seer.tools.google.gmail.helpers import _convert_body_to_html  # pylint: disable=import-outside-toplevel  # Reason: needed for pre-MIME HTML generation
+
+        # Convert body_text to HTML so tracking pixel can be injected
+        if body_html is None and body_text:
+            body_html = _convert_body_to_html(body_text)
+
+        if not context:
+            return None, body_html
+
+        try:
+            # pylint: disable-next=import-outside-toplevel  # Reason: tools layer should not hard-depend on services
+            from seer.services.email_tracking import create_tracking_record, inject_tracking
+
+            tracking_id = await create_tracking_record(
+                provider="gmail",
+                email_type="workflow",
+                recipient=to[0],
+                subject=subject,
+                organization_id=context.organization_id,
+                workflow_run_id=context.workflow_run_id,
+                user_id=getattr(context.user, "user_id", None) if context.user else None,
+            )
+            if body_html:
+                body_html = inject_tracking(body_html, tracking_id)
+            return tracking_id, body_html
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: tracking failures must not block email send
+            logger.warning("Failed to set up email tracking, sending without tracking")
+            return None, body_html
 
     async def _resolve_attachments(
         self,
