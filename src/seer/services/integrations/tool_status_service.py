@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 # Providers that don't require refresh tokens for "connected" status
 # LinkedIn: Non-MDP partners don't get refresh tokens, but 60-day access tokens are sufficient
 # Notion: Issues permanent access tokens, no refresh tokens
-PROVIDERS_WITHOUT_REFRESH_TOKENS = {"linkedin", "slack", "notion"}
+PROVIDERS_WITHOUT_REFRESH_TOKENS = {"linkedin", "slack", "notion", "oura"}
 
 # Providers that don't use URL-based OAuth scopes — permissions are configured out-of-band
 # (e.g. Notion uses "capabilities" configured in the Notion dashboard)
