@@ -454,18 +454,3 @@ async def link_discovery_session_to_workflow(
     """Link a discovery session to the created workflow."""
     session.created_workflow = workflow
     await session.save()
-
-
-async def get_user_workflow_creation_mode(user: User) -> WorkflowCreationMode:
-    """Get user's default workflow creation mode."""
-    mode_str = user.default_workflow_creation_mode or "ASK_FIRST"
-    return WorkflowCreationMode(mode_str)
-
-
-async def update_user_workflow_creation_mode(
-    user: User, mode: WorkflowCreationMode
-) -> User:
-    """Update user's default workflow creation mode."""
-    user.default_workflow_creation_mode = mode.value
-    await user.save()
-    return user
