@@ -53,3 +53,17 @@ class OuraProvider(IntegrationProvider):
             )
 
         return resp.json()
+
+    async def resolve_granted_scopes(
+        self,
+        *,
+        token: Dict[str, Any],
+        state_data: Dict[str, Any],
+    ) -> str:
+        """Normalize Oura scopes by stripping the ``extapi:`` prefix.
+
+        Oura returns scopes like ``extapi:heartrate`` in the token response,
+        but tool definitions use bare scope names like ``heartrate``.
+        """
+        raw = token.get("scope") or state_data.get("requested_scope") or ""
+        return " ".join(s.removeprefix("extapi:") for s in raw.split() if s)
