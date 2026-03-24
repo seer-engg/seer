@@ -347,16 +347,19 @@ async def _bind_tools_for_agent(
     *,
     worker_llm: Any = None,
     max_retries: int = 1,
-) -> List[StructuredTool]:
+) -> tuple[List[StructuredTool], Dict[str, ToolWorker]]:
     """Convert tool specifications to LangChain StructuredTools with credentials.
 
     When worker_llm is provided, each tool executor is wrapped in a ToolWorker
     that isolates failures from the supervisor agent's conversation history.
+
+    Returns (bound_tools, worker_map) where worker_map maps tool name → ToolWorker.
     """
     # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
     from seer.tools.base import get_tool
 
     bound_tools: List[StructuredTool] = []
+    worker_map: Dict[str, ToolWorker] = {}
 
     for spec in tool_specs:
         tool_name, connection_id = _parse_tool_spec(spec)
@@ -394,19 +397,20 @@ async def _bind_tools_for_agent(
 
             tool_executor = _shielded_executor
 
+        tool_id = tool_name.replace(".", "_")
         structured_tool = StructuredTool.from_function(
             coroutine=tool_executor,
-            name=tool_name.replace(".", "_"),  # LangGraph requires valid identifiers
+            name=tool_id,
             description=base_tool.description,
             args_schema=input_model,
         )
-        # Stash worker ref on the tool for failure log collection
+
         if worker is not None:
-            structured_tool.tool_worker = worker  # type: ignore[attr-defined]
+            worker_map[tool_id] = worker
 
         bound_tools.append(structured_tool)
 
-    return bound_tools
+    return bound_tools, worker_map
 
 
 def _format_memory_tool_response(memories: List[Dict[str, Any]]) -> str:
@@ -880,13 +884,12 @@ def _build_recursion_limit(max_iterations: Any) -> int:
     return max_iterations * 3 if isinstance(max_iterations, int) else 30
 
 
-def _collect_tool_worker_failures(bound_tools: List[StructuredTool]) -> Dict[str, List[Dict[str, Any]]]:
-    """Extract failure logs from ToolWorker-wrapped tools for trace data."""
+def _collect_tool_worker_failures(worker_map: Dict[str, ToolWorker]) -> Dict[str, List[Dict[str, Any]]]:
+    """Extract failure logs from ToolWorker instances for trace data."""
     failures: Dict[str, List[Dict[str, Any]]] = {}
-    for tool in bound_tools:
-        worker = getattr(tool, "tool_worker", None)
-        if isinstance(worker, ToolWorker) and worker.failure_log:
-            failures[tool.name] = worker.failure_log
+    for tool_name, worker in worker_map.items():
+        if worker.failure_log:
+            failures[tool_name] = worker.failure_log
     return failures
 
 
@@ -963,9 +966,9 @@ class AgentNodeType(BaseNodeType):
         *,
         worker_llm: Any = None,
         max_retries: int = 1,
-    ) -> List[StructuredTool]:
+    ) -> tuple[List[StructuredTool], Dict[str, ToolWorker]]:
         """Bind registry tools, attached memory tools, and artifact helpers."""
-        bound_tools = await _bind_tools_for_agent(
+        bound_tools, worker_map = await _bind_tools_for_agent(
             config["tool_specs"], services, ctx,
             worker_llm=worker_llm, max_retries=max_retries,
         )
@@ -979,7 +982,7 @@ class AgentNodeType(BaseNodeType):
 
             bound_tools.append(make_create_artifact_tool(ctx, node.id))
 
-        return bound_tools
+        return bound_tools, worker_map
 
     async def _invoke_agent(
         self,
@@ -1155,7 +1158,7 @@ class AgentNodeType(BaseNodeType):
             logger.warning("Failed to init worker LLM, falling back to flat agent mode")
             return None, max_retries
 
-    async def execute_async(
+    async def execute_async(  # pylint: disable=too-many-locals  # Reason: Orchestration method, splitting would obscure control flow
         self,
         node: AgentNode,  # type: ignore[override]
         ctx: NodeExecutionContext,
@@ -1168,7 +1171,7 @@ class AgentNodeType(BaseNodeType):
         worker_llm, max_retries = self._init_worker_llm(node.id)
 
         try:
-            bound_tools = await self._build_bound_tools(
+            bound_tools, worker_map = await self._build_bound_tools(
                 node, ctx, services, config,
                 worker_llm=worker_llm, max_retries=max_retries,
             )
@@ -1192,9 +1195,7 @@ class AgentNodeType(BaseNodeType):
             error_trace = self._build_error_trace(node, ctx, inputs, exc)
             raise ExecutionError(f"Agent node '{node.id}' failed: {exc}", trace_data=error_trace) from exc
 
-        # Collect failure logs from ToolWorker instances for tracing
-        tool_failures = _collect_tool_worker_failures(bound_tools)
-
+        tool_failures = _collect_tool_worker_failures(worker_map)
         output = self._build_success_output(
             node=node,
             ctx=ctx,

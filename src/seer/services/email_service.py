@@ -104,7 +104,7 @@ async def _send_via_resend(
         return response.json()
 
 
-async def send_email(
+async def send_email(  # pylint: disable=too-many-arguments  # Reason: email params + tracking params
     to_emails: List[str],
     subject: str,
     html_body: str,
@@ -112,9 +112,15 @@ async def send_email(
     text_body: Optional[str] = None,
     from_address: Optional[str] = None,
     reply_to: Optional[str] = None,
+    email_type: str = "transactional",
+    organization_id: Optional[int] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Send an email using the configured provider.
+    Send an email using the configured provider with tracking.
+
+    Automatically injects a tracking pixel and rewrites links for
+    open/click analytics before sending.
 
     Args:
         to_emails: List of recipient email addresses
@@ -123,6 +129,9 @@ async def send_email(
         text_body: Optional plain text body (fallback)
         from_address: Optional override for from address
         reply_to: Optional reply-to address
+        email_type: Type of email for analytics (e.g. "invitation", "approval")
+        organization_id: Optional org ID for analytics correlation
+        user_id: Optional user ID for analytics correlation
 
     Returns:
         Provider-specific response data, or None if email is disabled
@@ -130,21 +139,41 @@ async def send_email(
     Raises:
         EmailServiceError: If sending fails
     """
+    from seer.services.email_tracking import (  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import at module level
+        create_tracking_record,
+        finalize_send,
+        inject_tracking,
+    )
+
     provider = str(config.email_provider).lower()
 
     if provider == "disabled":
         logger.info("Email sending disabled, skipping email to %s", to_emails)
         return None
 
+    # Create tracking record and inject tracking into HTML
+    primary_recipient = to_emails[0] if to_emails else ""
+    tracking_id = await create_tracking_record(
+        provider=provider,
+        email_type=email_type,
+        recipient=primary_recipient,
+        subject=subject,
+        organization_id=organization_id,
+        user_id=user_id,
+    )
+    tracked_html = inject_tracking(html_body, tracking_id)
+
     if provider == "resend":
-        return await _send_via_resend(
+        result = await _send_via_resend(
             to_emails=to_emails,
             subject=subject,
-            html_body=html_body,
+            html_body=tracked_html,
             text_body=text_body,
             from_address=from_address,
             reply_to=reply_to,
         )
+        await finalize_send(tracking_id, provider_email_id=result.get("id"))
+        return result
 
     # Future: Add SendGrid, AWS SES support
     raise EmailServiceError(f"Unsupported email provider: {provider}", provider=provider)
@@ -286,6 +315,7 @@ This is an automated message from Seer.
         subject=f"You've been invited to join {organization_name} on Seer",
         html_body=html_body,
         text_body=text_body,
+        email_type="invitation",
     )
 
 
@@ -357,6 +387,7 @@ This is an automated message from Seer.
         subject=f"Workflow approval requested: {workflow_name}",
         html_body=html_body,
         text_body=text_body,
+        email_type="approval",
     )
 
 
@@ -429,6 +460,7 @@ This is an automated message from Seer.
         subject=f"{new_member_name or new_member_email} joined {organization_name}",
         html_body=html_body,
         text_body=text_body,
+        email_type="member_joined",
     )
 
 

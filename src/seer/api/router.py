@@ -26,6 +26,7 @@ from .chat.router import router as chat_router
 from .collaboration.router import router as collaboration_router
 from .public.router import router as public_router
 from .dev.router import router as dev_router
+from .email_analytics.router import router as email_analytics_router
 
 router = APIRouter(prefix="/api")
 router.include_router(agents_traces_router)
@@ -53,3 +54,4 @@ router.include_router(chat_router)
 router.include_router(collaboration_router)
 router.include_router(public_router)
 router.include_router(dev_router)
+router.include_router(email_analytics_router)

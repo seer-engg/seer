@@ -2084,22 +2084,19 @@ class TestToolWorker:
 class TestCollectToolWorkerFailures:
     """Tests for _collect_tool_worker_failures."""
 
-    def test_collects_failures_from_wrapped_tools(self):
+    def test_collects_failures_from_worker_map(self):
         from seer.core.nodes.agent_node import ToolWorker, _collect_tool_worker_failures
 
         worker = ToolWorker("t1", AsyncMock(), input_schema={}, worker_llm=AsyncMock(), max_retries=1)
         worker.failure_log = [{"params": {"x": 1}, "error": "Error executing t1: boom"}]
 
-        tool = MagicMock()
-        tool.name = "t1"
-        tool.tool_worker = worker
+        assert _collect_tool_worker_failures({"t1": worker}) == {"t1": worker.failure_log}
 
-        assert _collect_tool_worker_failures([tool]) == {"t1": worker.failure_log}
+    def test_skips_workers_without_failures(self):
+        from seer.core.nodes.agent_node import ToolWorker, _collect_tool_worker_failures
 
-    def test_skips_unwrapped_tools(self):
-        from seer.core.nodes.agent_node import _collect_tool_worker_failures
+        worker = ToolWorker("t1", AsyncMock(), input_schema={}, worker_llm=AsyncMock(), max_retries=1)
+        worker.failure_log = []
 
-        tool = MagicMock(spec=["name"])
-        tool.name = "plain_tool"
-
-        assert _collect_tool_worker_failures([tool]) == {}
+        assert _collect_tool_worker_failures({"t1": worker}) == {}
+        assert _collect_tool_worker_failures({}) == {}

@@ -82,6 +82,7 @@ from seer.database.organization_models import (
     WorkflowApprovalPublic,
     WorkflowAssignment,
 )
+from seer.database.email_models import EmailEvent
 from seer.database.memory_models import (
     MEMORY_BANK_ID_PREFIX,
     MemoryBank,
@@ -194,6 +195,8 @@ __all__ = [
     "MemberPublic",
     "InvitationPublic",
     "WorkflowApprovalPublic",
+    # Email analytics
+    "EmailEvent",
     # Memory domain
     "MemoryBank",
     "MemoryBankStatus",
