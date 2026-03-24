@@ -26,6 +26,7 @@ from seer.observability import (
     get_workflow_count,
     resolve_user_tier,
 )
+from seer.config import config
 from seer.observability.credit_gate import check_credit_limit
 from seer.observability.exceptions import CreditLimitExceeded
 
@@ -59,6 +60,9 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
         """
         path = request.url.path
         if request.method == "OPTIONS":
+            return await call_next(request)
+
+        if config.disable_usage_limits:
             return await call_next(request)
 
         # Public paths skip all checks
