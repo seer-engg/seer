@@ -6,17 +6,12 @@ Provides backwards-compatible imports for the router.
 
 # Import from catalog module
 from .catalog import (
-    compile_spec,
-    generate_schema_metadata,
     get_trigger_accounts,
     list_mcp_tools,
     list_browser_models,
     list_models,
     list_node_types,
-    list_tools,
     list_triggers,
-    resolve_schema,
-    validate_spec,
 )
 
 # Import from execution module
@@ -26,11 +21,6 @@ from .execution import (
     list_workflow_runs,
     resume_workflow_run,
     run_saved_workflow,
-)
-
-# Import from expressions module
-from .expression import (
-    typecheck_expression,
 )
 
 # Import from history module
@@ -85,16 +75,11 @@ from .share_template import generate_template_description
 __all__ = [
     "generate_template_description",
     "list_node_types",
-    "list_tools",
     "list_mcp_tools",
     "list_browser_models",
     "list_models",
     "list_triggers",
     "get_trigger_accounts",
-    "resolve_schema",
-    "validate_spec",
-    "compile_spec",
-    "generate_schema_metadata",
     "create_workflow",
     "list_workflows",
     "get_workflow",
@@ -107,7 +92,6 @@ __all__ = [
     "delete_workflow",
     "export_workflow",
     "import_workflow",
-    "typecheck_expression",
     "run_saved_workflow",
     "resume_workflow_run",
     "get_workflow_run_interrupt",

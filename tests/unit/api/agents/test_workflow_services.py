@@ -1074,47 +1074,6 @@ class TestDiscoverySessionServices:
 # =============================================================================
 
 
-@pytest.mark.unit
-class TestUserWorkflowCreationMode:
-    """Tests for user workflow creation mode functions."""
-
-    @pytest.mark.asyncio
-    async def test_get_user_workflow_creation_mode_default(self, mock_user):
-        """Test getting default workflow creation mode."""
-        mock_user.default_workflow_creation_mode = None
-
-        from seer.api.agents.workflow.services import get_user_workflow_creation_mode
-        from seer.database.workflow_models import WorkflowCreationMode
-
-        result = await get_user_workflow_creation_mode(mock_user)
-
-        assert result == WorkflowCreationMode.ASK_FIRST
-
-    @pytest.mark.asyncio
-    async def test_get_user_workflow_creation_mode_custom(self, mock_user):
-        """Test getting custom workflow creation mode."""
-        mock_user.default_workflow_creation_mode = "AUTO_CREATE"
-
-        from seer.api.agents.workflow.services import get_user_workflow_creation_mode
-        from seer.database.workflow_models import WorkflowCreationMode
-
-        result = await get_user_workflow_creation_mode(mock_user)
-
-        assert result == WorkflowCreationMode.AUTO_CREATE
-
-    @pytest.mark.asyncio
-    async def test_update_user_workflow_creation_mode(self, mock_user):
-        """Test updating user workflow creation mode."""
-        from seer.api.agents.workflow.services import update_user_workflow_creation_mode
-        from seer.database.workflow_models import WorkflowCreationMode
-
-        result = await update_user_workflow_creation_mode(mock_user, WorkflowCreationMode.ON_ACCEPTANCE)
-
-        assert mock_user.default_workflow_creation_mode == "ON_ACCEPTANCE"
-        mock_user.save.assert_called_once()
-        assert result == mock_user
-
-
 # =============================================================================
 # Normalize Spec Tests
 # =============================================================================

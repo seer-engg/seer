@@ -15,7 +15,6 @@ from seer.api.core.errors import AUTH_PROBLEM, VALIDATION_PROBLEM, raise_problem
 from seer.api.core.middleware.organization import get_membership, get_organization
 from seer.config import config
 from seer.database import Organization, OrganizationMembership, User, UserPublic
-from seer.database.workflow_models import WorkflowCreationMode
 from seer.logger import get_logger
 
 from .chat_schema import (
@@ -47,14 +46,12 @@ from .services import (
     create_chat_session,
     get_chat_session,
     get_chat_session_by_thread_id,
-    get_user_workflow_creation_mode,
     get_workflow,
     get_workflow_proposal,
     list_chat_sessions,
     load_chat_history,
     reject_workflow_proposal,
     save_chat_message,
-    update_user_workflow_creation_mode,
     workflow_state_snapshot,
 )
 
@@ -807,42 +804,6 @@ async def reject_proposal_endpoint(
         workflow_graph=None,
     )
 
-
-@router.get("/user/workflow-creation-mode", response_model=Dict[str, str])
-async def get_user_creation_mode_endpoint(request: Request) -> Dict[str, str]:
-    """Get user's default workflow creation mode."""
-    user = _require_user(request)
-    mode = await get_user_workflow_creation_mode(user)
-    return {"mode": mode.value}
-
-
-@router.post("/user/workflow-creation-mode")
-async def update_user_creation_mode_endpoint(
-    request: Request,
-    body: Dict[str, str],
-) -> Dict[str, str]:
-    """Update user's default workflow creation mode."""
-    user = _require_user(request)
-    mode_str = body.get("mode")
-    if not mode_str:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Missing mode",
-            detail="mode is required",
-            status=400
-        )
-    try:
-        # Use database enum for the service call
-        mode = WorkflowCreationMode(mode_str)
-    except ValueError:
-        raise_problem(
-            type_uri=VALIDATION_PROBLEM,
-            title="Invalid mode",
-            detail=f"Invalid mode: {mode_str}. Must be one of: AUTO_CREATE, ASK_FIRST, ON_ACCEPTANCE",
-            status=400
-        )
-    await update_user_workflow_creation_mode(user, mode)
-    return {"mode": mode.value}
 
 
 __all__ = ["router"]
