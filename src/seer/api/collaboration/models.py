@@ -9,10 +9,6 @@ class WorkflowLockAcquireRequest(BaseModel):
     tab_id: str | None = Field(None, max_length=255)
 
 
-class WorkflowLockHeartbeatRequest(BaseModel):
-    tab_id: str | None = Field(None, max_length=255)
-
-
 class WorkflowLockResponse(BaseModel):
     lock: WorkflowLockMetadata
 

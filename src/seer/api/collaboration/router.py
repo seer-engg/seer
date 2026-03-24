@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from seer.api.collaboration.models import (
     WorkflowLockAcquireRequest,
-    WorkflowLockHeartbeatRequest,
     WorkflowLockResponse,
     WorkflowLockStatusResponse,
 )
@@ -149,36 +148,6 @@ async def acquire_workflow_lock(
     )
     return WorkflowLockResponse(lock=lock)
 
-
-@router.post("/workflows/{workflow_id}/lock/heartbeat", response_model=WorkflowLockResponse, deprecated=True)
-async def heartbeat_workflow_lock(
-    request: Request,
-    workflow_id: str,
-    payload: WorkflowLockHeartbeatRequest = Body(default_factory=WorkflowLockHeartbeatRequest),
-) -> WorkflowLockResponse:
-    """Deprecated: Lock renewal is now handled automatically via SSE connection lifecycle.
-
-    This endpoint remains functional for backward compatibility but clients should
-    remove heartbeat polling. Locks are automatically released when the SSE connection
-    disconnects.
-    """
-    user, organization, membership, workflow = await _get_editable_workflow_for_lock(request, workflow_id)
-    del membership
-
-    service = WorkflowLockService()
-    try:
-        lock = await service.heartbeat_lock(
-            organization_id=organization.id,
-            workflow_id=workflow.workflow_id,
-            user=user,
-            tab_id=payload.tab_id,
-        )
-    finally:
-        await service.close()
-
-    if lock is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Workflow lock not held by current user")
-    return WorkflowLockResponse(lock=lock)
 
 
 @router.delete("/workflows/{workflow_id}/lock", status_code=status.HTTP_204_NO_CONTENT)

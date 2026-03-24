@@ -1,7 +1,6 @@
 """API router for the Seer Agents API."""
 from fastapi import APIRouter
 
-from .agents.traces import router as agents_traces_router
 from .agents.workflow.router import router as nexus_router
 from .forms.router import router as forms_router
 from .integrations.router import router as integrations_router
@@ -29,7 +28,6 @@ from .dev.router import router as dev_router
 from .email_analytics.router import router as email_analytics_router
 
 router = APIRouter(prefix="/api")
-router.include_router(agents_traces_router)
 router.include_router(integrations_router)
 router.include_router(knowledge_router)
 router.include_router(models_router)

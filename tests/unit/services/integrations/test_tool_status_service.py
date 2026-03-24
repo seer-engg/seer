@@ -261,8 +261,12 @@ class TestStandardProvidersRequireRefreshTokens:
         assert status["connected"] is True
         assert status["missing_scopes"] == []
 
-    def test_github_requires_refresh_token(self):
-        """GitHub tools should require both scopes AND refresh token."""
+    def test_github_connects_without_refresh_token(self):
+        """GitHub tools connect with scopes only - no refresh token required.
+
+        GitHub uses long-lived access tokens that don't require refresh,
+        similar to Slack and Notion.
+        """
         tool = MockTool(
             name="github_create_issue",
             required_scopes=["repo"],
@@ -272,10 +276,10 @@ class TestStandardProvidersRequireRefreshTokens:
 
         auth_requirements = determine_tool_auth_requirements(tool)
 
-        # Connection with scopes but NO refresh token
+        # Connection with scopes but NO refresh token (GitHub doesn't use them)
         conn_info = {
             "scopes": "repo",
-            "has_refresh_token": False,  # Missing refresh token
+            "has_refresh_token": False,  # GitHub doesn't issue refresh tokens
             "connection_id": "github:123",
             "provider_account_id": "octocat"
         }
@@ -289,8 +293,9 @@ class TestStandardProvidersRequireRefreshTokens:
             provider_secrets={}
         )
 
-        # Should NOT be connected without refresh token
-        assert status["connected"] is False
+        # GitHub should be connected with just scopes (no refresh token needed)
+        assert status["connected"] is True
+        assert status["missing_scopes"] == []
 
 
 @pytest.mark.unit

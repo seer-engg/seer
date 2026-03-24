@@ -93,52 +93,6 @@ async def get_workflow_failure_rate(
     }
 
 
-async def get_step_failure_breakdown(
-    *,
-    user: Optional[User] = None,
-    organization: Optional[Organization] = None,
-    days: int = 7,
-) -> list[dict]:
-    """
-    Per-node failure counts from node_traces on failed runs.
-
-    Returns list of {node_id, node_type, error_count}.
-    """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    qs = WorkflowRun.filter(
-        created_at__gte=cutoff,
-        status=WorkflowRunStatus.FAILED,
-        node_traces__not_isnull=True,
-    )
-
-    if organization and organization.type == OrganizationType.TEAM:
-        qs = qs.filter(workflow__organization=organization)
-    elif user:
-        qs = qs.filter(user=user)
-
-    runs = await qs.values("node_traces")
-
-    # Aggregate error counts by node
-    node_errors: dict[str, dict] = {}
-    for run in runs:
-        traces = run.get("node_traces")
-        if not isinstance(traces, list):
-            continue
-        for trace in traces:
-            if not isinstance(trace, dict):
-                continue
-            if trace.get("status") == "error" or trace.get("error"):
-                node_id = trace.get("node_id", "unknown")
-                if node_id not in node_errors:
-                    node_errors[node_id] = {
-                        "node_id": node_id,
-                        "node_type": trace.get("node_type", "unknown"),
-                        "error_count": 0,
-                    }
-                node_errors[node_id]["error_count"] += 1
-
-    return sorted(node_errors.values(), key=lambda x: x["error_count"], reverse=True)
-
 
 async def get_dry_run_adoption(
     *,
@@ -170,29 +124,3 @@ async def get_dry_run_adoption(
         "adoption_rate": 0.0,
         "status": "pending_implementation",
     }
-
-
-async def get_kpi_summary(
-    *,
-    user: Optional[User] = None,
-    organization: Optional[Organization] = None,
-) -> dict:
-    """Compute all 4 top KPIs in a single call."""
-    ctx = {"user": user, "organization": organization}
-
-    waw = await get_weekly_active_workflows(**ctx)
-    failure = await get_workflow_failure_rate(**ctx)
-    dry_run = await get_dry_run_adoption(**ctx)
-
-    result = {
-        "weekly_active_workflows": waw,
-        "workflow_failure_rate": failure,
-        "dry_run_adoption": dry_run,
-    }
-
-    # TTFW only makes sense per-user
-    if user:
-        ttfw = await get_time_to_first_workflow(user)
-        result["time_to_first_workflow_seconds"] = ttfw
-
-    return result
