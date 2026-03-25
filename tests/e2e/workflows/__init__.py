@@ -1,3 +1,1 @@
-"""
-E2E tests for Workflows API endpoints.
-"""
+"""E2E workflow tests package."""
