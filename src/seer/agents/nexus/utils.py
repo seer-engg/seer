@@ -1,11 +1,8 @@
 from typing import Any, List, Optional
-from seer.config import config
 from seer.logger import get_logger
 from seer.agents.nexus.tools import (
     submit_workflow_spec,
     ask_clarification_questions,
-    web_search,
-    memory_tools,
 )
 from seer.agents.nexus.tools.workflow_tools import (
     create_bound_get_workflow,
@@ -35,7 +32,6 @@ def get_workflow_tools(workflow_id: Optional[str] = None) -> List:
     nexus_only_tools = [
         submit_workflow_spec,
         ask_clarification_questions,
-        web_search,
     ]
 
     # Add workflow-aware tools if workflow_id is provided
@@ -46,12 +42,15 @@ def get_workflow_tools(workflow_id: Optional[str] = None) -> List:
         ])
         logger.debug("Created workflow-bound tools for workflow_id=%s", workflow_id)
 
-    # Add memory tools if memory is enabled
-    if config.memory_enabled:
-        nexus_only_tools.extend(memory_tools)
-        logger.debug("Memory tools enabled: %d tools added", len(memory_tools))
+    # Filter unified tools: exclude list_tools and list_triggers from Nexus
+    # (search_tools and search_triggers are sufficient; list_* adds tool bloat)
+    excluded_nexus_names = {"list_available_tools", "list_available_triggers"}
+    unified_tools = [
+        t for t in unified_registry.get_langgraph_tools()
+        if t.name not in excluded_nexus_names
+    ]
 
-    return unified_registry.get_langgraph_tools() + nexus_only_tools
+    return unified_tools + nexus_only_tools
 
 
 def extract_thinking_from_messages(messages: List[Any]) -> List[str]:

@@ -121,11 +121,11 @@ class TestSearchToolsIntent:
 @pytest.mark.unit
 class TestSearchToolsUnified:
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_returns_json(self, mock_get_tools):
-        mock_get_tools.return_value = [
+    @patch("seer.tools.discovery_shared.async_search_tools_intent")
+    async def test_returns_json(self, mock_search):
+        mock_search.return_value = [
             {"name": "gmail_create_draft", "description": "Create a Gmail draft",
-             "integration_type": "gmail", "parameters": {}},
+             "integration_type": "gmail", "parameters": {}, "confidence_score": 0.95},
         ]
         from seer.tools.unified_tools import search_tools_impl
         result = await search_tools_impl("create draft")
@@ -133,11 +133,9 @@ class TestSearchToolsUnified:
         assert data["query"] == "create draft"
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
     @patch("seer.tools.discovery_shared.async_search_tools_intent")
-    async def test_handles_no_results(self, mock_async_search, mock_get_tools):
-        mock_get_tools.return_value = []
-        mock_async_search.return_value = []
+    async def test_handles_no_results(self, mock_search):
+        mock_search.return_value = []
         from seer.tools.unified_tools import search_tools_impl
         result = await search_tools_impl("nonexistent")
         data = json.loads(result)
@@ -171,21 +169,22 @@ class TestListToolsUnified:
 @pytest.mark.unit
 class TestSearchTriggersUnified:
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.trigger_registry")
-    async def test_returns_json(self, mock_registry):
-        mock_trigger = MagicMock()
-        mock_trigger.key = "poll.gmail.email_received"
-        mock_trigger.title = "Gmail Email Received"
-        mock_trigger.provider = "gmail"
-        mock_trigger.mode = "polling"
-        mock_trigger.description = "Triggered when new email arrives"
-        mock_trigger.schemas = MagicMock()
-        mock_trigger.schemas.config = None
-        mock_trigger.schemas.event = None
-        mock_trigger.meta = MagicMock()
-        mock_trigger.meta.sample_event = None
-        mock_trigger.meta.requires_connection = True
-        mock_registry.all.return_value = [mock_trigger]
+    @patch("seer.tools.discovery_shared.async_search_triggers_intent")
+    async def test_returns_json(self, mock_search):
+        mock_search.return_value = [
+            {
+                "key": "poll.gmail.email_received",
+                "title": "Gmail Email Received",
+                "provider": "gmail",
+                "mode": "polling",
+                "description": "Triggered when new email arrives",
+                "config_schema": None,
+                "event_schema": None,
+                "sample_event": None,
+                "requires_connection": True,
+                "confidence_score": 0.92,
+            },
+        ]
 
         from seer.tools.unified_tools import search_triggers_impl
         data = json.loads(await search_triggers_impl("gmail email"))

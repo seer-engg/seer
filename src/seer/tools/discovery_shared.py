@@ -11,8 +11,11 @@ import re
 from collections import Counter
 from typing import Any, Dict, List, Optional, Set
 
+import numpy as np
+
 from seer.tools.registry import get_tools_by_integration
 from seer.core.registry.trigger_registry import trigger_registry
+from seer.services.knowledge.embedding_service import get_embedding_service
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
@@ -142,43 +145,10 @@ def search_tools_intent(
 async def async_search_tools_intent(
     query: str,
     integration_filter: Optional[str] = None,
-    top_k: int = 10,
+    top_k: int = 5,
 ) -> List[Dict[str, Any]]:
-    """
-    Search tools using semantic embeddings (OpenAI text-embedding-3-small).
-    Falls back to TF-IDF if embeddings unavailable.
-
-    Args:
-        query: Natural language description of desired capability
-        integration_filter: Optional integration to filter by
-        top_k: Maximum results to return
-
-    Returns:
-        List of matching tools sorted by semantic relevance
-    """
-    try:
-        from seer.tools.semantic_index import get_semantic_index  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
-
-        index = await get_semantic_index()
-        results = await index.search(query, top_k=top_k, item_type="tool")
-
-        if integration_filter:
-            filt = integration_filter.lower()
-            results = [r for r in results if r.get("integration_type", "").lower() == filt]
-
-        # Add confidence_score for backward compat
-        for i, r in enumerate(results):
-            r["confidence_score"] = len(results) - i
-
-        if results:
-            return results
-
-        # Semantic returned nothing — fall through to TF-IDF
-        logger.warning("Semantic search returned no results for '%s', falling back to TF-IDF", query)
-    except Exception:  # pylint: disable=broad-exception-caught  # Reason: semantic search is non-critical
-        logger.exception("Semantic search failed, falling back to TF-IDF")
-
-    return search_tools_intent(query, integration_filter=integration_filter, top_k=top_k)
+    """Embedding-based tool search via _EmbeddingToolIndex."""
+    return await _embedding_index.search_tools(query, top_k=top_k, integration_filter=integration_filter)
 
 
 def search_triggers_intent(
@@ -290,3 +260,107 @@ def get_available_integrations() -> List[str]:
 def get_available_providers() -> List[str]:
     """Get sorted list of all available trigger providers."""
     return sorted(set(t.provider for t in trigger_registry.all()))
+
+
+# ---------------------------------------------------------------------------
+# Embedding-based search (replaces keyword matching for production callers)
+# ---------------------------------------------------------------------------
+
+
+class _EmbeddingToolIndex:
+    """Lazy-init embedding index for tool and trigger search."""
+
+    def __init__(self):
+        self._tool_embeddings: np.ndarray | None = None
+        self._tool_catalog: List[Dict[str, Any]] = []
+        self._trigger_embeddings: np.ndarray | None = None
+        self._trigger_data: List[Dict[str, Any]] = []
+
+    async def _ensure_tools(self):
+        if self._tool_embeddings is not None:
+            return
+        self._tool_catalog = build_tool_catalog()
+        texts = [f"{t['name']}: {t.get('description', '')}" for t in self._tool_catalog]
+        svc = get_embedding_service()
+        vecs = await svc.embed_texts(texts)
+        self._tool_embeddings = np.array(vecs)
+
+    async def _ensure_triggers(self):
+        if self._trigger_embeddings is not None:
+            return
+        all_triggers = trigger_registry.all()
+        self._trigger_data = []
+        texts = []
+        for t in all_triggers:
+            text = f"{t.key} {t.title}: {t.description or ''}"
+            texts.append(text)
+            self._trigger_data.append({
+                "key": t.key, "title": t.title, "provider": t.provider,
+                "mode": t.mode, "description": t.description or f"{t.title} trigger",
+                "config_schema": t.schemas.config if t.schemas.config else None,
+                "event_schema": t.schemas.event if t.schemas.event else None,
+                "sample_event": t.meta.sample_event if t.meta.sample_event else None,
+                "requires_connection": t.meta.requires_connection,
+            })
+        svc = get_embedding_service()
+        vecs = await svc.embed_texts(texts)
+        self._trigger_embeddings = np.array(vecs)
+
+    async def search_tools(self, query: str, top_k: int = 5, integration_filter: str | None = None) -> List[Dict]:
+        """Search tools by embedding similarity."""
+        await self._ensure_tools()
+        svc = get_embedding_service()
+        q_vec = np.array(await svc.embed_query(query))
+        norms = np.linalg.norm(self._tool_embeddings, axis=1) * np.linalg.norm(q_vec)
+        sims = (self._tool_embeddings @ q_vec) / np.where(norms == 0, 1, norms)
+
+        indices = np.argsort(sims)[::-1]
+        results = []
+        for idx in indices:
+            tool = {**self._tool_catalog[int(idx)]}
+            if integration_filter and tool.get("integration", "") != integration_filter.lower():
+                continue
+            tool["confidence_score"] = float(sims[idx])
+            tool.pop("keywords", None)
+            tool.pop("capabilities", None)
+            results.append(tool)
+            if len(results) >= top_k:
+                break
+        return results
+
+    async def search_triggers(self, query: str, top_k: int = 10, provider_filter: str | None = None) -> List[Dict]:
+        """Search triggers by embedding similarity."""
+        await self._ensure_triggers()
+        svc = get_embedding_service()
+        q_vec = np.array(await svc.embed_query(query))
+        norms = np.linalg.norm(self._trigger_embeddings, axis=1) * np.linalg.norm(q_vec)
+        sims = (self._trigger_embeddings @ q_vec) / np.where(norms == 0, 1, norms)
+
+        indices = np.argsort(sims)[::-1]
+        results = []
+        for idx in indices:
+            trig = {**self._trigger_data[int(idx)]}
+            if provider_filter and provider_filter.lower() not in trig["provider"].lower():
+                continue
+            trig["confidence_score"] = float(sims[idx])
+            results.append(trig)
+            if len(results) >= top_k:
+                break
+        return results
+
+    def invalidate(self):
+        """Reset cache (for testing or after tool registry changes)."""
+        self._tool_embeddings = None
+        self._trigger_embeddings = None
+
+
+_embedding_index = _EmbeddingToolIndex()
+
+
+async def async_search_triggers_intent(
+    query: str,
+    provider_filter: Optional[str] = None,
+    top_k: int = 10,
+) -> List[Dict[str, Any]]:
+    """Embedding-based trigger search. Async replacement for search_triggers_intent."""
+    return await _embedding_index.search_triggers(query, top_k=top_k, provider_filter=provider_filter)

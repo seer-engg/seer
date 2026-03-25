@@ -94,6 +94,12 @@ class HttpRequestTool(BaseTool):
         if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
             raise HTTPException(status_code=400, detail=f"Unsupported HTTP method: {method}")
 
+        # Validate header values — expression resolver puts dicts with __error__ on failure
+        for key, val in list(headers.items()):
+            if isinstance(val, dict):
+                error_msg = val.get("__error__", f"Header '{key}' value is not a string")
+                raise HTTPException(status_code=400, detail=f"Header resolution failed: {error_msg}")
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 kwargs: Dict[str, Any] = {"headers": headers, "params": query_params}

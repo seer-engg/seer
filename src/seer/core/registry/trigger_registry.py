@@ -210,7 +210,11 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             title="Webhook",
             provider="generic",
             mode="webhook",
-            description="Accepts arbitrary JSON payloads via signed webhook requests.",
+            description=(
+                "Receive callbacks from external systems via HTTP webhook. Accepts arbitrary JSON"
+                " payloads with signature verification — use for third-party integrations, CI/CD"
+                " pipelines, or any system that can send HTTP POST requests."
+            ),
             schemas=TriggerSchemas(
                 event=_default_event_envelope_schema(),
                 config=_webhook_generic_config_schema(),
@@ -311,10 +315,10 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
             key="schedule.cron",
-            title="Scheduler",
+            title="Scheduled / Recurring Timer",
             provider="schedule",
             mode="polling",
-            description="Execute workflow on a cron schedule with timezone support.",
+            description="Run workflow on a recurring schedule — daily, hourly, weekly, every N minutes. Uses cron expressions with timezone support.",
             schemas=TriggerSchemas(
                 event=_enveloped_event_schema(_cron_schedule_payload_schema()),
                 config=_cron_schedule_config_schema(),

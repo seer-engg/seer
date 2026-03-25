@@ -16,6 +16,10 @@ from seer.core.schema.models import (
     IfNode,
     ForEachNode,
     HITLNode,
+    HITLDisplayItem,
+    HITLInputField,
+    HITLInputOption,
+    HITLInputType,
     ImageGenNode,
     BrowserNode,
     AgentNode,
@@ -356,6 +360,67 @@ def _get_edge_type_description(edge_type: EdgeType) -> str:
         EdgeType.loop_exit: "Exit from for_each loop",
     }
     return descriptions.get(edge_type, "Unknown edge type")
+
+
+@lru_cache(maxsize=1)
+def generate_node_examples() -> str:
+    """
+    Auto-generate concrete JSON examples for each node type from Pydantic models.
+
+    Examples stay in sync with the schema — if fields are renamed/added/removed,
+    the examples update automatically.
+    """
+    examples = {
+        "tool": ToolNode(
+            id="fetch", type="tool", tool="http_request",
+            inputs={"url": "https://api.example.com/data", "method": "GET",
+                    "headers": {"Authorization": "Token ${vars.API_KEY}"}},
+        ),
+        "for_each": ForEachNode(id="loop", type="for_each", items="${fetch.body.items}"),
+        "hitl": HITLNode(
+            id="review", type="hitl", title="Review Item",
+            description="${item.title}",
+            display=[
+                HITLDisplayItem(label="Content", value="${item.text}"),
+                HITLDisplayItem(label="Source", value="${item.url}"),
+            ],
+            inputs=[HITLInputField(
+                id="rating", question="How would you rate this?",
+                input_type=HITLInputType.single_choice,
+                options=[
+                    HITLInputOption(value="1", label="Low"),
+                    HITLInputOption(value="2", label="Medium"),
+                    HITLInputOption(value="3", label="High"),
+                ],
+            )],
+        ),
+        "if": IfNode(id="check", type="if", condition="${item.score} > 5"),
+        "agent": AgentNode(
+            id="summarize", type="agent",
+            inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Summarize: ${item.text}"},
+        ),
+    }
+
+    lines = ["## Node Examples (auto-generated from schema)", ""]
+    for node_type, instance in examples.items():
+        dumped = instance.model_dump(exclude_none=True, exclude_defaults=True, by_alias=True)
+        lines.append(f"### {node_type}")
+        lines.append(f"```json\n{json.dumps(dumped, indent=2)}\n```")
+        lines.append("")
+
+    lines.append("### trigger example")
+    lines.append('```json\n{"id": "cron", "key": "schedule.cron", "mode": "polling", '
+                 '"provider_config": {"cron_expression": "0 9 * * *", '
+                 '"timezone": "America/Los_Angeles"}}\n```')
+    lines.append("")
+    lines.append("### edge examples")
+    lines.append("```json\n" + json.dumps([
+        {"source": "cron", "target": "fetch", "type": "trigger"},
+        {"source": "fetch", "target": "loop", "type": "default"},
+        {"source": "loop", "target": "review", "type": "loop_body"},
+    ], indent=2) + "\n```")
+
+    return "\n".join(lines)
 
 
 @lru_cache(maxsize=1)

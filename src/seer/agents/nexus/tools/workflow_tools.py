@@ -314,14 +314,27 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
     validation = await run_full_validation(user, spec_dict)
 
     if not validation.success:
+        # Kill #6: Add progressive hints on repeated failures
+        hint = validation.error.hint or ""
+        hint += "\nCommon fix: check field names against get_workflow_schema examples."
         return _error_response(
             validation.error.error_type,
             validation.error.message,
-            validation.error.hint,
+            hint.strip(),
         )
 
-    # All validations passed - create WorkflowProposal record
+    # Kill #5: Warn if agent nodes used alongside primitive alternatives
+    warnings = []
     spec_payload = validation.validated_spec.model_dump(mode="json")
+    nodes = spec_payload.get("nodes", [])
+    node_types = {n.get("type") for n in nodes if isinstance(n, dict)}
+    has_agent = "agent" in node_types
+    has_primitives = node_types & {"for_each", "hitl", "tool"}
+    if has_agent and has_primitives:
+        warnings.append(
+            "Agent nodes cost 10x more than primitive nodes. "
+            "Consider replacing agent nodes with for_each/hitl/tool nodes."
+        )
 
     # Get session and workflow for this thread
     session = await WorkflowChatSession.get_or_none(thread_id=thread_id).prefetch_related('workflow', 'user')
@@ -358,5 +371,7 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
 
     if summary:
         response["summary"] = summary
+    if warnings:
+        response["warnings"] = warnings
 
     return json.dumps(response, indent=2)
