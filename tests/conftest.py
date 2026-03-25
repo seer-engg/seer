@@ -25,6 +25,7 @@ os.environ["IS_CLOUD_MODE"] = "false"
 os.environ["SEER_MODE"] = "self-hosted"
 os.environ["DB_MAX_CONNECTIONS"] = "5"
 os.environ["DB_MIN_CONNECTIONS"] = "1"
+os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/seer_test")
 
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, patch
