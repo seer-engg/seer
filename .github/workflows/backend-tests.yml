@@ -13,6 +13,7 @@ permissions:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     services:
       postgres:
@@ -57,3 +58,31 @@ jobs:
         run: uv run pytest --ignore=tests/e2e -n auto --cov=src/seer --cov-report=xml
         env:
           DATABASE_URL: "postgresql://test:test@localhost:5432/seer_test"
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    # Run e2e tests after unit/integration tests pass
+    needs: tests
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Run E2E tests with Testcontainers
+        run: |
+          # Testcontainers manages Docker containers automatically
+          # No need for manual setup - containers start on demand
+          uv run pytest tests/e2e -v --tb=short -x
+        env:
+          # Testcontainers configuration
+          TESTCONTAINERS_RYUK_DISABLED: "false"
+          DOCKER_HOST: "unix:///var/run/docker.sock"

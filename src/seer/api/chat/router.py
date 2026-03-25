@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from typing import List
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -12,9 +11,11 @@ from seer.database import User
 from seer.database.chat_models import GeneralChatMessage
 from seer.database.workflow_models import ChatExecutionStatus
 
+from seer.logger import get_logger
+
 from . import schemas, services
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 

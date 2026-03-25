@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import logging
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type
 from uuid import UUID
@@ -19,6 +18,7 @@ from uuid import UUID
 from browser_use import Agent, ChatOpenAI
 from pydantic import BaseModel, create_model
 
+from seer.logger import get_logger
 from seer.config import config
 from seer.database import User
 from seer.services.browser.custom_tools import CustomBrowserTools
@@ -36,7 +36,8 @@ if TYPE_CHECKING:
     from seer.core.files.service import WorkflowFileSystem
     from seer.services.browser.pool_manager import ManagedSession
 
-logger = logging.getLogger(__name__)
+
+logger = get_logger(__name__)
 
 
 _JSON_TYPE_MAP: Dict[str, type] = {

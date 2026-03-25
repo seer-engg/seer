@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any, Dict, Optional
 
 from seer.api.core.errors import RUN_PROBLEM
@@ -33,12 +32,13 @@ from seer.database import (
     make_workflow_public_id,
 )
 from seer.worker.tasks.workflows import workflow_execution_task
+from seer.logger import get_logger
 from seer.services.workflows.execution import (
     get_workflow_run_interrupt as _get_workflow_run_interrupt,
     resume_workflow_run as _resume_workflow_run,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 

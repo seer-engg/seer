@@ -38,10 +38,11 @@ from seer.core.schema.models import (
     WorkflowSpec,
 )
 from seer.core.schema.schema_registry import SchemaRegistry, ensure_json_schema
+from seer.logger import get_logger
 from seer.observability.llm import extract_usage_metadata
 from seer.utilities.llm_messages import message_to_text
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 __all__ = ["WorkflowCompilerSingleton", "UserBoundCompiledWorkflow"]
 

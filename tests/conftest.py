@@ -25,6 +25,7 @@ os.environ["IS_CLOUD_MODE"] = "false"
 os.environ["SEER_MODE"] = "self-hosted"
 os.environ["DB_MAX_CONNECTIONS"] = "5"
 os.environ["DB_MIN_CONNECTIONS"] = "1"
+os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/seer_test")
 
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, patch
@@ -35,6 +36,25 @@ from httpx import ASGITransport, AsyncClient
 from tortoise import Tortoise
 
 from seer.database.config import TORTOISE_ORM
+
+
+# =============================================================================
+# Logger Cache Reset
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def reset_logger_cache():
+    """Reset the logger cache before each test to ensure test isolation.
+
+    The seer.logger module caches logger instances in _loggers dict.
+    Without clearing this cache, tests may share logger instances with
+    different handlers attached, causing caplog to not capture logs correctly.
+    """
+    from seer import logger as seer_logger
+    seer_logger._loggers.clear()
+    yield
+    seer_logger._loggers.clear()
 
 
 # =============================================================================

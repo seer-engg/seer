@@ -61,7 +61,6 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
-import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -75,10 +74,12 @@ from seer.config import config
 from seer.database import User
 from seer.database.models_browser_recording import SessionRecording, SessionRecordingChunk
 
+from seer.logger import get_logger
+
 if TYPE_CHECKING:
     from browser_use import BrowserSession
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Flush interval for chunked recordings (seconds)
 FLUSH_INTERVAL_SECONDS = 45

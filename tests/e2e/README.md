@@ -1,207 +1,139 @@
-# E2E API Tests
+# E2E Tests
 
-This directory contains end-to-end (E2E) tests for the Seer API endpoints.
+True end-to-end tests using real infrastructure via Testcontainers.
 
 ## Overview
 
-E2E tests validate complete HTTP request/response cycles including:
-- Authentication and authorization
-- Request validation
-- Business logic execution
-- Database operations
-- Response formatting
+These tests validate complete API → Database → Worker → Database flows using:
+- **Real PostgreSQL** with pgvector extension (via Testcontainers)
+- **Real Redis/Valkey** (via Testcontainers)
+- **In-process Taskiq execution** for deterministic task testing
 
-## Test Structure
+## Prerequisites
 
-```
-tests/e2e/
-├── conftest.py              # E2E-specific fixtures (authenticated client, full app)
-├── workflows/               # Workflow API tests (~102 tests)
-│   ├── test_workflow_crud_api.py          # CRUD operations (20 tests)
-│   ├── test_workflow_validation_api.py    # Validation & compilation (16 tests)
-│   ├── test_workflow_execution_api.py     # Execution & runs (20 tests)
-│   ├── test_workflow_versioning_api.py    # Drafts & versions (26 tests)
-│   ├── test_trigger_api.py                # Trigger management (13 tests)
-│   └── test_registry_api.py               # Registries & schemas (15 tests)
-└── tools/                   # Tools API tests (~16 tests)
-    └── test_tools_api.py                  # Tool listing & execution
-```
+- Docker running locally (Testcontainers requires Docker)
+- All dev dependencies installed: `uv sync --group dev`
 
 ## Running Tests
 
-### All E2E Tests
 ```bash
-uv run pytest tests/e2e/ -v
+# Run all e2e tests
+uv run pytest tests/e2e -v
+
+# Run specific test file
+uv run pytest tests/e2e/workflows/test_workflow_lifecycle.py -v
+
+# Run with verbose output and show locals on failure
+uv run pytest tests/e2e -v --tb=long --showlocals
+
+# Run only e2e marked tests (if mixed with other tests)
+uv run pytest -m e2e -v
 ```
 
-### Specific Module
-```bash
-# Workflow tests
-uv run pytest tests/e2e/workflows/ -v
+## Architecture
 
-# Tools tests
-uv run pytest tests/e2e/tools/ -v
+```
+tests/e2e/
+├── conftest.py              # Main conftest, env setup, workflow spec fixtures
+├── fixtures/
+│   ├── __init__.py
+│   ├── containers.py        # Testcontainers (Postgres, Redis)
+│   ├── database.py          # DB initialization, session management
+│   ├── broker.py            # Taskiq in-process execution
+│   └── api_client.py        # FastAPI app, HTTP clients
+├── workflows/
+│   ├── test_workflow_lifecycle.py  # Create → Publish → Execute
+│   ├── test_trigger_execution.py   # Webhook/polling triggers
+│   └── test_error_handling.py      # Failure scenarios
+└── README.md
 ```
 
-### Single Test File
-```bash
-uv run pytest tests/e2e/workflows/test_workflow_crud_api.py -v
-```
+## Key Fixtures
 
-### With Coverage
-```bash
-uv run pytest tests/e2e/ --cov --cov-report=html
-open htmlcov/index.html
-```
+### Container Fixtures (session-scoped)
+- `postgres_container` - PostgreSQL with pgvector
+- `redis_container` - Valkey (Redis-compatible)
+- `database_url` - Connection string for Postgres
+- `redis_url` - Connection string for Redis
 
-## Key Features
+### Database Fixtures
+- `db_initialized` - Runs migrations once per session
+- `db_session` - Function-scoped with transaction rollback
 
-### Authentication Setup
-- `ClerkJWTVerifier` is mocked in e2e test fixtures
-- Test users are injected via mocked token verification
-- Module cache is cleared to ensure clean app state
+### Broker Fixtures
+- `taskiq_direct_executor` - Executes tasks in-process, tracks executions
 
-### Database Setup
-- SQLite in-memory database (via `db_engine` fixture)
-- Fast test execution (~100x faster than PostgreSQL)
-- Perfect isolation between tests
+### Client Fixtures
+- `e2e_app` - FastAPI app configured for testing
+- `e2e_client` - Unauthenticated HTTP client
+- `authenticated_e2e_client` - Client with JWT auth headers
+- `e2e_test_user` - Test user in real database
 
-### API Paths
-- Base path: `/api`
-- Workflows: `/api/v1/*`
-- Tools: `/api/tools/*`
+## How It Works
 
-## Fixtures
+### Container Lifecycle
+1. Containers start once per test session (first test)
+2. pgvector extension is enabled on Postgres
+3. Migrations run once to set up schema
+4. Tests use transaction rollback for isolation
+5. Containers stop when session ends
 
-### E2E-Specific Fixtures (conftest.py)
+### Task Execution
+Instead of queueing tasks to Redis and running a separate worker:
+1. We patch `task.kiq()` to call the task function directly
+2. Tasks execute in the same async context as the test
+3. `TaskExecutionTracker` records all executions for assertions
 
-#### `full_app`
-Full FastAPI application with all routers and middleware. Sets `SEER_MODE=self-hosted` before import.
+### Database Isolation
+- Each test runs within a database transaction
+- Transaction is rolled back after the test
+- No data persists between tests
+- Much faster than truncating/recreating tables
 
-#### `authenticated_e2e_client`
-HTTP client with JWT token for authenticated requests.
+## Writing Tests
 
 ```python
-async def test_example(db_engine, authenticated_e2e_client):
-    response = await authenticated_e2e_client.get("/api/v1/workflows")
-    assert response.status_code == 200
-```
+import pytest
 
-#### `e2e_client`
-HTTP client without authentication (for testing 401 responses).
+pytestmark = pytest.mark.e2e  # Auto-applied by conftest
 
-```python
-async def test_unauthorized(db_engine, e2e_client):
-    response = await e2e_client.get("/api/v1/workflows")
-    assert response.status_code == 401
-```
-
-#### `workflow_create_payload`
-Valid payload for creating a workflow.
-
-#### `workflow_run_payload`
-Valid payload for executing a workflow.
-
-## Test Patterns
-
-### Standard E2E Test
-```python
-@pytest.mark.e2e
-@pytest.mark.asyncio
-async def test_create_workflow(db_engine, authenticated_e2e_client, workflow_create_payload):
-    """Test successful workflow creation."""
+async def test_workflow_lifecycle(
+    authenticated_e2e_client,  # HTTP client with auth
+    db_session,               # Ensures DB is ready
+    taskiq_direct_executor,   # Enables task execution tracking
+    simple_tool_workflow_spec,  # Sample workflow spec
+):
+    # Create workflow
     response = await authenticated_e2e_client.post(
-        "/api/v1/workflows",
-        json=workflow_create_payload
+        "/v1/workflows",
+        json={"name": "Test", "spec": simple_tool_workflow_spec}
     )
-
     assert response.status_code == 201
-    data = response.json()
-    assert "workflow_id" in data
-    assert data["name"] == workflow_create_payload["name"]
+
+    # Verify task was executed
+    tracker = taskiq_direct_executor["tracker"]
+    executions = tracker.get_executions("workflow_execution_task")
+    # ...
 ```
-
-### Testing Unauthorized Access
-```python
-@pytest.mark.e2e
-@pytest.mark.asyncio
-async def test_unauthorized(db_engine, e2e_client):
-    """Test endpoint without authentication returns 401."""
-    response = await e2e_client.get("/api/v1/workflows")
-    assert response.status_code == 401
-```
-
-### Testing Not Found
-```python
-@pytest.mark.e2e
-@pytest.mark.asyncio
-async def test_not_found(db_engine, authenticated_e2e_client):
-    """Test retrieving non-existent resource returns 404."""
-    response = await authenticated_e2e_client.get("/api/v1/workflows/nonexistent_id")
-    assert response.status_code == 404
-```
-
-### Testing Validation Errors
-```python
-@pytest.mark.e2e
-@pytest.mark.asyncio
-async def test_invalid_input(db_engine, authenticated_e2e_client):
-    """Test invalid input returns 422."""
-    response = await authenticated_e2e_client.post(
-        "/api/v1/workflows",
-        json={"invalid": "payload"}
-    )
-    assert response.status_code == 422
-```
-
-## Coverage Goals
-
-- **Target**: 75% coverage for API endpoints
-- **Workflows API**: ~102 tests covering all major endpoints
-- **Tools API**: ~16 tests covering tool operations
 
 ## Troubleshooting
 
-### Auth Errors (401)
-- Ensure `SEER_MODE=self-hosted` is set in environment
-- Check that module cache is being cleared in `full_app` fixture
-- Verify JWT token is being created correctly
+### Containers won't start
+- Ensure Docker daemon is running: `docker info`
+- Check for port conflicts on 5432 and 6379
+- Try `docker system prune` to clear stale resources
 
-### Routes Not Found (404)
-- Verify API path is correct: `/api/v1/*` not `/v1/*`
-- Check that router is included in main app
-- Ensure middleware isn't blocking the request
+### Migrations fail
+- The fixture falls back to `generate_schemas()` if aerich fails
+- Check migration files for syntax errors
+- Ensure all model imports are correct
 
-### Database Errors
-- Ensure `db_engine` fixture is requested in test parameters
-- Check that Tortoise ORM is initialized correctly
-- Verify SQLite in-memory database is working
+### Tests hang
+- Check for async deadlocks in task execution
+- The broker fixture may need timeout adjustment
+- Use `pytest --timeout=60` to add test timeouts
 
-### Spec Normalization
-- API may normalize workflow specs (adding default fields like `ui: {}`, `inputs: {}`)
-- Don't assert exact spec equality - check key fields exist instead
-- Example:
-  ```python
-  # ❌ Don't do this
-  assert data["spec"] == payload["spec"]
-
-  # ✅ Do this instead
-  assert data["spec"]["version"] == payload["spec"]["version"]
-  assert len(data["spec"]["nodes"]) == len(payload["spec"]["nodes"])
-  ```
-
-## Next Steps
-
-### Additional Modules to Test
-- Integrations API (`/api/integrations/*`)
-- Usage API (`/api/usage/*`)
-- User Settings API (`/api/settings/*`)
-- Webhooks API (`/api/webhooks/*`)
-- Forms API (`/api/forms/*`)
-
-### Future Improvements
-- Add performance benchmarks
-- Test concurrent requests
-- Add test data factories
-- Improve error message assertions
-- Add WebSocket testing (for streaming)
+### Import errors
+- Ensure environment variables are set before imports
+- The conftest sets these at module load time
+- Clear Python's module cache if needed
