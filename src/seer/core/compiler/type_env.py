@@ -192,7 +192,7 @@ def _infer_item_schema_from_items_expression(items_expr: str, env: TypeEnvironme
             return None
 
     # The resolved schema should be an array type with items
-    if current.get("type") != "array":
+    if current.get("type") not in ("array", None):
         return None
 
     items_schema = current.get("items")

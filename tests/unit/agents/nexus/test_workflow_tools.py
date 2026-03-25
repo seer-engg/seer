@@ -181,7 +181,8 @@ class TestSubmitWorkflowSpec:
 
             assert data["status"] == "error"
             assert data["error_type"] == "compilation"
-            assert "hint" not in data
+            # hint is always present now (includes common fix advice)
+            assert "Common fix" in data["hint"]
 
     @pytest.mark.asyncio
     async def test_success_creates_proposal(self):

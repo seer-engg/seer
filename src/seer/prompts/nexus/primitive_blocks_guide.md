@@ -1011,6 +1011,11 @@ All blocks support `${...}` expressions for dynamic data:
 - `${item}` - Current item in for_each loop (or custom `item_var`)
 - `${index}` - Current index in for_each loop (or custom `index_var`)
 
+**Global Variables (Settings → Variables):**
+- `${vars.KEY_NAME}` - Access organization-level variables (API keys, config values)
+- Example: `${vars.READWISE_TOKEN}`, `${vars.SLACK_WEBHOOK_URL}`
+- ⚠️ Use `${vars.*}` NOT `${variables.*}` or `${secrets.*}`
+
 **Secrets (MCP only):**
 - `${secrets.api_key}` - Reference to stored credentials
 

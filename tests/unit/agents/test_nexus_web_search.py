@@ -20,11 +20,11 @@ def test_web_search_tool_metadata():
     assert "web" in web_search.description.lower()
 
 
-def test_web_search_in_workflow_tools():
-    """Test that web_search is included in get_workflow_tools()."""
+def test_web_search_not_in_workflow_tools():
+    """Test that web_search is NOT included in get_workflow_tools() (removed for tool bloat reduction)."""
     tools = get_workflow_tools()
     tool_names = [t.name for t in tools]
-    assert "web_search" in tool_names
+    assert "web_search" not in tool_names
 
 
 async def test_web_search_returns_error_without_api_key():

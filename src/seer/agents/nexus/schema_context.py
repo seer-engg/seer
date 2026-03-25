@@ -16,6 +16,10 @@ from seer.core.schema.models import (
     IfNode,
     ForEachNode,
     HITLNode,
+    HITLDisplayItem,
+    HITLInputField,
+    HITLInputOption,
+    HITLInputType,
     ImageGenNode,
     BrowserNode,
     AgentNode,
@@ -27,7 +31,23 @@ from seer.logger import get_logger
 logger = get_logger(__name__)
 
 # Keys that keep the schema digestible while conveying the structure.
-_SCHEMA_KEYS = ("title", "type", "properties", "required", "definitions", "$defs", "default")
+# Excludes "definitions" and "$defs" — they contain $ref pointers that
+# Gemini/Google's function calling API rejects in tool responses.
+_SCHEMA_KEYS = ("title", "type", "properties", "required", "default")
+
+
+def _strip_refs(obj: Any) -> Any:
+    """Recursively strip $ref pointers and $defs references so the
+    schema is self-contained and compatible with all LLM providers
+    (Gemini rejects $ref in function responses)."""
+    if isinstance(obj, dict):
+        if "$ref" in obj:
+            return {"type": "object"}
+        return {k: _strip_refs(v) for k, v in obj.items()
+                if k not in ("$defs", "definitions", "discriminator")}
+    if isinstance(obj, list):
+        return [_strip_refs(item) for item in obj]
+    return obj
 
 
 @lru_cache(maxsize=1)
@@ -38,7 +58,8 @@ def get_workflow_spec_schema() -> Dict[str, Any]:
     """
 
     schema = WorkflowSpec.model_json_schema()
-    return {key: schema.get(key) for key in _SCHEMA_KEYS if key in schema}
+    filtered = {key: schema.get(key) for key in _SCHEMA_KEYS if key in schema}
+    return _strip_refs(filtered)
 
 
 def get_workflow_spec_schema_text(max_chars: int = 4000) -> str:
@@ -339,6 +360,67 @@ def _get_edge_type_description(edge_type: EdgeType) -> str:
         EdgeType.loop_exit: "Exit from for_each loop",
     }
     return descriptions.get(edge_type, "Unknown edge type")
+
+
+@lru_cache(maxsize=1)
+def generate_node_examples() -> str:
+    """
+    Auto-generate concrete JSON examples for each node type from Pydantic models.
+
+    Examples stay in sync with the schema — if fields are renamed/added/removed,
+    the examples update automatically.
+    """
+    examples = {
+        "tool": ToolNode(
+            id="fetch", type="tool", tool="http_request",
+            inputs={"url": "https://api.example.com/data", "method": "GET",
+                    "headers": {"Authorization": "Token ${vars.API_KEY}"}},
+        ),
+        "for_each": ForEachNode(id="loop", type="for_each", items="${fetch.body.items}"),
+        "hitl": HITLNode(
+            id="review", type="hitl", title="Review Item",
+            description="${item.title}",
+            display=[
+                HITLDisplayItem(label="Content", value="${item.text}"),
+                HITLDisplayItem(label="Source", value="${item.url}"),
+            ],
+            inputs=[HITLInputField(
+                id="rating", question="How would you rate this?",
+                input_type=HITLInputType.single_choice,
+                options=[
+                    HITLInputOption(value="1", label="Low"),
+                    HITLInputOption(value="2", label="Medium"),
+                    HITLInputOption(value="3", label="High"),
+                ],
+            )],
+        ),
+        "if": IfNode(id="check", type="if", condition="${item.score} > 5"),
+        "agent": AgentNode(
+            id="summarize", type="agent",
+            inputs={"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Summarize: ${item.text}"},
+        ),
+    }
+
+    lines = ["## Node Examples (auto-generated from schema)", ""]
+    for node_type, instance in examples.items():
+        dumped = instance.model_dump(exclude_none=True, exclude_defaults=True, by_alias=True)
+        lines.append(f"### {node_type}")
+        lines.append(f"```json\n{json.dumps(dumped, indent=2)}\n```")
+        lines.append("")
+
+    lines.append("### trigger example")
+    lines.append('```json\n{"id": "cron", "key": "schedule.cron", "mode": "polling", '
+                 '"provider_config": {"cron_expression": "0 9 * * *", '
+                 '"timezone": "America/Los_Angeles"}}\n```')
+    lines.append("")
+    lines.append("### edge examples")
+    lines.append("```json\n" + json.dumps([
+        {"source": "cron", "target": "fetch", "type": "trigger"},
+        {"source": "fetch", "target": "loop", "type": "default"},
+        {"source": "loop", "target": "review", "type": "loop_body"},
+    ], indent=2) + "\n```")
+
+    return "\n".join(lines)
 
 
 @lru_cache(maxsize=1)
