@@ -3,6 +3,7 @@ from typing import Optional, TYPE_CHECKING
 from contextvars import ContextVar
 
 _current_thread_id: ContextVar[Optional[str]] = ContextVar('_current_thread_id', default=None)
+_submission_attempt_count: ContextVar[int] = ContextVar('_submission_attempt_count', default=0)
 
 if TYPE_CHECKING:
     from seer.api.user.models import User

@@ -1,8 +1,8 @@
 """
 Unit tests for discovery tools (unified implementations).
 
-Tests the canonical tool implementations from seer.tools.unified_tools,
-plus the shared discovery logic from seer.tools.discovery_shared.
+Tests TF-IDF + substring matching in discovery_shared,
+plus unified tool implementations.
 """
 
 import json
@@ -10,274 +10,220 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from seer.tools.discovery_shared import (
-    tokenize as _tokenize,
-    search_tools_intent as _search_tools_intent,
+    tokenize,
+    search_tools_intent,
+    _ToolIndex,
 )
 
 
 @pytest.mark.unit
 class TestTokenize:
-    """Tests for _tokenize helper function."""
+    def test_snake_case(self):
+        assert "gmail" in tokenize("gmail_create_draft")
+        assert "create" in tokenize("gmail_create_draft")
+        assert "draft" in tokenize("gmail_create_draft")
 
-    def test_tokenize_snake_case(self):
-        """Test tokenizing snake_case strings."""
-        result = _tokenize("gmail_create_draft")
-        assert "gmail" in result
+    def test_camel_case(self):
+        result = tokenize("createDraft")
         assert "create" in result
         assert "draft" in result
 
-    def test_tokenize_camel_case(self):
-        """Test tokenizing camelCase strings."""
-        result = _tokenize("createDraft")
-        assert "create" in result
-        assert "draft" in result
+    def test_empty(self):
+        assert tokenize("") == []
+        assert tokenize(None) == []
 
-    def test_tokenize_mixed(self):
-        """Test tokenizing mixed format strings."""
-        result = _tokenize("gmail_createDraft_v2")
-        assert "gmail" in result
-        assert "create" in result
-        assert "draft" in result
-        assert "v2" in result
 
-    def test_tokenize_empty(self):
-        """Test tokenizing empty string."""
-        assert _tokenize("") == set()
-        assert _tokenize(None) == set()
+@pytest.mark.unit
+class TestToolIndex:
+    def test_exact_match_ranks_highest(self):
+        catalog = [
+            {"name": "http_request", "description": "Make HTTP requests to any URL"},
+            {"name": "web_search", "description": "Search the web"},
+            {"name": "gmail_send_email", "description": "Send an email"},
+        ]
+        index = _ToolIndex(catalog)
+        results = index.search("http request")
+        assert results[0] == 0  # http_request
+
+    def test_substring_match_works(self):
+        catalog = [
+            {"name": "http_request", "description": "Make HTTP requests to any URL. Use for external APIs."},
+            {"name": "gmail_send_email", "description": "Send an email using Gmail"},
+        ]
+        index = _ToolIndex(catalog)
+        results = index.search("call an external API")
+        assert results[0] == 0  # http_request (via "api" substring)
+
+    def test_empty_query(self):
+        catalog = [{"name": "test", "description": "test"}]
+        index = _ToolIndex(catalog)
+        assert index.search("") == []
+
+    def test_empty_catalog(self):
+        index = _ToolIndex([])
+        assert index.search("anything") == []
+
+    def test_no_match(self):
+        catalog = [{"name": "gmail_send", "description": "Send email"}]
+        index = _ToolIndex(catalog)
+        assert index.search("xyznonexistent") == []
 
 
 @pytest.mark.unit
 class TestSearchToolsIntent:
-    """Tests for _search_tools_intent function."""
-
     @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    def test_search_returns_matching_tools(self, mock_get_tools):
-        """Test that search returns tools matching the query."""
+    def test_returns_matching_tools(self, mock_get_tools):
         mock_get_tools.return_value = [
-            {
-                "name": "gmail_create_draft",
-                "description": "Create a Gmail draft",
-                "integration_type": "gmail",
-            },
-            {
-                "name": "slack_send_message",
-                "description": "Send a Slack message",
-                "integration_type": "slack",
-            },
+            {"name": "gmail_create_draft", "description": "Create a Gmail draft", "integration_type": "gmail"},
+            {"name": "slack_send_message", "description": "Send a Slack message", "integration_type": "slack"},
         ]
-
-        results = _search_tools_intent("create draft", top_k=5)
-
+        results = search_tools_intent("create draft", top_k=5)
         assert len(results) > 0
-        # Gmail tool should match "create draft"
-        assert any("gmail" in r.get("name", "").lower() for r in results)
+        assert results[0]["name"] == "gmail_create_draft"
 
     @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    def test_search_respects_integration_filter(self, mock_get_tools):
-        """Test that integration filter boosts matching tools."""
+    def test_filters_by_integration(self, mock_get_tools):
         mock_get_tools.return_value = [
-            {
-                "name": "gmail_create_draft",
-                "description": "Create a Gmail draft",
-                "integration_type": "gmail",
-            },
-            {
-                "name": "slack_post_message",
-                "description": "Post a message to Slack",
-                "integration_type": "slack",
-            },
+            {"name": "gmail_create_draft", "description": "Create a Gmail draft", "integration_type": "gmail"},
+            {"name": "slack_post_message", "description": "Post a Slack message", "integration_type": "slack"},
         ]
-
-        results = _search_tools_intent("message", integration_filter="slack", top_k=5)
-
-        assert len(results) > 0
-        # Slack tool should rank higher due to filter
-        if len(results) > 0:
-            top_result = results[0]
-            assert "slack" in top_result.get("name", "").lower() or \
-                   "slack" in top_result.get("integration", "").lower()
+        results = search_tools_intent("message", integration_filter="slack", top_k=5)
+        assert len(results) == 1
+        assert results[0]["name"] == "slack_post_message"
 
     @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    def test_search_returns_empty_for_no_match(self, mock_get_tools):
-        """Test that search returns empty list when nothing matches."""
-        mock_get_tools.return_value = [
-            {
-                "name": "gmail_create_draft",
-                "description": "Create a Gmail draft",
-                "integration_type": "gmail",
-            },
-        ]
-
-        results = _search_tools_intent("xyz123nonexistent", top_k=5)
-
+    def test_returns_empty_for_no_tools(self, mock_get_tools):
+        mock_get_tools.return_value = []
+        results = search_tools_intent("anything")
         assert results == []
+
+    @patch("seer.tools.discovery_shared.get_tools_by_integration")
+    def test_results_have_confidence_score(self, mock_get_tools):
+        mock_get_tools.return_value = [
+            {"name": "http_request", "description": "Make HTTP requests", "integration_type": "http"},
+        ]
+        results = search_tools_intent("http request")
+        assert len(results) == 1
+        assert "confidence_score" in results[0]
+
+    @patch("seer.tools.discovery_shared.get_tools_by_integration")
+    def test_results_are_compact(self, mock_get_tools):
+        """Search results should not include parameter schemas."""
+        mock_get_tools.return_value = [
+            {"name": "http_request", "description": "Make HTTP requests",
+             "integration_type": "http", "parameters": {"type": "object"}, "required_scopes": []},
+        ]
+        results = search_tools_intent("http")
+        assert "parameters" not in results[0]
+        assert "required_scopes" not in results[0]
 
 
 @pytest.mark.unit
 class TestSearchToolsUnified:
-    """Tests for search_tools_impl — unified canonical implementation."""
-
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_search_tools_returns_json(self, mock_get_tools):
-        """Test that search_tools_impl returns valid JSON."""
-        mock_get_tools.return_value = [
-            {
-                "name": "gmail_create_draft",
-                "description": "Create a Gmail draft",
-                "integration_type": "gmail",
-                "parameters": {},
-            },
+    @patch("seer.tools.discovery_shared.async_search_tools_intent")
+    async def test_returns_json(self, mock_search):
+        mock_search.return_value = [
+            {"name": "gmail_create_draft", "description": "Create a Gmail draft",
+             "integration_type": "gmail", "parameters": {}, "confidence_score": 0.95},
         ]
-
         from seer.tools.unified_tools import search_tools_impl
         result = await search_tools_impl("create draft")
         data = json.loads(result)
-
-        assert "query" in data
         assert data["query"] == "create draft"
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_search_tools_handles_no_results(self, mock_get_tools):
-        """Test that search_tools_impl handles no results gracefully."""
-        mock_get_tools.return_value = []
-
+    @patch("seer.tools.discovery_shared.async_search_tools_intent")
+    async def test_handles_no_results(self, mock_search):
+        mock_search.return_value = []
         from seer.tools.unified_tools import search_tools_impl
         result = await search_tools_impl("nonexistent")
         data = json.loads(result)
-
         assert data["top_match"] is None
-        assert "message" in data or "alternatives" in data
 
 
 @pytest.mark.unit
 class TestListToolsUnified:
-    """Tests for list_tools_impl — unified canonical implementation."""
-
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_list_tools_returns_all_tools(self, mock_get_tools):
-        """Test that list_tools_impl returns all available tools."""
+    async def test_returns_all_tools(self, mock_get_tools):
         mock_get_tools.return_value = [
-            {
-                "name": "tool1",
-                "description": "Tool 1",
-                "integration_type": "gmail",
-                "parameters": {},
-                "required_scopes": [],
-            },
-            {
-                "name": "tool2",
-                "description": "Tool 2",
-                "integration_type": "slack",
-                "parameters": {},
-                "required_scopes": [],
-            },
+            {"name": "tool1", "description": "Tool 1", "integration_type": "gmail", "parameters": {}, "required_scopes": []},
+            {"name": "tool2", "description": "Tool 2", "integration_type": "slack", "parameters": {}, "required_scopes": []},
         ]
-
         from seer.tools.unified_tools import list_tools_impl
-        result = await list_tools_impl()
-        data = json.loads(result)
-
-        assert "tools" in data
+        data = json.loads(await list_tools_impl())
         assert data["total"] == 2
 
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_list_tools_filters_by_integration(self, mock_get_tools):
-        """Test that list_tools_impl filters by integration type."""
+    async def test_filters_by_integration(self, mock_get_tools):
         mock_get_tools.return_value = [
-            {
-                "name": "gmail_tool",
-                "description": "Gmail tool",
-                "integration_type": "gmail",
-                "parameters": {},
-                "required_scopes": [],
-            },
+            {"name": "gmail_tool", "description": "Gmail", "integration_type": "gmail", "parameters": {}, "required_scopes": []},
         ]
-
         from seer.tools.unified_tools import list_tools_impl
-        result = await list_tools_impl(integration_type="gmail")
-        data = json.loads(result)
-
-        # Verify the filter was passed (shared module calls get_tools_by_integration twice)
-        calls = mock_get_tools.call_args_list
-        assert any(call.kwargs.get("integration_type") == "gmail" for call in calls)
+        data = json.loads(await list_tools_impl(integration_type="gmail"))
         assert data["integration_filter"] == "gmail"
 
 
 @pytest.mark.unit
 class TestSearchTriggersUnified:
-    """Tests for search_triggers_impl — unified canonical implementation."""
-
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.trigger_registry")
-    async def test_search_triggers_returns_json(self, mock_registry):
-        """Test that search_triggers_impl returns valid JSON."""
-        # Create mock trigger
-        mock_trigger = MagicMock()
-        mock_trigger.key = "poll.gmail.email_received"
-        mock_trigger.title = "Gmail Email Received"
-        mock_trigger.provider = "gmail"
-        mock_trigger.mode = "polling"
-        mock_trigger.description = "Triggered when new email arrives"
-        mock_trigger.schemas = MagicMock()
-        mock_trigger.schemas.config = None
-        mock_trigger.schemas.event = None
-        mock_trigger.meta = MagicMock()
-        mock_trigger.meta.sample_event = None
-        mock_trigger.meta.requires_connection = True
-
-        mock_registry.all.return_value = [mock_trigger]
+    @patch("seer.tools.discovery_shared.async_search_triggers_intent")
+    async def test_returns_json(self, mock_search):
+        mock_search.return_value = [
+            {
+                "key": "poll.gmail.email_received",
+                "title": "Gmail Email Received",
+                "provider": "gmail",
+                "mode": "polling",
+                "description": "Triggered when new email arrives",
+                "config_schema": None,
+                "event_schema": None,
+                "sample_event": None,
+                "requires_connection": True,
+                "confidence_score": 0.92,
+            },
+        ]
 
         from seer.tools.unified_tools import search_triggers_impl
-        result = await search_triggers_impl("gmail email")
-        data = json.loads(result)
-
-        assert "triggers" in data
+        data = json.loads(await search_triggers_impl("gmail email"))
         assert len(data["triggers"]) > 0
         assert data["triggers"][0]["key"] == "poll.gmail.email_received"
 
 
 @pytest.mark.unit
 class TestListTriggersUnified:
-    """Tests for list_triggers_impl — unified canonical implementation."""
-
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.trigger_registry")
-    async def test_list_triggers_returns_all(self, mock_registry):
-        """Test that list_triggers_impl returns all triggers."""
-        mock_trigger1 = MagicMock()
-        mock_trigger1.key = "webhook.generic"
-        mock_trigger1.title = "Generic Webhook"
-        mock_trigger1.provider = "webhook"
-        mock_trigger1.mode = "webhook"
-        mock_trigger1.description = "Generic webhook trigger"
-        mock_trigger1.schemas = MagicMock()
-        mock_trigger1.schemas.event = None
-        mock_trigger1.meta = MagicMock()
-        mock_trigger1.meta.requires_connection = False
-        mock_trigger1.meta.sample_event = None
+    async def test_returns_all(self, mock_registry):
+        t1 = MagicMock()
+        t1.key = "webhook.generic"
+        t1.title = "Generic Webhook"
+        t1.provider = "webhook"
+        t1.mode = "webhook"
+        t1.description = "Generic webhook trigger"
+        t1.schemas = MagicMock()
+        t1.schemas.event = None
+        t1.meta = MagicMock()
+        t1.meta.requires_connection = False
+        t1.meta.sample_event = None
 
-        mock_trigger2 = MagicMock()
-        mock_trigger2.key = "schedule.cron"
-        mock_trigger2.title = "Cron Schedule"
-        mock_trigger2.provider = "schedule"
-        mock_trigger2.mode = "polling"
-        mock_trigger2.description = "Cron-based schedule"
-        mock_trigger2.schemas = MagicMock()
-        mock_trigger2.schemas.event = None
-        mock_trigger2.meta = MagicMock()
-        mock_trigger2.meta.requires_connection = False
-        mock_trigger2.meta.sample_event = None
+        t2 = MagicMock()
+        t2.key = "schedule.cron"
+        t2.title = "Cron Schedule"
+        t2.provider = "schedule"
+        t2.mode = "polling"
+        t2.description = "Cron-based schedule"
+        t2.schemas = MagicMock()
+        t2.schemas.event = None
+        t2.meta = MagicMock()
+        t2.meta.requires_connection = False
+        t2.meta.sample_event = None
 
-        mock_registry.all.return_value = [mock_trigger1, mock_trigger2]
+        mock_registry.all.return_value = [t1, t2]
 
         from seer.tools.unified_tools import list_triggers_impl
-        result = await list_triggers_impl()
-        data = json.loads(result)
-
-        assert "triggers" in data
+        data = json.loads(await list_triggers_impl())
         assert data["total"] == 2
         assert "by_provider" in data
