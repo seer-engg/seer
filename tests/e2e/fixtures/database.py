@@ -86,17 +86,21 @@ def db_initialized(database_url: str) -> str:
     """
     import subprocess
     import os
+    from pathlib import Path
 
     # Set DATABASE_URL for aerich to use
     env = os.environ.copy()
     env["DATABASE_URL"] = database_url
+
+    # Get project root (tests/e2e/fixtures/database.py -> project root)
+    project_root = Path(__file__).parents[3]
 
     # Run aerich upgrade to apply all migrations
     # This tests that migrations are valid and complete
     result = subprocess.run(
         ["uv", "run", "aerich", "upgrade"],
         env=env,
-        cwd="/home/lokesh/fifth/seer",
+        cwd=project_root,
         capture_output=True,
         text=True,
         timeout=60,
