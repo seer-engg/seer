@@ -39,6 +39,25 @@ from seer.database.config import TORTOISE_ORM
 
 
 # =============================================================================
+# Logger Cache Reset
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def reset_logger_cache():
+    """Reset the logger cache before each test to ensure test isolation.
+
+    The seer.logger module caches logger instances in _loggers dict.
+    Without clearing this cache, tests may share logger instances with
+    different handlers attached, causing caplog to not capture logs correctly.
+    """
+    from seer import logger as seer_logger
+    seer_logger._loggers.clear()
+    yield
+    seer_logger._loggers.clear()
+
+
+# =============================================================================
 # Async Testing Configuration
 # =============================================================================
 

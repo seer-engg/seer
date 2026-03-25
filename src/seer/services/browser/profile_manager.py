@@ -9,7 +9,6 @@ and persisting encrypted session state.
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -21,9 +20,10 @@ from seer.database.models_browser import BrowserProfile
 from seer.services.browser.encryption import SessionEncryptor
 from seer.services.browser.pool_manager import BrowserPoolManager
 from seer.services.browser.session_context_manager import SessionContextManager
+from seer.logger import get_logger
 from seer.services.browser.stealth_config import CHROME_USER_AGENTS, get_headed_stealth_args
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class BrowserProfileManager:

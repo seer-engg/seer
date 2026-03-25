@@ -12,8 +12,9 @@ from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.nodes import NodeRuntime
 from seer.core.runtime.state import INTERNAL_STATE_PREFIX
 from seer.core.schema.models import JsonSchema, WorkflowSpec
+from seer.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,7 @@ import httpx
 from seer.config import config
 from seer.core.errors import ExecutionError
 from seer.core.nodes.base import BaseNodeType, NodeExecutionContext, TypeRegistrationContext, get_trace_key
+from seer.logger import get_logger
 from seer.core.nodes.registry import register_node_type
 from seer.core.schema.models import ImageGenNode
 from seer.runtime_credit_limits import check_runtime_credit_limit
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
     from seer.core.runtime.nodes import RuntimeServices
     from seer.core.schema.models import NodeBase
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ImageGenNodeType(BaseNodeType):
