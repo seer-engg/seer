@@ -273,6 +273,36 @@ def _validate_spec_format(workflow_spec: Any) -> tuple[Optional[Dict], Optional[
 
 
 
+# Per-thread submission failure counter to prevent infinite retry loops
+_submission_failures: Dict[str, int] = {}
+_MAX_SUBMISSION_ATTEMPTS = 3
+
+
+def _check_retry_cap(thread_id: str) -> Optional[str]:
+    """Return an error response if the thread has exceeded the submission retry cap."""
+    failures = _submission_failures.get(thread_id, 0)
+    if failures >= _MAX_SUBMISSION_ATTEMPTS:
+        _submission_failures.pop(thread_id, None)
+        return _error_response(
+            "max_retries",
+            f"Workflow submission failed {_MAX_SUBMISSION_ATTEMPTS} times. Stop retrying. "
+            "Ask the user for help or use get_workflow_guide() to review the schema.",
+        )
+    return None
+
+
+def _record_submission_failure(thread_id: str, validation_error) -> str:
+    """Record a submission failure and return an error response with retry info."""
+    failures = _submission_failures.get(thread_id, 0)
+    _submission_failures[thread_id] = failures + 1
+    remaining = _MAX_SUBMISSION_ATTEMPTS - failures - 1
+    hint = validation_error.hint or ""
+    hint += "\nCommon fix: check field names against get_workflow_schema examples."
+    if remaining > 0:
+        hint += f"\n{remaining} attempt(s) remaining before auto-stop."
+    return _error_response(validation_error.error_type, validation_error.message, hint.strip())
+
+
 @tool
 @track_nexus_tool("submit_workflow_spec")
 async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # Reason: Validation chain requires early returns for each validation step
@@ -291,12 +321,12 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
                        Can be provided as a dict or a JSON string.
         summary: Optional natural language rationale for the proposal.
     """
-    # Import here to avoid circular dependency at module load time
-    from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
-    from seer.database.workflow_models import WorkflowProposal as WorkflowProposalModel  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
-
     # Nexus-specific pre-checks
     if error := _validate_thread_context():
+        return error
+
+    thread_id = _current_thread_id.get()
+    if error := _check_retry_cap(thread_id):
         return error
 
     spec_dict, error = _validate_spec_format(workflow_spec)
@@ -304,7 +334,6 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
         return error
 
     # Resolve user for compilation context
-    thread_id = _current_thread_id.get()
     user = await get_user_for_thread(thread_id)
     if not user:
         return _error_response("internal", "User context not available for compilation validation")
@@ -314,34 +343,33 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
     validation = await run_full_validation(user, spec_dict)
 
     if not validation.success:
-        # Kill #6: Add progressive hints on repeated failures
-        hint = validation.error.hint or ""
-        hint += "\nCommon fix: check field names against get_workflow_schema examples."
-        return _error_response(
-            validation.error.error_type,
-            validation.error.message,
-            hint.strip(),
-        )
+        return _record_submission_failure(thread_id, validation.error)
 
-    # Kill #5: Warn if agent nodes used alongside primitive alternatives
-    warnings = []
+    # Reset failure counter on success
+    _submission_failures.pop(thread_id, None)
+
+    return await _create_proposal(thread_id, user, validation, summary)
+
+
+async def _create_proposal(
+    thread_id: str, user: Any, validation: Any, summary: Optional[str]
+) -> str:
+    """Create a WorkflowProposal record from a successful validation."""
+    from seer.database.workflow_models import WorkflowChatSession  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
+    from seer.database.workflow_models import WorkflowProposal as WorkflowProposalModel  # pylint: disable=import-outside-toplevel # Reason: Avoid circular dependency
+
     spec_payload = validation.validated_spec.model_dump(mode="json")
+
+    # Warn if agent nodes used alongside primitive alternatives
     nodes = spec_payload.get("nodes", [])
     node_types = {n.get("type") for n in nodes if isinstance(n, dict)}
-    has_agent = "agent" in node_types
-    has_primitives = node_types & {"for_each", "hitl", "tool"}
-    if has_agent and has_primitives:
-        warnings.append(
-            "Agent nodes cost 10x more than primitive nodes. "
-            "Consider replacing agent nodes with for_each/hitl/tool nodes."
-        )
+    if "agent" in node_types and node_types & {"for_each", "hitl", "tool"}:
+        logger.info("Workflow mixes agent and primitive nodes — consider simplifying")
 
-    # Get session and workflow for this thread
     session = await WorkflowChatSession.get_or_none(thread_id=thread_id).prefetch_related('workflow', 'user')
     if not session:
         return _error_response("internal", "Chat session not found for current thread")
 
-    # Create WorkflowProposal record
     proposal = await WorkflowProposalModel.create(
         workflow=session.workflow,
         session=session,
@@ -352,7 +380,7 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
         thread_id=thread_id,
     )
 
-    response = {
+    response: Dict[str, Any] = {
         "status": "ok",
         "message": "Workflow spec recorded for review",
         "workflow_spec": spec_payload,
@@ -371,7 +399,5 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
 
     if summary:
         response["summary"] = summary
-    if warnings:
-        response["warnings"] = warnings
 
     return json.dumps(response, indent=2)

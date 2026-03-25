@@ -127,7 +127,11 @@ def _resolve_property(schema: JsonSchema, key: str, schema_type) -> JsonSchema:
         return additional
     if additional is True:
         return {}  # Permissive schema - allows any type (e.g., form.hosted custom fields)
-    raise TypeCheckError(f"Property '{key}' not declared in schema")
+    available = sorted(properties.keys())
+    raise TypeCheckError(
+        f"Property '{key}' not declared in schema. "
+        f"Available properties: {available}"
+    )
 
 
 def _resolve_numeric_index(schema: JsonSchema, schema_type) -> JsonSchema:
