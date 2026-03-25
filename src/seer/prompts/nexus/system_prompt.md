@@ -18,14 +18,15 @@ Top-level fields: version ("2"), nodes, edges, triggers. Nothing else.
   "version": "2",
   "triggers": [{"id": "t1", "key": "schedule.cron", "title": "Daily 9am", "provider_config": {"cron": "0 9 * * *", "timezone": "America/Los_Angeles"}}],
   "nodes": [
-    {"id": "fetch", "type": "tool", "tool": "http_api_call", "inputs": {"method": "GET", "url": "https://api.example.com/items", "headers": {"Authorization": "Bearer ${vars.API_TOKEN}"}}},
-    {"id": "loop", "type": "for_each", "items": "${fetch.response_body.items}"},
-    {"id": "review", "type": "hitl", "title": "Review: ${loop.item.name}", "inputs": [{"id": "rating", "type": "number", "label": "Rating (0-4)", "required": true}]}
+    {"id": "fetch", "type": "tool", "tool": "http_request", "inputs": {"method": "GET", "url": "https://api.example.com/items", "headers": {"Authorization": "Bearer ${vars.API_TOKEN}"}}},
+    {"id": "loop", "type": "for_each", "items": "${fetch.body.items}"},
+    {"id": "review", "type": "hitl", "title": "Review: ${item.name}", "inputs": [{"id": "rating", "input_type": "number", "question": "Rating (0-4)", "required": true}]}
   ],
   "edges": [
     {"source": "t1", "target": "fetch", "type": "trigger"},
     {"source": "fetch", "target": "loop", "type": "default"},
-    {"source": "loop", "target": "review", "type": "loop_body"}
+    {"source": "loop", "target": "review", "type": "loop_body"},
+    {"source": "review", "target": "loop", "type": "loop_exit"}
   ]
 }
 ```

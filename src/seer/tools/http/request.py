@@ -67,7 +67,10 @@ class HttpRequestTool(BaseTool):
             "type": "object",
             "properties": {
                 "status_code": {"type": "integer"},
-                "body": {"description": "Parsed JSON body, or raw text if not JSON."},
+                "body": {
+                    "description": "Parsed JSON body (object, array, or primitive), or raw text if not JSON.",
+                    "additionalProperties": True,
+                },
                 "headers": {
                     "type": "object",
                     "additionalProperties": {"type": "string"},

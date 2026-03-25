@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from seer.agents.nexus.context import (
     _current_thread_id,
+    _submission_attempt_count,
     get_user_for_thread,
 )
 from seer.agents.nexus.tracking import track_nexus_tool
@@ -273,16 +274,13 @@ def _validate_spec_format(workflow_spec: Any) -> tuple[Optional[Dict], Optional[
 
 
 
-# Per-thread submission failure counter to prevent infinite retry loops
-_submission_failures: Dict[str, int] = {}
+# Per-invocation submission failure counter (ContextVar — survives async, scoped to worker task)
 _MAX_SUBMISSION_ATTEMPTS = 3
 
 
-def _check_retry_cap(thread_id: str) -> Optional[str]:
-    """Return an error response if the thread has exceeded the submission retry cap."""
-    failures = _submission_failures.get(thread_id, 0)
-    if failures >= _MAX_SUBMISSION_ATTEMPTS:
-        _submission_failures.pop(thread_id, None)
+def _check_retry_cap() -> Optional[str]:
+    """Return an error response if the current invocation has exceeded the submission retry cap."""
+    if _submission_attempt_count.get() >= _MAX_SUBMISSION_ATTEMPTS:
         return _error_response(
             "max_retries",
             f"Workflow submission failed {_MAX_SUBMISSION_ATTEMPTS} times. Stop retrying. "
@@ -291,10 +289,10 @@ def _check_retry_cap(thread_id: str) -> Optional[str]:
     return None
 
 
-def _record_submission_failure(thread_id: str, validation_error) -> str:
+def _record_submission_failure(validation_error) -> str:
     """Record a submission failure and return an error response with retry info."""
-    failures = _submission_failures.get(thread_id, 0)
-    _submission_failures[thread_id] = failures + 1
+    failures = _submission_attempt_count.get()
+    _submission_attempt_count.set(failures + 1)
     remaining = _MAX_SUBMISSION_ATTEMPTS - failures - 1
     hint = validation_error.hint or ""
     hint += "\nCommon fix: check field names against get_workflow_schema examples."
@@ -325,8 +323,7 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
     if error := _validate_thread_context():
         return error
 
-    thread_id = _current_thread_id.get()
-    if error := _check_retry_cap(thread_id):
+    if error := _check_retry_cap():
         return error
 
     spec_dict, error = _validate_spec_format(workflow_spec)
@@ -334,6 +331,7 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
         return error
 
     # Resolve user for compilation context
+    thread_id = _current_thread_id.get()
     user = await get_user_for_thread(thread_id)
     if not user:
         return _error_response("internal", "User context not available for compilation validation")
@@ -343,10 +341,10 @@ async def submit_workflow_spec(  # pylint: disable=too-many-return-statements # 
     validation = await run_full_validation(user, spec_dict)
 
     if not validation.success:
-        return _record_submission_failure(thread_id, validation.error)
+        return _record_submission_failure(validation.error)
 
     # Reset failure counter on success
-    _submission_failures.pop(thread_id, None)
+    _submission_attempt_count.set(0)
 
     return await _create_proposal(thread_id, user, validation, summary)
 
