@@ -55,7 +55,7 @@ jobs:
           DATABASE_URL: "postgresql://test:test@localhost:5432/seer_test"
 
       - name: Run test suite
-        run: uv run pytest --ignore=tests/e2e -n auto --cov=src/seer --cov-report=xml --ignore=tests/e2e_real
+        run: uv run pytest --ignore=tests/e2e -n auto --cov=src/seer --cov-report=xml
         env:
           DATABASE_URL: "postgresql://test:test@localhost:5432/seer_test"
 
@@ -81,7 +81,7 @@ jobs:
         run: |
           # Testcontainers manages Docker containers automatically
           # No need for manual setup - containers start on demand
-          uv run pytest tests/e2e_real -v --tb=short -x
+          uv run pytest tests/e2e -v --tb=short -x
         env:
           # Testcontainers configuration
           TESTCONTAINERS_RYUK_DISABLED: "false"
