@@ -45,6 +45,16 @@ def _resolve_root(ctx: EvaluationContext, root: str) -> Any:
     if root in ctx.state:
         return ctx.state[root]
 
+    # Global variables: ${vars.*}
+    if ctx.vars is not None and root == "vars":
+        return ctx.vars
+
+    # Workflow config: ${config.*}
+    if ctx.config and root == "config":
+        return ctx.config
+    if ctx.config and root in ctx.config:
+        return ctx.config[root]
+
     # Check if root matches the current trigger's ID
     if ctx.trigger is not None:
         trigger_id = ctx.trigger.get("trigger_id")
@@ -56,14 +66,6 @@ def _resolve_root(ctx: EvaluationContext, root: str) -> Any:
             f"Reference root '{root}' does not match the active trigger ID '{trigger_id}'. "
             f"Use ${{{trigger_id}}} or ${{{trigger_id}.*}} to reference the trigger's data."
         )
-
-    if ctx.vars is not None and root == "vars":
-        return ctx.vars
-
-    if ctx.config and root == "config":
-        return ctx.config
-    if ctx.config and root in ctx.config:
-        return ctx.config[root]
 
     raise EvaluationError(f"Unknown reference root '{root}'")
 
