@@ -239,7 +239,9 @@ def _validate_for_each(node: ForEachNode, scope: Scope, errors: List[NodeError])
     try:
         ref = _single_reference(node.items)
         array_schema = typecheck_reference(ref, scope)
-        if array_schema.get("type") != "array":
+        # Allow permissive/unknown schemas (no type = could be anything)
+        schema_type = array_schema.get("type")
+        if schema_type is not None and schema_type != "array":
             raise TypeCheckError("for_each items expression must resolve to an array schema")
     except (TypeCheckError, ValidationPhaseError) as exc:
         errors.append(NodeError(
