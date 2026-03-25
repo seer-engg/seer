@@ -26,6 +26,7 @@ if config.langfuse_enabled:
         logger.warning("Langfuse enabled but no projects configured")
 
 _poll_scheduler = None  # pylint: disable=invalid-name
+_escalation_scheduler = None  # pylint: disable=invalid-name
 
 
 @broker.on_event(TaskiqEvents.WORKER_STARTUP)
@@ -35,7 +36,7 @@ async def _on_worker_startup(_: TaskiqState) -> None:
     from seer.worker.trigger_dispatcher import dispatch_trigger_event  # noqa: F401
     from seer.core.event_loop import set_main_event_loop
 
-    global _poll_scheduler
+    global _poll_scheduler, _escalation_scheduler
 
     # Initialize Sentry for worker error monitoring
     if config.is_sentry_configured:
@@ -62,12 +63,22 @@ async def _on_worker_startup(_: TaskiqState) -> None:
     else:
         logger.info("Trigger poller disabled via configuration")
 
+    # Start HITL escalation scheduler (runs alongside poll scheduler)
+    from seer.worker.escalation_scheduler import HitlEscalationScheduler  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+    _escalation_scheduler = HitlEscalationScheduler()
+    await _escalation_scheduler.start()
+
 
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def _on_worker_shutdown(_: TaskiqState) -> None:
     """Clean up background services when worker exits."""
     # pylint: disable=global-statement,import-outside-toplevel
-    global _poll_scheduler
+    global _poll_scheduler, _escalation_scheduler
+
+    if _escalation_scheduler:
+        logger.info("Stopping HITL escalation scheduler")
+        await _escalation_scheduler.stop()
+        _escalation_scheduler = None
 
     if _poll_scheduler:
         logger.info("Stopping trigger poll scheduler")
@@ -86,6 +97,6 @@ async def _on_worker_shutdown(_: TaskiqState) -> None:
 
 # Import task modules to register with broker
 # pylint: disable=wrong-import-position,unused-import
-from seer.worker.tasks import workflows, triggers, polling, stripe, chat, knowledge, general_chat  # noqa: F401
+from seer.worker.tasks import workflows, triggers, polling, stripe, chat, knowledge, general_chat, hitl_escalation  # noqa: F401
 
 __all__ = ["broker"]
