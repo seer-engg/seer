@@ -63,6 +63,20 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     )
 
     # ============================================================================
+    # Twilio Configuration
+    # ============================================================================
+
+    twilio_account_sid: Optional[str] = Field(
+        default=None, description="Twilio Account SID"
+    )
+    twilio_auth_token: Optional[str] = Field(
+        default=None, description="Twilio Auth Token"
+    )
+    twilio_from_number: Optional[str] = Field(
+        default=None, description="Twilio phone number in E.164 format (e.g., +15551234567)"
+    )
+
+    # ============================================================================
     # LangGraph Checkpointer Configuration
     # ============================================================================
 

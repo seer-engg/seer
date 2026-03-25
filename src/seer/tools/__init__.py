@@ -15,6 +15,7 @@ from seer.tools.linkedin import register_linkedin_tools  # noqa: F401
 from seer.tools.memory import register_memory_tools  # noqa: F401
 from seer.tools.slack import register_slack_tools  # noqa: F401
 from seer.tools.supabase import register_supabase_tools  # noqa: F401
+from seer.tools.twilio import register_twilio_tools  # noqa: F401
 from seer.tools.websearch import register_websearch_tools  # noqa: F401
 
 # Register tools
@@ -28,6 +29,7 @@ register_linkedin_tools()
 register_slack_tools()
 register_airtable_tools()
 register_notion_tools()
+register_twilio_tools()
 register_websearch_tools()
 
 __all__ = [
@@ -41,5 +43,6 @@ __all__ = [
     "register_slack_tools",
     "register_airtable_tools",
     "register_notion_tools",
+    "register_twilio_tools",
     "register_websearch_tools",
 ]
