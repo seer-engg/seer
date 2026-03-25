@@ -8,16 +8,16 @@ Handles loading, saving, and validating encrypted browser session state
 """
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from seer.database import User
 from seer.database.models_browser import BrowserProfile
+from seer.logger import get_logger
 from seer.services.browser.encryption import SessionEncryptor
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SessionContextManager:

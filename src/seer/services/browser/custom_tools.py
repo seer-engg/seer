@@ -14,14 +14,15 @@ structured output. By using a simple tool instead, we get reliable extraction.
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any, Dict, List, Optional, Type
 
 from browser_use.agent.views import ActionResult
 from browser_use.tools.service import Tools
 from pydantic import BaseModel, create_model
 
-logger = logging.getLogger(__name__)
+from seer.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 # Type mapping from JSON schema types to Python types

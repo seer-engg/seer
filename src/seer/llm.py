@@ -1,5 +1,4 @@
 """Shared LLM utilities"""
-import logging
 from typing import Literal, Optional
 
 from dotenv import load_dotenv
@@ -8,10 +7,11 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from seer.config import config
+from seer.logger import get_logger
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _detect_provider(model: str) -> Literal["openai", "anthropic", "openrouter"]:

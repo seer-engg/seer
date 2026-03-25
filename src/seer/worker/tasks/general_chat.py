@@ -1,7 +1,6 @@
 """Background task for general chat execution."""
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -9,9 +8,10 @@ from seer.config import config
 from seer.database.chat_models import GeneralChatMessage, GeneralChatSession
 from seer.database.workflow_models import ChatExecutionStatus
 from seer.llm import get_llm
+from seer.logger import get_logger
 from seer.worker.broker_instance import broker
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _build_langchain_messages(messages: List[GeneralChatMessage]):

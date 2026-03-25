@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import logging
 from io import BytesIO
 from typing import Optional
 
@@ -20,7 +19,9 @@ from PIL import Image
 
 from browser_use import BrowserSession
 
-logger = logging.getLogger(__name__)
+from seer.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class StreamingService:

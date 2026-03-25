@@ -15,7 +15,6 @@ orchestrator that:
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
@@ -32,9 +31,10 @@ from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.core.runtime.state import INTERNAL_STATE_PREFIX, WorkflowState
 from seer.core.schema.models import Node
 from seer.core.schema.schema_registry import SchemaRegistry
+from seer.logger import get_logger
 from seer.runtime_credit_limits import check_runtime_credit_limit
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)

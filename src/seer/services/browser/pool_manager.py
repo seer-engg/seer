@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -23,9 +22,10 @@ from browser_use import BrowserProfile as BrowserUseProfile
 from browser_use import BrowserSession
 
 from seer.config import config
+from seer.logger import get_logger
 from seer.services.browser.stealth_config import get_stealth_profile_kwargs
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # pylint: disable=too-many-instance-attributes

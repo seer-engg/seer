@@ -8,14 +8,14 @@ before persisting to the database, and decrypts on load.
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any, Dict, Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from seer.config import config
+from seer.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SessionEncryptor:

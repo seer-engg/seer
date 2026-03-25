@@ -11,7 +11,6 @@ HTML to PDF or DOCX and store the result via WorkflowFileSystem.
 from __future__ import annotations
 
 import json
-import logging
 from typing import TYPE_CHECKING
 
 from langchain_core.tools import StructuredTool
@@ -19,11 +18,12 @@ from pydantic import BaseModel, Field
 
 from seer.core.errors import ExecutionError
 from seer.core.nodes.artifacts.converters import FORMAT_MIME, html_to_docx, html_to_pdf, markdown_to_html
+from seer.logger import get_logger
 
 if TYPE_CHECKING:
     from seer.core.nodes.base import NodeExecutionContext
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 ARTIFACT_TOOL_NAME = "create_artifact"
 
