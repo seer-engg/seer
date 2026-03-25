@@ -8688,7 +8688,6 @@ dependencies = [
     { name = "stripe" },
     { name = "taskiq" },
     { name = "taskiq-redis" },
-    { name = "tavily-python" },
     { name = "tenacity" },
     { name = "tortoise-orm", extra = ["asyncpg"] },
     { name = "weasyprint" },
@@ -8763,7 +8762,6 @@ requires-dist = [
     { name = "stripe", specifier = ">=10.0.0" },
     { name = "taskiq", specifier = ">=0.12.1" },
     { name = "taskiq-redis", specifier = ">=1.2.1" },
-    { name = "tavily-python", specifier = ">=0.7.12" },
     { name = "tenacity", specifier = ">=9.1.2" },
     { name = "tortoise-orm", extras = ["asyncpg"], specifier = ">=0.25.2" },
     { name = "weasyprint", specifier = ">=61.0" },
@@ -9117,20 +9115,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/64/35/58ec34c74c888235ecea3dba3b0e74a3902a6b70f0cd56fffa0012f03a61/taskiq_redis-1.2.1.tar.gz", hash = "sha256:8a6b7d3187798e00f27fca6d4a9d73efc559ed88e3c3c571647c9163add7af47", size = 14376, upload-time = "2025-12-19T17:36:03.45Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/99/1e/d4202cdb98bf2df087dd303df35d0faf2528f985d62aa685cce994584c4f/taskiq_redis-1.2.1-py3-none-any.whl", hash = "sha256:caf91241a23cd77c4304e455a775caa08c5005b48b62fc613b4dd5b44a515488", size = 20570, upload-time = "2025-12-19T17:36:02.142Z" },
-]
-
-[[package]]
-name = "tavily-python"
-version = "0.7.21"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "requests" },
-    { name = "tiktoken" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/1f/9d5c4ca7034754d1fc232af64638b905162bdf3012e9629030e3d755856f/tavily_python-0.7.21.tar.gz", hash = "sha256:897bedf9b1c2fad8605be642e417d6c7ec1b79bf6199563477cf69c4313f824a", size = 21813, upload-time = "2026-01-30T16:57:33.186Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3a/39/85e5be4e9a912022f86f38288d1f4dd2d100b60ec75ebf3da37ca0122375/tavily_python-0.7.21-py3-none-any.whl", hash = "sha256:acfb5b62f2d1053d56321b4fb1ddfd2e98bb975cc4446b86b3fe2d3dd0850288", size = 17957, upload-time = "2026-01-30T16:57:32.278Z" },
 ]
 
 [[package]]
