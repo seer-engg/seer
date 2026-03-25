@@ -14,6 +14,18 @@ from seer.worker.broker_instance import broker
 logger = get_logger(__name__)
 
 
+async def _maybe_send_whatsapp_reply(session_id: int, text: str) -> None:
+    """If this chat session is linked to WhatsApp, queue a reply."""
+    from seer.database.whatsapp_models import WhatsAppChatSession  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+    from seer.worker.tasks.whatsapp_reply import whatsapp_reply_task  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+    wa_session = await WhatsAppChatSession.filter(
+        chat_session_id=session_id, active=True
+    ).first()
+    if wa_session:
+        await whatsapp_reply_task.kiq(phone=wa_session.phone_number, text=text)
+
+
 def _build_langchain_messages(messages: List[GeneralChatMessage]):
     """Convert DB messages to LangChain message format."""
     from langchain_core.messages import AIMessage, HumanMessage  # pylint: disable=import-outside-toplevel  # Reason: Late import
@@ -79,6 +91,9 @@ async def general_chat_task(  # pylint: disable=too-many-positional-arguments  #
         session.current_execution_finished_at = datetime.now(timezone.utc)
         session.current_execution_error = None
         await session.save(update_fields=["current_execution_status", "current_execution_finished_at", "current_execution_error"])
+
+        # If this session has a WhatsApp link, send the reply back
+        await _maybe_send_whatsapp_reply(session_id, response_text)
 
         logger.info("General chat task completed", extra={"session_id": session_id})
 

@@ -407,6 +407,23 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     )
 
     # ============================================================================
+    # WhatsApp (Meta Cloud API) Configuration
+    # ============================================================================
+
+    whatsapp_phone_number_id: Optional[str] = Field(
+        default=None, description="Meta Cloud API phone number ID"
+    )
+    whatsapp_access_token: Optional[str] = Field(
+        default=None, description="Meta Cloud API permanent access token"
+    )
+    whatsapp_app_secret: Optional[str] = Field(
+        default=None, description="Meta app secret for webhook signature verification"
+    )
+    whatsapp_verify_token: Optional[str] = Field(
+        default=None, description="Token for Meta webhook verification challenge"
+    )
+
+    # ============================================================================
     # Slack Error Notifications Configuration
     # ============================================================================
 

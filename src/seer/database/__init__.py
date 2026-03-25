@@ -83,6 +83,7 @@ from seer.database.organization_models import (
     WorkflowAssignment,
 )
 from seer.database.email_models import EmailEvent
+from seer.database.whatsapp_models import WhatsAppChatSession, WhatsAppMessageLog, WhatsAppUserLink
 from seer.database.memory_models import (
     MEMORY_BANK_ID_PREFIX,
     MemoryBank,
@@ -197,6 +198,10 @@ __all__ = [
     "WorkflowApprovalPublic",
     # Email analytics
     "EmailEvent",
+    # WhatsApp
+    "WhatsAppUserLink",
+    "WhatsAppChatSession",
+    "WhatsAppMessageLog",
     # Memory domain
     "MemoryBank",
     "MemoryBankStatus",

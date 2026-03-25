@@ -11,6 +11,26 @@ from seer.observability.sentry_client import set_user_context, set_tag, set_cont
 logger = get_logger(__name__)
 
 
+async def _maybe_send_whatsapp_workflow_reply(run_id: int) -> None:
+    """If this workflow was triggered from WhatsApp, send the output back."""
+    run = await WorkflowRun.get(id=run_id)
+    inputs = run.inputs or {}
+    phone = inputs.get("__whatsapp_reply_phone")
+    if not phone:
+        return
+
+    from seer.worker.tasks.whatsapp_reply import whatsapp_reply_task  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+    output = run.output
+    if isinstance(output, dict):
+        # Try to extract a readable summary
+        text = output.get("result") or output.get("summary") or str(output)
+    else:
+        text = str(output) if output else "Workflow completed (no output)."
+
+    await whatsapp_reply_task.kiq(phone=phone, text=str(text)[:4096])
+
+
 async def _set_sentry_context_for_workflow(run_id: int, user_id: int) -> None:
     """
     Set Sentry context for workflow execution error tracking.
@@ -68,6 +88,7 @@ async def workflow_execution_task(
             user_id=user_id,
             trigger_envelope=trigger_envelope
         )
+        await _maybe_send_whatsapp_workflow_reply(run_id)
     except Exception:
         logger.exception("Worker task failed for workflow execution", extra={"run_id": run_id})
         raise
