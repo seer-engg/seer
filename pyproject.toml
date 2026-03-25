@@ -171,6 +171,7 @@ markers = [
     "e2e: End-to-end API tests",
     "slow: Tests taking >1s to run",
     "requires_external: Tests requiring external services",
+    "eval: Evaluation tests requiring external APIs (OPENAI_API_KEY)",
     "eval: Retrieval evaluation tests (not in default CI)",
 ]
 

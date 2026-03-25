@@ -13,6 +13,8 @@ Requires OPENAI_API_KEY. Run with:
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from seer.tools.discovery_shared import (
@@ -21,7 +23,13 @@ from seer.tools.discovery_shared import (
     async_search_triggers_intent,
 )
 
-pytestmark = pytest.mark.eval
+pytestmark = [
+    pytest.mark.eval,
+    pytest.mark.skipif(
+        not os.environ.get("OPENAI_API_KEY"),
+        reason="OPENAI_API_KEY required for embedding eval tests",
+    ),
+]
 
 
 # ---------------------------------------------------------------------------

@@ -354,10 +354,10 @@ class TestSearchToolsImpl:
     """Tests for the canonical search_tools_impl function."""
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_returns_valid_json(self, mock_get_tools):
-        mock_get_tools.return_value = [
-            {"name": "gmail_create_draft", "description": "Create a Gmail draft", "integration_type": "gmail", "parameters": {}},
+    @patch("seer.tools.discovery_shared.async_search_tools_intent")
+    async def test_returns_valid_json(self, mock_search):
+        mock_search.return_value = [
+            {"name": "gmail_create_draft", "description": "Create a Gmail draft", "integration_type": "gmail", "parameters": {}, "confidence_score": 0.9},
         ]
 
         from seer.tools.unified_tools import search_tools_impl
@@ -367,9 +367,10 @@ class TestSearchToolsImpl:
         assert data["query"] == "create draft"
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_no_results(self, mock_get_tools):
-        mock_get_tools.return_value = []
+    @patch("seer.tools.discovery_shared.get_available_integrations", return_value=[])
+    @patch("seer.tools.discovery_shared.async_search_tools_intent")
+    async def test_no_results(self, mock_search, _mock_integrations):
+        mock_search.return_value = []
 
         from seer.tools.unified_tools import search_tools_impl
         result = await search_tools_impl("nonexistent")
@@ -377,13 +378,14 @@ class TestSearchToolsImpl:
         assert data["top_match"] is None
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_includes_resource_pickers(self, mock_get_tools):
-        mock_get_tools.return_value = [
+    @patch("seer.tools.discovery_shared.async_search_tools_intent")
+    async def test_includes_resource_pickers(self, mock_search):
+        mock_search.return_value = [
             {
                 "name": "gmail_create_draft", "description": "Create a Gmail draft",
                 "integration_type": "gmail", "parameters": {},
                 "resource_pickers": {"to": {"type": "email"}},
+                "confidence_score": 0.9,
             },
         ]
 
@@ -393,10 +395,10 @@ class TestSearchToolsImpl:
         assert "resource_pickers" in data["top_match"]
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_integration_uses_title_case(self, mock_get_tools):
-        mock_get_tools.return_value = [
-            {"name": "gmail_create_draft", "description": "Create a draft email", "integration_type": "gmail", "parameters": {}},
+    @patch("seer.tools.discovery_shared.async_search_tools_intent")
+    async def test_integration_uses_title_case(self, mock_search):
+        mock_search.return_value = [
+            {"name": "gmail_create_draft", "description": "Create a draft email", "integration_type": "gmail", "parameters": {}, "confidence_score": 0.9},
         ]
 
         from seer.tools.unified_tools import search_tools_impl
@@ -410,10 +412,10 @@ class TestSearchToolsReasoning:
     """Tests for reasoning param in search_tools_impl."""
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_reasoning_included_in_results(self, mock_get_tools):
-        mock_get_tools.return_value = [
-            {"name": "gmail_create_draft", "description": "Create a draft", "integration_type": "gmail", "parameters": {}},
+    @patch("seer.tools.discovery_shared.async_search_tools_intent")
+    async def test_reasoning_included_in_results(self, mock_search):
+        mock_search.return_value = [
+            {"name": "gmail_create_draft", "description": "Create a draft", "integration_type": "gmail", "parameters": {}, "confidence_score": 0.9},
         ]
 
         from seer.tools.unified_tools import search_tools_impl
@@ -422,9 +424,10 @@ class TestSearchToolsReasoning:
         assert data["reasoning"] == "finding tools for email"
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_reasoning_included_in_no_results(self, mock_get_tools):
-        mock_get_tools.return_value = []
+    @patch("seer.tools.discovery_shared.get_available_integrations", return_value=[])
+    @patch("seer.tools.discovery_shared.async_search_tools_intent")
+    async def test_reasoning_included_in_no_results(self, mock_search, _mock_integrations):
+        mock_search.return_value = []
 
         from seer.tools.unified_tools import search_tools_impl
         result = await search_tools_impl("nonexistent", reasoning="testing empty")
@@ -433,9 +436,10 @@ class TestSearchToolsReasoning:
         assert data["top_match"] is None
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.get_tools_by_integration")
-    async def test_reasoning_defaults_to_empty(self, mock_get_tools):
-        mock_get_tools.return_value = []
+    @patch("seer.tools.discovery_shared.get_available_integrations", return_value=[])
+    @patch("seer.tools.discovery_shared.async_search_tools_intent")
+    async def test_reasoning_defaults_to_empty(self, mock_search, _mock_integrations):
+        mock_search.return_value = []
 
         from seer.tools.unified_tools import search_tools_impl
         result = await search_tools_impl("test")
@@ -448,21 +452,18 @@ class TestSearchTriggersReasoning:
     """Tests for reasoning param in search_triggers_impl."""
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.trigger_registry")
-    async def test_reasoning_included_in_results(self, mock_registry):
-        mock_trigger = MagicMock()
-        mock_trigger.key = "poll.gmail.email_received"
-        mock_trigger.title = "Gmail Email Received"
-        mock_trigger.provider = "gmail"
-        mock_trigger.mode = "polling"
-        mock_trigger.description = "Triggered when new email arrives"
-        mock_trigger.schemas = MagicMock()
-        mock_trigger.schemas.config = None
-        mock_trigger.schemas.event = None
-        mock_trigger.meta = MagicMock()
-        mock_trigger.meta.sample_event = None
-        mock_trigger.meta.requires_connection = True
-        mock_registry.all.return_value = [mock_trigger]
+    @patch("seer.tools.discovery_shared.async_search_triggers_intent")
+    async def test_reasoning_included_in_results(self, mock_search):
+        mock_search.return_value = [
+            {
+                "key": "poll.gmail.email_received",
+                "title": "Gmail Email Received",
+                "provider": "gmail",
+                "mode": "polling",
+                "description": "Triggered when new email arrives",
+                "confidence_score": 0.9,
+            },
+        ]
 
         from seer.tools.unified_tools import search_triggers_impl
         result = await search_triggers_impl("gmail email", reasoning="need trigger for email")
@@ -470,9 +471,10 @@ class TestSearchTriggersReasoning:
         assert data["reasoning"] == "need trigger for email"
 
     @pytest.mark.asyncio
-    @patch("seer.tools.discovery_shared.trigger_registry")
-    async def test_reasoning_defaults_to_empty(self, mock_registry):
-        mock_registry.all.return_value = []
+    @patch("seer.tools.discovery_shared.get_available_providers", return_value=[])
+    @patch("seer.tools.discovery_shared.async_search_triggers_intent")
+    async def test_reasoning_defaults_to_empty(self, mock_search, _mock_providers):
+        mock_search.return_value = []
 
         from seer.tools.unified_tools import search_triggers_impl
         result = await search_triggers_impl("test")
