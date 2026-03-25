@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from seer.logger import get_logger
 from seer.tools.credential_resolver import ResolvedCredentials
-from seer.tools.github.base import GitHubAPIClient
+from seer.tools.github.base import OWNER_PARAM, PAGINATION_PARAMS, REPO_PARAM, GitHubAPIClient
 
 if TYPE_CHECKING:
     from seer.core.runtime.context import WorkflowRuntimeContext
@@ -29,14 +29,8 @@ class GitHubListPullRequestsTool(GitHubAPIClient):
         return {
             "type": "object",
             "properties": {
-                "owner": {
-                    "type": "string",
-                    "description": "Repository owner (username or organization)",
-                },
-                "repo": {
-                    "type": "string",
-                    "description": "Repository name",
-                },
+                "owner": OWNER_PARAM,
+                "repo": REPO_PARAM,
                 "state": {
                     "type": "string",
                     "description": "Filter by PR state",
@@ -63,17 +57,7 @@ class GitHubListPullRequestsTool(GitHubAPIClient):
                     "enum": ["asc", "desc"],
                     "default": "desc",
                 },
-                "per_page": {
-                    "type": "integer",
-                    "description": "Number of PRs per page (max 100)",
-                    "default": 30,
-                    "maximum": 100,
-                },
-                "page": {
-                    "type": "integer",
-                    "description": "Page number for pagination",
-                    "default": 1,
-                },
+                **PAGINATION_PARAMS,
             },
             "required": ["owner", "repo"],
         }
@@ -171,14 +155,8 @@ class GitHubGetPullRequestTool(GitHubAPIClient):
         return {
             "type": "object",
             "properties": {
-                "owner": {
-                    "type": "string",
-                    "description": "Repository owner (username or organization)",
-                },
-                "repo": {
-                    "type": "string",
-                    "description": "Repository name",
-                },
+                "owner": OWNER_PARAM,
+                "repo": REPO_PARAM,
                 "pullNumber": {
                     "type": "integer",
                     "description": "Pull request number",
@@ -258,29 +236,13 @@ class GitHubGetPRFilesTool(GitHubAPIClient):
         return {
             "type": "object",
             "properties": {
-                "owner": {
-                    "type": "string",
-                    "description": "Repository owner (username or organization)",
-                },
-                "repo": {
-                    "type": "string",
-                    "description": "Repository name",
-                },
+                "owner": OWNER_PARAM,
+                "repo": REPO_PARAM,
                 "pull_number": {
                     "type": "integer",
                     "description": "Pull request number",
                 },
-                "per_page": {
-                    "type": "integer",
-                    "description": "Number of files per page (max 100)",
-                    "default": 30,
-                    "maximum": 100,
-                },
-                "page": {
-                    "type": "integer",
-                    "description": "Page number for pagination",
-                    "default": 1,
-                },
+                **PAGINATION_PARAMS,
             },
             "required": ["owner", "repo", "pull_number"],
         }

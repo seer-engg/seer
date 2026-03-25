@@ -23,6 +23,29 @@ logger = get_logger("shared.tools.github.base")
 # GitHub API base URL
 GITHUB_API_BASE = "https://api.github.com"
 
+# Common parameter schemas shared across GitHub tools
+OWNER_PARAM = {
+    "type": "string",
+    "description": "Repository owner (username or organization)",
+}
+REPO_PARAM = {
+    "type": "string",
+    "description": "Repository name",
+}
+PAGINATION_PARAMS = {
+    "per_page": {
+        "type": "integer",
+        "description": "Number of items per page (max 100)",
+        "default": 30,
+        "maximum": 100,
+    },
+    "page": {
+        "type": "integer",
+        "description": "Page number for pagination",
+        "default": 1,
+    },
+}
+
 
 @dataclass
 class _RequestArgs:
