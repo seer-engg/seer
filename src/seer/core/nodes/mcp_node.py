@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from seer.core.errors import ExecutionError
 from seer.core.expr.typecheck import schema_from_output_contract
+from seer.logger import get_logger
 from seer.core.nodes.base import BaseNodeType, NodeExecutionContext, TypeRegistrationContext, get_trace_key
 from seer.core.nodes.registry import register_node_type
 # Import model from schema/models.py (canonical location)
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from seer.core.runtime.nodes import RuntimeServices
     from seer.core.schema.models import NodeBase
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # =============================================================================

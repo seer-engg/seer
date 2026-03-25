@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import logging
 import os
 from typing import Any, Dict
 from urllib.parse import urlparse
+
+from dotenv import load_dotenv
+
 from seer.config import config
+from seer.logger import get_logger
 
-from dotenv import load_dotenv  # pylint: disable=wrong-import-order  # Reason: dotenv must be imported after seer.config to ensure config module is loaded first
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Ensure environment variables from .env are available when running locally.
 try:

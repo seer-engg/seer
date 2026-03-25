@@ -429,7 +429,8 @@ def get_logger(name: str, level: Optional[int] = None) -> logging.Logger:
     # Create new logger
     log = logging.getLogger(name)
     log.setLevel(level)
-    log.propagate = False
+    # Allow propagation so pytest caplog can capture logs
+    log.propagate = True
 
     # Clear any existing handlers
     log.handlers.clear()
