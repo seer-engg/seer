@@ -228,6 +228,34 @@ def test_resolve_reference_unknown_root():
         resolve_reference(ctx, ref)
 
 
+def test_resolve_vars_with_active_trigger():
+    """Test that ${vars.*} resolves even when a trigger is active."""
+    ctx = EvaluationContext(
+        state={},
+        locals={},
+        trigger={"trigger_id": "schedule_trigger", "data": {}},
+        vars={"READWISE_TOKEN": "tok_abc123"},
+    )
+    ref = parse_reference_string("vars.READWISE_TOKEN")
+
+    result = resolve_reference(ctx, ref)
+    assert result == "tok_abc123"
+
+
+def test_resolve_config_with_active_trigger():
+    """Test that ${config.*} resolves even when a trigger is active."""
+    ctx = EvaluationContext(
+        state={},
+        locals={},
+        trigger={"trigger_id": "schedule_trigger", "data": {}},
+        config={"timeout": 30},
+    )
+    ref = parse_reference_string("config.timeout")
+
+    result = resolve_reference(ctx, ref)
+    assert result == 30
+
+
 def test_resolve_reference_wrong_trigger():
     """Test error when referencing wrong trigger ID."""
     ctx = EvaluationContext(
