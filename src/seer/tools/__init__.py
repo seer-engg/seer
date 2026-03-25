@@ -18,6 +18,7 @@ from seer.tools.oura import register_oura_tools  # noqa: F401
 from seer.tools.postgres import register_postgres_tools  # noqa: F401
 from seer.tools.slack import register_slack_tools  # noqa: F401
 from seer.tools.supabase import register_supabase_tools  # noqa: F401
+from seer.tools.twilio import register_twilio_tools  # noqa: F401
 from seer.tools.websearch import register_websearch_tools  # noqa: F401
 
 # Register tools
@@ -33,6 +34,7 @@ register_oura_tools()
 register_slack_tools()
 register_airtable_tools()
 register_notion_tools()
+register_twilio_tools()
 register_websearch_tools()
 register_http_tools()
 
@@ -49,6 +51,7 @@ __all__ = [
     "register_slack_tools",
     "register_airtable_tools",
     "register_notion_tools",
+    "register_twilio_tools",
     "register_websearch_tools",
     "register_http_tools",
 ]
