@@ -60,3 +60,4 @@ class WorkflowLockMetadata(BaseModel):
     acquired_at: datetime = Field(default_factory=_now_utc)
     expires_at: datetime
     tab_id: str | None = None
+    sse_connection_id: str | None = None  # Format: "{org_id}:{clerk_user_id}:{tab_id}"

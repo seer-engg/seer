@@ -22,6 +22,7 @@ from tortoise.exceptions import DoesNotExist
 
 from seer.agents.nexus import (
     _current_thread_id,
+    _submission_attempt_count,
     create_nexus_chat_agent,
     extract_thinking_from_messages,
 )
@@ -1022,6 +1023,7 @@ async def _run_chat_resume_stream(
 
     publisher = StreamPublisher(session_id)
     token = _current_thread_id.set(context.thread_id)
+    attempt_token = _submission_attempt_count.set(0)
     stream_started = asyncio.get_running_loop().time()
     try:
         session = await _get_session_if_current_owner(session_id, execution_task_id, "before_resume_stream_start")
@@ -1077,6 +1079,7 @@ async def _run_chat_resume_stream(
         )
     finally:
         _current_thread_id.reset(token)
+        _submission_attempt_count.reset(attempt_token)
         clear_chat_runtime_context()
         await publisher.close()
 

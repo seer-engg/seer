@@ -24,11 +24,13 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.1.4
 
 # Layer cache: install deps before copying source
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
 # Copy source and reinstall (picks up the project itself)
 COPY . /app
-RUN uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────
 FROM python:3.12-slim
@@ -63,7 +65,8 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SEER=0.1.4
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.1.4
 
 # Install Playwright browser for browser automation node
-RUN uv run playwright install-deps chromium && \
+RUN --mount=type=cache,target=/root/.cache/ms-playwright \
+    uv run playwright install-deps chromium && \
     uv run playwright install chromium
 
 EXPOSE 8000

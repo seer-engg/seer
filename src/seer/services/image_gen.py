@@ -1,15 +1,15 @@
 """Standalone image generation utility via OpenRouter API."""
 from __future__ import annotations
 
-import logging
 import re
 from typing import Any, Dict, Tuple
 
 import httpx
 
 from seer.config import config
+from seer.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def generate_image(prompt: str, model: str = "sourceful/riverflow-v2-fast", size: str = "1024x1024") -> Tuple[str, Dict[str, Any]]:

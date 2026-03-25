@@ -167,12 +167,6 @@ async def generate_trigger_event(
     )
 
 
-@router.get("/registries/tools", response_model=api_models.ToolRegistryResponse)
-async def get_tool_registry(request: Request, include_schemas: bool = Query(False)):
-    _require_user(request)
-    return await services.list_tools(include_schemas=include_schemas)
-
-
 @router.get("/registries/models", response_model=api_models.ModelRegistryResponse)
 async def get_model_registry(request: Request):
     _require_user(request)
@@ -183,22 +177,6 @@ async def get_model_registry(request: Request):
 async def get_browser_model_registry(request: Request):
     _require_user(request)
     return await services.list_browser_models()
-
-
-@router.get("/registries/schemas/{schema_id}", response_model=api_models.SchemaResponse)
-async def get_schema(request: Request, schema_id: str):
-    _require_user(request)
-    return await services.resolve_schema(schema_id)
-
-
-@router.post("/schemas/generate-metadata", response_model=api_models.SchemaMetadataGenerateResponse)
-async def generate_schema_metadata(
-    request: Request,
-    payload: api_models.SchemaMetadataGenerateRequest,
-):
-    """Generate schema title and description using LLM analysis."""
-    _require_user(request)
-    return await services.generate_schema_metadata(payload)
 
 
 @router.post("/mcp/tools", response_model=api_models.McpToolsResponse)
@@ -220,7 +198,8 @@ async def import_workflow(
     payload: api_models.WorkflowImportRequest,
 ):
     user = _require_user(request)
-    return await services.import_workflow(user, payload)
+    org, _ = _get_org_context(request)
+    return await services.import_workflow(user, payload, organization=org)
 
 
 @router.get("/workflows", response_model=api_models.WorkflowListResponse)
@@ -314,18 +293,6 @@ async def publish_workflow(
     return await services.publish_workflow(user, workflow_id, payload, organization=org, membership=membership)
 
 
-@router.patch("/workflows/{workflow_id}/published", response_model=api_models.WorkflowSummary)
-async def toggle_workflow_published(
-    request: Request,
-    workflow_id: str,
-    payload: api_models.WorkflowPublishedToggleRequest,
-):
-    """Toggle whether a workflow is published as a template."""
-    user = _require_user(request)
-    org, membership = _get_org_context(request)
-    return await services.toggle_workflow_published(user, workflow_id, payload.is_published, organization=org, membership=membership)
-
-
 @router.patch("/workflows/{workflow_id}/active", response_model=api_models.WorkflowSummary)
 async def toggle_workflow_active(
     request: Request,
@@ -350,24 +317,6 @@ async def delete_workflow(request: Request, workflow_id: str):
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="Delete operation timed out. The workflow may have active runs.") from exc
     return {"ok": True}
-
-
-@router.post("/workflows/validate", response_model=api_models.ValidateResponse)
-async def validate_workflow(request: Request, payload: api_models.ValidateRequest):
-    _require_user(request)
-    return services.validate_spec(payload)
-
-
-@router.post("/workflows/compile", response_model=api_models.CompileResponse)
-async def compile_workflow(request: Request, payload: api_models.CompileRequest):
-    user = _require_user(request)
-    return services.compile_spec(user, payload)
-
-
-@router.post("/expr/typecheck", response_model=api_models.ExpressionTypecheckResponse)
-async def typecheck_expression(request: Request, payload: api_models.ExpressionTypecheckRequest):
-    user = _require_user(request)
-    return services.typecheck_expression(user, payload)
 
 
 @router.post(

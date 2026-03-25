@@ -28,7 +28,6 @@ dependencies = [
     "httpx>=0.28.1",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.3",
-    "tavily-python>=0.7.12",
     "langchain-chroma>=0.1.0",
     "tenacity>=9.1.2",
     "langchain-mcp-adapters==0.1.12",
@@ -55,6 +54,7 @@ dependencies = [
     "fastmcp>=2.14.5",
     "sentry-sdk[fastapi]>=2.0.0",
     "posthog>=3.0.0",  # PostHog analytics
+    "pglast>=6.0",  # PostgreSQL SQL parser for access mode validation
     "browser-use>=0.11.9",
     "playwright>=1.58.0",
     "cryptography>=43.0.0",
@@ -97,6 +97,8 @@ dev = [
     "asyncclick>=8.3.0.7",
     "watchfiles>=1.0.0",  # taskiq worker --reload in local dev
     "aiosqlite>=0.20.0",  # Tortoise ORM SQLite backend for tests
+    "testcontainers[postgres,redis]>=4.0.0",
+    "pyjwt>=2.8.0",
 ]
 
 [project.urls]
@@ -169,8 +171,11 @@ markers = [
     "unit: Fast unit tests with mocked dependencies",
     "integration: Tests requiring database/Redis",
     "e2e: End-to-end API tests",
+    "e2e_real: True E2E tests with Testcontainers (Postgres + Redis)",
     "slow: Tests taking >1s to run",
     "requires_external: Tests requiring external services",
+    "eval: Evaluation tests requiring external APIs (OPENAI_API_KEY)",
+    "eval: Retrieval evaluation tests (not in default CI)",
 ]
 
 addopts = [

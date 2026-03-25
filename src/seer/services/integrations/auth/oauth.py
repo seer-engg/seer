@@ -74,6 +74,19 @@ if config.linkedin_client_id and config.linkedin_client_secret:
         client_kwargs={'scope': 'openid profile email'},  # Minimal default - frontend will override with specific scopes
     )
 
+# Oura Ring OAuth
+# Standard OAuth2 flow — users authorize via cloud.ouraring.com
+if config.oura_client_id and config.oura_client_secret:
+    oauth.register(
+        name='oura',
+        client_id=config.oura_client_id,
+        client_secret=config.oura_client_secret,
+        authorize_url='https://cloud.ouraring.com/oauth/authorize',
+        access_token_url='https://api.ouraring.com/oauth/token',
+        api_base_url='https://api.ouraring.com/',
+        client_kwargs={'scope': 'email personal daily heartrate workout tag session spo2 stress'},
+    )
+
 # Slack OAuth (Bot Token)
 # Slack uses OAuth 2.0 v2 with bot token scopes
 if config.slack_client_id and config.slack_client_secret:
@@ -146,6 +159,7 @@ _INTEGRATION_TO_PROVIDER: dict[str, str] = {
     'slack': 'slack',
     'airtable': 'airtable',
     'notion': 'notion',
+    'oura': 'oura',
 }
 
 

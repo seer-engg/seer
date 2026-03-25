@@ -38,6 +38,7 @@ from seer.database import (
     parse_workflow_public_id,
 )
 from seer.core.schema.models import WorkflowSpec
+from seer.database.template_models import WorkflowTemplate
 from seer.database.workflow_models import ChatExecutionStatus, TriggerSubscription, WorkflowChatSession, WorkflowRun, WorkflowRunStatus
 from seer.logger import get_logger
 from seer.services.collaboration import CollaborationEventType, publish_collaboration_event
@@ -141,7 +142,6 @@ async def _workflow_summary(workflow: Workflow, draft_version: Optional[Workflow
         name=workflow.name,
         created_at=workflow.created_at,
         updated_at=updated_at,
-        is_published=workflow.is_published,
         is_active=workflow.is_active,
         integrations=integrations,
     )
@@ -208,24 +208,6 @@ async def _abort_active_chat_executions(workflow: Workflow) -> int:
     return len(active_sessions)
 
 
-async def toggle_workflow_published(
-    user: User,
-    workflow_id: str,
-    is_published: bool,
-    organization: Optional[Organization] = None,
-    membership: Optional[OrganizationMembership] = None,
-) -> api_models.WorkflowSummary:
-    """Toggle the is_published flag on a workflow."""
-    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
-    workflow.is_published = is_published
-    await workflow.save(update_fields=["is_published", "updated_at"])
-    await _publish_workflow_event(
-        workflow,
-        event_type=CollaborationEventType.WORKFLOW_PUBLISHED if is_published else CollaborationEventType.WORKFLOW_UNPUBLISHED,
-        actor=user,
-        payload={"is_published": is_published},
-    )
-    return await _workflow_summary(workflow)
 
 
 async def toggle_workflow_active(
@@ -727,6 +709,12 @@ async def delete_workflow(
     # Delete trigger subscriptions before workflow
     await TriggerSubscription.filter(workflow=workflow).delete()
 
+    # Cascade-delete any template created from this workflow
+    try:
+        await WorkflowTemplate.filter(source_workflow_id=workflow.id).delete()
+    except Exception:  # pylint: disable=broad-exception-caught # table may not exist in test environments
+        pass
+
     await workflow.delete()
     await publish_collaboration_event(
         organization_id=deleted_org_id,
@@ -801,6 +789,7 @@ async def _ensure_unique_name(user: User, base_name: str) -> str:
 async def import_workflow(
     user: User,
     payload: api_models.WorkflowImportRequest,
+    organization: Optional[Organization] = None,
 ) -> api_models.WorkflowResponse:
     """
     Import workflow from exported JSON.
@@ -844,9 +833,15 @@ async def import_workflow(
     workflow_name = payload.name or import_data["workflow"]["name"]
     workflow_name = await _ensure_unique_name(user, workflow_name)
 
+    # Match normal workflow creation semantics for org ownership.
+    if not organization:
+        organization = await Organization.get_or_none(owner=user, type=OrganizationType.PERSONAL)
+
     workflow = await Workflow.create(
         user=user,
         name=workflow_name,
+        organization=organization,
+        visibility=WorkflowVisibility.TEAM if organization else WorkflowVisibility.PRIVATE,
     )
 
     # 4. Create draft with spec

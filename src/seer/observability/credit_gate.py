@@ -11,7 +11,6 @@ limit is allowed up to the spending cap.
 
 Supports organization-aware limit checking for team members.
 """
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
@@ -26,6 +25,7 @@ from seer.observability.service import (
     get_effective_limits,
     get_effective_tier,
 )
+from seer.logger import get_logger
 from seer.observability.tracking import (
     get_5h_llm_credits_used,
     get_monthly_llm_credits_used,
@@ -36,7 +36,7 @@ from seer.observability.tracking import (
     _get_effective_overage_settings,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

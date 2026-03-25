@@ -59,7 +59,10 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=None, description="OpenRouter API key for multi-provider LLM access"
     )
     tavily_api_key: Optional[str] = Field(
-        default=None, description="Tavily API key for web search"
+        default=None, description="Tavily API key for web search (deprecated, use brave_search_api_key)"
+    )
+    brave_search_api_key: Optional[str] = Field(
+        default=None, description="Brave Search API key for web search"
     )
 
     # ============================================================================
@@ -141,7 +144,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=128, description="OpenAI embedding batch size"
     )
 
-    default_llm_model: str = Field(default="z-ai/glm-5", description="Default LLM model")
+    default_llm_model: str = Field(default="qwen/qwen3-235b-a22b-2507", description="Default LLM model")
 
     # Taskiq / Valkey configuration
     redis_url: str = Field(
@@ -176,6 +179,14 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     agent_tool_output_max_chars: int = Field(
         default=50000,
         description="Max characters per tool output in workflow agent nodes. Prevents context overflow on large API responses.",
+    )
+    agent_supervisor_mode: bool = Field(
+        default=True,
+        description="Enable supervisor-style tool execution isolation. Failed tool calls are retried by a cheap worker LLM with corrected params.",
+    )
+    agent_tool_max_retries: int = Field(
+        default=1,
+        description="Max retries per tool call in supervisor mode. 1 = 2 total attempts.",
     )
 
     # ============================================================================
@@ -229,6 +240,13 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         default=None, description="LinkedIn OAuth client secret"
     )
 
+    oura_client_id: Optional[str] = Field(
+        default=None, description="Oura Ring OAuth client ID"
+    )
+    oura_client_secret: Optional[str] = Field(
+        default=None, description="Oura Ring OAuth client secret"
+    )
+
     slack_client_id: Optional[str] = Field(
         default=None, description="Slack OAuth client ID"
     )
@@ -264,6 +282,14 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description=(
             "Allow X-Emulate-User-Id header to bypass Clerk JWT verification and load "
             "an existing DB user by their Clerk user_id. "
+            "MUST only be enabled in local/dev environments. Never enable in production."
+        ),
+    )
+
+    disable_usage_limits: bool = Field(
+        default=False,
+        description=(
+            "Skip all usage limit enforcement (workflow creation, run limits, credit checks). "
             "MUST only be enabled in local/dev environments. Never enable in production."
         ),
     )
@@ -615,7 +641,7 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Auto-extract memories from completed chat sessions"
     )
     memory_extraction_model: str = Field(
-        default="openai/gpt-oss-120b",
+        default="qwen/qwen3-235b-a22b-2507",
         description="LLM model for memory extraction (used by Mem0, works with OpenRouter)"
     )
     mem0_llm_provider: str = Field(

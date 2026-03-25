@@ -27,7 +27,7 @@ from seer.core.schema.schema_registry import SchemaRegistry
 
 pytestmark = pytest.mark.unit
 
-TEST_AGENT_MODEL = "openai/gpt-oss-120b"
+TEST_AGENT_MODEL = "qwen/qwen3-235b-a22b-2507"
 INVALID_AGENT_MODEL = "openai/gpt-4o"
 
 
@@ -1935,3 +1935,168 @@ async def test_agent_credit_check_uses_runtime_helper():
     with patch("seer.core.nodes.agent_node.check_runtime_credit_limit", new_callable=AsyncMock) as mock_check:
         await agent_node_type._check_credit_limit(mock_context)
         mock_check.assert_awaited_once_with(mock_context, ANY)
+
+
+# =============================================================================
+# ToolWorker Tests (Supervisor Mode)
+# =============================================================================
+
+
+class TestToolWorker:
+    """Tests for ToolWorker — supervisor-style tool execution isolation."""
+
+    async def test_success_on_first_attempt_passes_through(self):
+        """ToolWorker should pass through successful results unchanged."""
+        from seer.core.nodes.agent_node import ToolWorker
+
+        executor = AsyncMock(return_value='{"data": "ok"}')
+        worker = ToolWorker(
+            tool_name="test_tool",
+            executor=executor,
+            input_schema={"properties": {"q": {"type": "string"}}},
+            worker_llm=MagicMock(),
+            max_retries=1,
+        )
+
+        result = await worker(q="hello")
+        assert result == '{"data": "ok"}'
+        assert worker.failure_log == []
+        executor.assert_awaited_once_with(q="hello")
+
+    async def test_retry_with_corrected_params_on_failure(self):
+        """Worker LLM should correct params and retry successfully."""
+        from seer.core.nodes.agent_node import ToolWorker
+
+        executor = AsyncMock(side_effect=[
+            "Error executing test_tool: invalid param",
+            '{"result": "success"}',
+        ])
+        mock_llm = AsyncMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content='{"q": "fixed_value"}'))
+
+        worker = ToolWorker(
+            tool_name="test_tool",
+            executor=executor,
+            input_schema={"properties": {"q": {"type": "string"}}},
+            worker_llm=mock_llm,
+            max_retries=1,
+        )
+
+        result = await worker(q="bad_value")
+        assert result == '{"result": "success"}'
+        assert len(worker.failure_log) == 1
+        assert worker.failure_log[0]["params"] == {"q": "bad_value"}
+        # Second call should use corrected params
+        assert executor.await_args_list[1] == ((), {"q": "fixed_value"})
+
+    async def test_unfixable_error_returns_clean_summary(self):
+        """When worker LLM says UNFIXABLE, return clean summary without raw error."""
+        from seer.core.nodes.agent_node import ToolWorker
+
+        executor = AsyncMock(return_value="Error executing test_tool: 401 Unauthorized")
+        mock_llm = AsyncMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="UNFIXABLE"))
+
+        worker = ToolWorker(
+            tool_name="test_tool",
+            executor=executor,
+            input_schema={},
+            worker_llm=mock_llm,
+            max_retries=1,
+        )
+
+        result = await worker(q="hello")
+        assert "failed:" in result
+        assert "401 Unauthorized" in result  # reason IS included now for supervisor context
+        assert "Try a different approach" in result
+        assert len(worker.failure_log) == 1
+
+    async def test_all_retries_exhausted_returns_clean_summary(self):
+        """After all retries fail, return clean summary."""
+        from seer.core.nodes.agent_node import ToolWorker
+
+        executor = AsyncMock(return_value="Error executing test_tool: bad request")
+        mock_llm = AsyncMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content='{"q": "try2"}'))
+
+        worker = ToolWorker(
+            tool_name="test_tool",
+            executor=executor,
+            input_schema={"properties": {"q": {"type": "string"}}},
+            worker_llm=mock_llm,
+            max_retries=2,
+        )
+
+        result = await worker(q="original")
+        assert "failed:" in result
+        assert "bad request" in result  # reason included for supervisor
+        assert "Retried 3 time(s)" in result
+        assert "Try a different approach" in result
+        assert len(worker.failure_log) == 3  # original + 2 retries
+
+    async def test_worker_llm_failure_degrades_gracefully(self):
+        """If the worker LLM itself fails, return clean summary without crashing."""
+        from seer.core.nodes.agent_node import ToolWorker
+
+        executor = AsyncMock(return_value="Error executing test_tool: something broke")
+        mock_llm = AsyncMock()
+        mock_llm.ainvoke = AsyncMock(side_effect=Exception("LLM API down"))
+
+        worker = ToolWorker(
+            tool_name="test_tool",
+            executor=executor,
+            input_schema={},
+            worker_llm=mock_llm,
+            max_retries=1,
+        )
+
+        result = await worker(q="hello")
+        assert "failed:" in result
+        assert "something broke" in result  # reason included
+        assert "Try a different approach" in result
+        assert "LLM API down" not in result  # worker LLM error NOT leaked
+
+    async def test_failure_log_not_in_supervisor_context(self):
+        """Failure details are in failure_log, not in the returned string."""
+        from seer.core.nodes.agent_node import ToolWorker
+
+        error_detail = "Error executing test_tool: ConnectionRefusedError: [Errno 111] Connection refused"
+        executor = AsyncMock(return_value=error_detail)
+        mock_llm = AsyncMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="UNFIXABLE"))
+
+        worker = ToolWorker(
+            tool_name="test_tool",
+            executor=executor,
+            input_schema={},
+            worker_llm=mock_llm,
+            max_retries=1,
+        )
+
+        result = await worker()
+        # The reason is included but the full "Error executing ..." prefix is stripped
+        assert "failed:" in result
+        assert "ConnectionRefusedError" in result  # reason included for supervisor
+        assert "Error executing test_tool:" not in result  # prefix stripped
+        assert "ConnectionRefusedError" in worker.failure_log[0]["error"]
+
+
+class TestCollectToolWorkerFailures:
+    """Tests for _collect_tool_worker_failures."""
+
+    def test_collects_failures_from_worker_map(self):
+        from seer.core.nodes.agent_node import ToolWorker, _collect_tool_worker_failures
+
+        worker = ToolWorker("t1", AsyncMock(), input_schema={}, worker_llm=AsyncMock(), max_retries=1)
+        worker.failure_log = [{"params": {"x": 1}, "error": "Error executing t1: boom"}]
+
+        assert _collect_tool_worker_failures({"t1": worker}) == {"t1": worker.failure_log}
+
+    def test_skips_workers_without_failures(self):
+        from seer.core.nodes.agent_node import ToolWorker, _collect_tool_worker_failures
+
+        worker = ToolWorker("t1", AsyncMock(), input_schema={}, worker_llm=AsyncMock(), max_retries=1)
+        worker.failure_log = []
+
+        assert _collect_tool_worker_failures({"t1": worker}) == {}
+        assert _collect_tool_worker_failures({}) == {}

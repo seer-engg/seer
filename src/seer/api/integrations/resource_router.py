@@ -1,6 +1,7 @@
 """Integration resource routes."""
-# pylint: disable=duplicate-code,too-many-lines
+# pylint: disable=duplicate-code,too-many-lines,broad-exception-caught
 # Reason: Supabase REST validation mirrors supabase database tool usage; this module aggregates many integration endpoints and helpers.
+# Broad exception catching is intentional in connection test endpoints for graceful error reporting to the user.
 import json
 from typing import Any, Optional
 
@@ -8,15 +9,18 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from seer.api.core.errors import INTEGRATION_PROBLEM, VALIDATION_PROBLEM, raise_problem
-from seer.api.integrations.models import SupabaseBindRequest, SupabaseManualBindRequest
+from seer.api.integrations.models import PostgresBindRequest, PostgresTestRequest, SupabaseBindRequest, SupabaseManualBindRequest
 from seer.api.integrations.services import (
+    bind_postgres_database_manual,
     bind_supabase_project,
     bind_supabase_project_manual,
     deactivate_integration_resource,
     get_valid_access_token,
+    list_postgres_bindings,
     list_resource_secrets,
     serialize_integration_resource,
     serialize_integration_secret,
+    update_postgres_database,
 )
 from seer.config import config
 from seer.database import IntegrationResource, IntegrationSecret, User
@@ -105,6 +109,179 @@ async def bind_supabase_project_manual_route(request: Request, payload: Supabase
     return {
         "resource": serialize_integration_resource(resource),
         "secrets": [serialize_integration_secret(s) for s in secrets],
+    }
+
+
+# =============================================================================
+# POSTGRES DATABASE BINDING ROUTES
+# =============================================================================
+
+
+@router.post("/postgres/databases/bind")
+async def bind_postgres_database_route(request: Request, payload: PostgresBindRequest):
+    """
+    Bind a PostgreSQL database using either a connection string or individual fields.
+
+    The database can be configured with an access mode:
+    - restricted (default): Only SELECT, EXPLAIN, SHOW allowed
+    - unrestricted: All SQL operations allowed
+    """
+    user: User = request.state.db_user
+
+    resource = await bind_postgres_database_manual(
+        user,
+        name=payload.name,
+        connection_string=payload.connection_string,
+        host=payload.host,
+        port=payload.port,
+        database=payload.database,
+        db_user=payload.user,
+        password=payload.password,
+        ssl_mode=payload.ssl_mode,
+        access_mode=payload.access_mode,
+    )
+
+    secrets = await list_resource_secrets(user, resource.id)
+    return {
+        "resource": serialize_integration_resource(resource),
+        "secrets": [serialize_integration_secret(s) for s in secrets],
+    }
+
+
+@router.patch("/postgres/databases/{resource_id}")
+async def update_postgres_database_route(request: Request, resource_id: int, payload: PostgresBindRequest):
+    """
+    Update an existing PostgreSQL database binding.
+
+    If password is not provided, the existing credentials are kept.
+    Only metadata fields (name, ssl_mode, access_mode) are updated.
+    """
+    user: User = request.state.db_user
+
+    resource = await update_postgres_database(
+        user,
+        resource_id,
+        name=payload.name,
+        connection_string=payload.connection_string,
+        host=payload.host,
+        port=payload.port,
+        database=payload.database,
+        db_user=payload.user,
+        password=payload.password,
+        ssl_mode=payload.ssl_mode,
+        access_mode=payload.access_mode,
+    )
+
+    secrets = await list_resource_secrets(user, resource.id)
+    return {
+        "resource": serialize_integration_resource(resource),
+        "secrets": [serialize_integration_secret(s) for s in secrets],
+    }
+
+
+@router.post("/postgres/databases/test")
+async def test_postgres_connection_route(request: Request, payload: PostgresTestRequest):
+    """
+    Test a PostgreSQL connection without saving it.
+
+    Returns connection status and basic database info.
+    """
+    import asyncpg  # pylint: disable=import-outside-toplevel  # Reason: Only needed for this endpoint
+
+    from seer.tools.postgres.common import build_connection_string  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+
+    _ = request  # User validation happens via middleware
+
+    # Build connection string
+    if payload.connection_string:
+        connection_string = payload.connection_string
+    else:
+        if not payload.host or not payload.database or not payload.user or not payload.password:
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="Missing required fields",
+                detail="Either connection_string or (host, database, user, password) are required",
+                status=400,
+            )
+        # Type assertions after validation (raise_problem never returns)
+        assert payload.host is not None
+        assert payload.database is not None
+        assert payload.user is not None
+        assert payload.password is not None
+        connection_string = build_connection_string(
+            host=payload.host,
+            port=payload.port,
+            database=payload.database,
+            user=payload.user,
+            password=payload.password,
+            ssl_mode=payload.ssl_mode,
+        )
+
+    try:
+        conn = await asyncpg.connect(connection_string, timeout=10.0)
+        try:
+            # Get basic info
+            version = await conn.fetchval("SELECT version()")
+            db_name = await conn.fetchval("SELECT current_database()")
+            db_user = await conn.fetchval("SELECT current_user")
+
+            return {
+                "status": "ok",
+                "connected": True,
+                "database": db_name,
+                "user": db_user,
+                "server_version": version,
+            }
+        finally:
+            await conn.close()
+
+    except asyncpg.InvalidCatalogNameError as e:
+        return {
+            "status": "error",
+            "connected": False,
+            "error": f"Database does not exist: {str(e)}",
+        }
+    except asyncpg.InvalidPasswordError:
+        return {
+            "status": "error",
+            "connected": False,
+            "error": "Invalid username or password",
+        }
+    except OSError as e:
+        return {
+            "status": "error",
+            "connected": False,
+            "error": f"Cannot connect to server: {str(e)}",
+        }
+    except Exception as e:
+        logger.exception("PostgreSQL connection test failed")
+        return {
+            "status": "error",
+            "connected": False,
+            "error": str(e),
+        }
+
+
+@router.get("/postgres/resources/bindings")
+async def list_postgres_bindings_route(request: Request):
+    """
+    List all saved PostgreSQL database bindings for the current user.
+
+    Used by the resource picker to show available databases.
+    """
+    user: User = request.state.db_user
+    resources = await list_postgres_bindings(user)
+
+    return {
+        "items": [
+            {
+                "id": str(r.id),
+                "name": r.name or r.resource_key,
+                "resource_key": r.resource_key,
+                "metadata": r.resource_metadata or {},
+            }
+            for r in resources
+        ],
     }
 
 

@@ -206,10 +206,10 @@ class TestGetTriggerAccounts:
             return_value=mock_trigger_definition,
         ):
             with patch(
-                "seer.services.integrations.auth.oauth.get_oauth_provider", return_value="google"
+                "seer.api.workflows.services.catalog.get_oauth_provider", return_value="google"
             ):
                 with patch(
-                    "seer.database.models_oauth.OAuthConnection"
+                    "seer.api.workflows.services.catalog.OAuthConnection"
                 ) as MockOAuthConnection:
                     MockOAuthConnection.filter = MagicMock(
                         return_value=MagicMock(all=AsyncMock(return_value=[mock_conn]))
@@ -248,10 +248,10 @@ class TestGetTriggerAccounts:
             return_value=mock_trigger_definition,
         ):
             with patch(
-                "seer.services.integrations.auth.oauth.get_oauth_provider", return_value="google"
+                "seer.api.workflows.services.catalog.get_oauth_provider", return_value="google"
             ):
                 with patch(
-                    "seer.database.models_oauth.OAuthConnection"
+                    "seer.api.workflows.services.catalog.OAuthConnection"
                 ) as MockOAuthConnection:
                     MockOAuthConnection.filter = MagicMock(
                         return_value=MagicMock(all=AsyncMock(return_value=[mock_conn1, mock_conn2]))
@@ -284,10 +284,10 @@ class TestGetTriggerAccounts:
             return_value=mock_trigger_definition,
         ):
             with patch(
-                "seer.services.integrations.auth.oauth.get_oauth_provider", return_value="google"
+                "seer.api.workflows.services.catalog.get_oauth_provider", return_value="google"
             ):
                 with patch(
-                    "seer.database.models_oauth.OAuthConnection"
+                    "seer.api.workflows.services.catalog.OAuthConnection"
                 ) as MockOAuthConnection:
                     MockOAuthConnection.filter = MagicMock(
                         return_value=MagicMock(all=AsyncMock(return_value=[mock_conn]))

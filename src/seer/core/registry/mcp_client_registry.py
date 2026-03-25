@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -26,7 +25,9 @@ except ImportError:
     StreamableHttpConnection = None  # type: ignore[assignment,misc]
     create_session = None  # type: ignore[assignment,misc]
 
-logger = logging.getLogger(__name__)
+from seer.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass

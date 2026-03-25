@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
-from seer.core.triggers.events import TriggerEventEnvelopeInput, build_event_envelope
 from seer.core.triggers.polling.adapters.gmail_email_received import GmailEmailReceivedAdapter
 from seer.core.triggers.polling.adapters.google_calendar_event_changed import GoogleCalendarEventChangedAdapter
 from seer.core.triggers.polling.adapters.slack_message_received import SlackMessageReceivedAdapter
@@ -312,7 +311,7 @@ def _extract_form_display(event_data: Dict[str, Any], trigger_key: str) -> tuple
     return display_title, preview, "form"
 
 
-def _build_persisted_event_result(
+def _build_persisted_event_result(  # pylint: disable=unused-argument  # Reason: trigger_key, provider kept for caller compatibility
     *,
     event: TriggerEvent,
     display_title: str,
@@ -321,22 +320,26 @@ def _build_persisted_event_result(
     trigger_id: str,
     provider: str,
 ) -> Dict[str, Any]:
-    """Build a standard event result dict with envelope for a persisted event."""
+    """Build a standard event result dict with envelope for a persisted event.
+
+    The stored event.event is already a complete envelope from when the webhook
+    was received. We reuse it directly, only updating trigger_id and title
+    to match the current testing context.
+
+    Note: trigger_key and provider are accepted for caller compatibility but
+    not used - the stored envelope already contains correct values.
+    """
     received_at = event.received_at or datetime.now(timezone.utc)
     display_subtitle = received_at.strftime("%b %d, %Y %I:%M %p")
 
-    envelope = build_event_envelope(
-        TriggerEventEnvelopeInput(
-            trigger_id=trigger_id,
-            trigger_key=trigger_key,
-            title=display_title,
-            provider=provider,
-            provider_connection_id=None,
-            payload=event.event or {},
-            raw=event.raw_payload or {},
-            occurred_at=event.occurred_at or received_at,
-        )
-    )
+    # Reuse the stored envelope directly - it's already properly structured.
+    # Only update trigger_id (for expression resolution) and title (for display).
+    stored_envelope = event.event or {}
+    envelope = {
+        **stored_envelope,
+        "trigger_id": trigger_id,  # Override for testing context
+        "title": display_title,
+    }
 
     return {
         "id": str(event.id),

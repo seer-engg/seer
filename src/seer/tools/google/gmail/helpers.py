@@ -256,16 +256,61 @@ def _set_optional_addresses(msg: EmailMessage, name: str, addresses: Optional[Li
         msg[name] = ", ".join(sanitized)
 
 
+def _looks_like_html(text: str) -> bool:
+    """Check if text appears to be HTML content (from rich text editor)."""
+    if not text:
+        return False
+    # Check for common HTML tags that indicate rich text editor output
+    return bool(re.search(r'<(p|div|span|strong|em|br|a|ul|ol|li|h[1-6]|blockquote|code|pre)\b', text, re.IGNORECASE))
+
+
+def _is_complete_html_document(html: str) -> bool:
+    """Check if HTML is already a complete document (has DOCTYPE or html tag).
+
+    Complete HTML documents should not be wrapped again, as they already have
+    their own structure, styling, and layout. Re-wrapping creates nested HTML
+    documents which causes rendering issues in email clients.
+    """
+    if not html:
+        return False
+    stripped = html.strip().lower()
+    return stripped.startswith("<!doctype") or stripped.startswith("<html")
+
+
+def _wrap_html_body(html_content: str) -> str:
+    """Wrap HTML content in email-safe document structure."""
+    return (
+        "<!DOCTYPE html><html><body style=\"font-family:Arial,sans-serif;"
+        "font-size:14px;line-height:1.6;color:#333;max-width:680px\">"
+        f"{html_content}</body></html>"
+    )
+
+
 def _markdown_to_html(text: str) -> str:
     """Convert markdown text to an email-safe HTML document."""
     import markdown as md  # pylint: disable=import-outside-toplevel  # Reason: Lazy import to avoid startup cost for optional dependency
 
     body = md.markdown(text, extensions=["extra", "nl2br"])
-    return (
-        "<!DOCTYPE html><html><body style=\"font-family:Arial,sans-serif;"
-        "font-size:14px;line-height:1.6;color:#333;max-width:680px\">"
-        f"{body}</body></html>"
-    )
+    return _wrap_html_body(body)
+
+
+def _convert_body_to_html(body_text: str) -> str:
+    """
+    Convert body text to HTML for email.
+
+    Handles three cases:
+    1. Complete HTML document (has DOCTYPE/html tag) - use as-is, no wrapping
+    2. HTML fragments (from rich text editor) - wrap in email structure
+    3. Plain text or markdown - convert to HTML and wrap
+    """
+    if _is_complete_html_document(body_text):
+        # Already a complete HTML document - use as-is without re-wrapping
+        return body_text
+    if _looks_like_html(body_text):
+        # HTML fragments from rich text editor - wrap in email structure
+        return _wrap_html_body(body_text)
+    # Plain text or markdown - convert and wrap
+    return _markdown_to_html(body_text)
 
 
 def _build_mime_email(  # pylint: disable=too-many-arguments  # Reason: Gmail send helper requires all email components
@@ -300,8 +345,9 @@ def _build_mime_email(  # pylint: disable=too-many-arguments  # Reason: Gmail se
     _set_optional_header(msg, "In-Reply-To", in_reply_to)
     _set_optional_header(msg, "References", references)
 
-    # Auto-convert markdown to HTML when body_html not explicitly provided
-    effective_html = body_html if body_html is not None else _markdown_to_html(body_text or "")
+    # Auto-convert body_text to HTML when body_html not explicitly provided
+    # Handles both markdown and HTML from rich text editor
+    effective_html = body_html if body_html is not None else _convert_body_to_html(body_text or "")
     msg.set_content(body_text or "")
     msg.add_alternative(effective_html, subtype="html")
 

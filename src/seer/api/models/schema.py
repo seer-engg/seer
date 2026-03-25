@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 class ModelInfo(BaseModel):
     """Information about an available LLM model."""
-    id: str  # Model identifier (e.g., "openai/gpt-oss-120b", "claude-opus-4-5")
+    id: str  # Model identifier (e.g., "qwen/qwen3-235b-a22b-2507", "moonshotai/kimi-k2.5")
     provider: Literal["openai", "anthropic", "openrouter"]
-    name: str  # Display name (e.g., "GPT OSS 120B", "Claude Opus 4.5")
+    name: str  # Display name (e.g., "Qwen 3", "Kimi")
     available: bool  # Whether API key is configured

@@ -7,12 +7,19 @@
 # Reason: Else-after-return pattern used for clarity in OAuth provider mapping logic.
 # Broad exception catching is intentional for logging and graceful degradation.
 
+# pylint: disable=too-many-locals,too-complex
+# Reason: postgres bind/update functions manage multiple credential paths (connection string vs individual fields).
+# Extracting helpers would split cohesive credential-resolution logic across multiple functions.
+
 import hashlib
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qs, unquote, urlparse
 
 from fastapi import HTTPException
 
 from seer.services.integrations.constants import (
+    POSTGRES_RESOURCE_PROVIDER,
+    POSTGRES_RESOURCE_TYPE_DATABASE,
     SUPABASE_RESOURCE_PROVIDER,
     SUPABASE_RESOURCE_TYPE_PROJECT,
 )
@@ -436,6 +443,325 @@ async def bind_supabase_project_manual(
             name="supabase_anon_key",
             secret_type="api_key",
             value_enc=anon_key,
+            resource=resource,
+            metadata={"binding_mode": "manual"},
+        )
+
+    return resource
+
+
+def _build_postgres_metadata(
+    *,
+    host: str,
+    port: int,
+    database: str,
+    ssl_mode: str,
+    access_mode: str,
+) -> Dict[str, Any]:
+    """Build metadata dict for PostgreSQL resource."""
+    return {
+        "host": host,
+        "port": port,
+        "database": database,
+        "ssl_mode": ssl_mode,
+        "access_mode": access_mode,
+        "binding_mode": "manual",
+    }
+
+
+def _parse_postgres_connection_string(connection_string: str) -> Dict[str, Any]:
+    """
+    Parse PostgreSQL connection string into components.
+
+    Supports both formats:
+    - postgresql://user:pass@host:port/database?sslmode=require
+    - postgres://user:pass@host:port/database?sslmode=require
+    """
+    parsed = urlparse(connection_string)
+
+    if parsed.scheme not in ("postgresql", "postgres"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid connection string scheme. Must start with postgresql:// or postgres://",
+        )
+
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 5432
+    database = parsed.path.lstrip("/") if parsed.path else ""
+    user = unquote(parsed.username) if parsed.username else ""
+    password = unquote(parsed.password) if parsed.password else ""
+
+    # Parse query params for sslmode
+    query_params = parse_qs(parsed.query)
+    ssl_mode = query_params.get("sslmode", ["prefer"])[0]
+
+    if not database:
+        raise HTTPException(status_code=400, detail="Database name is required in connection string")
+    if not user:
+        raise HTTPException(status_code=400, detail="Username is required in connection string")
+
+    return {
+        "host": host,
+        "port": port,
+        "database": database,
+        "user": user,
+        "password": password,
+        "ssl_mode": ssl_mode,
+    }
+
+
+async def bind_postgres_database_manual(
+    user: User,
+    *,
+    name: str,
+    connection_string: Optional[str] = None,
+    host: Optional[str] = None,
+    port: int = 5432,
+    database: Optional[str] = None,
+    db_user: Optional[str] = None,
+    password: Optional[str] = None,
+    ssl_mode: str = "prefer",
+    access_mode: str = "restricted",
+) -> IntegrationResource:
+    """
+    Bind a PostgreSQL database using either a connection string or individual fields.
+
+    Args:
+        user: User model instance
+        name: Friendly display name for the database
+        connection_string: Full PostgreSQL connection string (optional)
+        host: Database host (required if no connection_string)
+        port: Database port (default 5432)
+        database: Database name (required if no connection_string)
+        db_user: Database username (required if no connection_string)
+        password: Database password (required if no connection_string)
+        ssl_mode: SSL mode (default 'prefer')
+        access_mode: Access mode - 'restricted' or 'unrestricted' (default 'restricted')
+
+    Returns:
+        Created IntegrationResource
+    """
+    from seer.tools.postgres.common import build_connection_string  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+
+    # Validate access_mode
+    if access_mode not in ("restricted", "unrestricted"):
+        raise HTTPException(
+            status_code=400,
+            detail="access_mode must be 'restricted' or 'unrestricted'",
+        )
+
+    # Build connection string from components if not provided
+    if connection_string:
+        parsed = _parse_postgres_connection_string(connection_string)
+        final_host = parsed["host"]
+        final_port = parsed["port"]
+        final_database = parsed["database"]
+        final_ssl_mode = parsed["ssl_mode"]
+        final_connection_string = connection_string
+    else:
+        # Validate required fields
+        if not host:
+            raise HTTPException(status_code=400, detail="host is required when connection_string is not provided")
+        if not database:
+            raise HTTPException(status_code=400, detail="database is required when connection_string is not provided")
+        if not db_user:
+            raise HTTPException(status_code=400, detail="user is required when connection_string is not provided")
+        if not password:
+            raise HTTPException(status_code=400, detail="password is required when connection_string is not provided")
+
+        final_host = host
+        final_port = port
+        final_database = database
+        final_ssl_mode = ssl_mode
+        final_connection_string = build_connection_string(
+            host=host,
+            port=port,
+            database=database,
+            user=db_user,
+            password=password,
+            ssl_mode=ssl_mode,
+        )
+
+    # Build resource key (unique identifier)
+    resource_key = f"{final_host}:{final_port}/{final_database}"
+
+    # Build metadata
+    resource_metadata = _build_postgres_metadata(
+        host=final_host,
+        port=final_port,
+        database=final_database,
+        ssl_mode=final_ssl_mode,
+        access_mode=access_mode,
+    )
+
+    # Use a hash of connection string as resource_id for uniqueness
+    resource_id = _fingerprint_secret(resource_key)[:16]
+
+    # Create resource
+    resource = await _upsert_integration_resource(
+        user=user,
+        oauth_connection=None,
+        provider=POSTGRES_RESOURCE_PROVIDER,
+        resource_type=POSTGRES_RESOURCE_TYPE_DATABASE,
+        resource_id=resource_id,
+        resource_key=resource_key,
+        name=name,
+        metadata=resource_metadata,
+    )
+
+    # Store connection string as secret
+    await _upsert_integration_secret(
+        user=user,
+        provider=POSTGRES_RESOURCE_PROVIDER,
+        name="postgres_connection_string",
+        secret_type="connection_string",
+        value_enc=final_connection_string,
+        resource=resource,
+        metadata={"binding_mode": "manual"},
+    )
+
+    return resource
+
+
+async def list_postgres_bindings(user: User) -> List[IntegrationResource]:
+    """List all PostgreSQL database bindings for a user."""
+    return await list_integration_resources(
+        user,
+        provider=POSTGRES_RESOURCE_PROVIDER,
+        resource_type=POSTGRES_RESOURCE_TYPE_DATABASE,
+    )
+
+
+async def update_postgres_database(
+    user: User,
+    resource_id: int,
+    *,
+    name: Optional[str] = None,
+    connection_string: Optional[str] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    database: Optional[str] = None,
+    db_user: Optional[str] = None,
+    password: Optional[str] = None,
+    ssl_mode: Optional[str] = None,
+    access_mode: Optional[str] = None,
+) -> IntegrationResource:
+    """
+    Update an existing PostgreSQL database binding.
+
+    If password/credentials are not provided, the existing connection string is kept.
+    Only metadata fields (name, ssl_mode, access_mode) are updated.
+
+    Args:
+        user: User model instance
+        resource_id: ID of the IntegrationResource to update
+        name: New friendly display name (optional)
+        connection_string: Full connection string (optional, replaces credentials)
+        host: Database host (optional, requires password to update credentials)
+        port: Database port (optional)
+        database: Database name (optional, requires password to update credentials)
+        db_user: Database username (optional, requires password to update credentials)
+        password: Database password (optional, if provided updates credentials)
+        ssl_mode: SSL mode (optional)
+        access_mode: Access mode (optional)
+
+    Returns:
+        Updated IntegrationResource
+    """
+    from seer.tools.postgres.common import build_connection_string  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+
+    # Find the resource
+    resource = await IntegrationResource.get_or_none(
+        id=resource_id,
+        user=user,
+        provider=POSTGRES_RESOURCE_PROVIDER,
+        resource_type=POSTGRES_RESOURCE_TYPE_DATABASE,
+        status="active",
+    )
+    if not resource:
+        raise HTTPException(status_code=404, detail=f"PostgreSQL database {resource_id} not found")
+
+    # Validate access_mode if provided
+    if access_mode is not None and access_mode not in ("restricted", "unrestricted"):
+        raise HTTPException(
+            status_code=400,
+            detail="access_mode must be 'restricted' or 'unrestricted'",
+        )
+
+    # Get current metadata
+    current_metadata = resource.resource_metadata or {}
+
+    # Determine if we're updating credentials
+    update_credentials = False
+    final_connection_string = None
+
+    if connection_string:
+        # Full connection string provided - parse and update
+        parsed = _parse_postgres_connection_string(connection_string)
+        final_connection_string = connection_string
+        # Update metadata from parsed connection string
+        current_metadata["host"] = parsed["host"]
+        current_metadata["port"] = parsed["port"]
+        current_metadata["database"] = parsed["database"]
+        current_metadata["ssl_mode"] = parsed["ssl_mode"]
+        update_credentials = True
+    elif password:
+        # Password provided with individual fields - build new connection string
+        final_host = host or current_metadata.get("host")
+        final_port = port if port is not None else current_metadata.get("port", 5432)
+        final_database = database or current_metadata.get("database")
+        final_ssl = ssl_mode or current_metadata.get("ssl_mode", "prefer")
+
+        if not final_host or not final_database or not db_user:
+            raise HTTPException(
+                status_code=400,
+                detail="host, database, and user are required when updating credentials",
+            )
+
+        final_connection_string = build_connection_string(
+            host=final_host,
+            port=final_port,
+            database=final_database,
+            user=db_user,
+            password=password,
+            ssl_mode=final_ssl,
+        )
+        # Update metadata
+        current_metadata["host"] = final_host
+        current_metadata["port"] = final_port
+        current_metadata["database"] = final_database
+        current_metadata["ssl_mode"] = final_ssl
+        update_credentials = True
+
+    # Update non-credential metadata
+    if ssl_mode is not None and not update_credentials:
+        current_metadata["ssl_mode"] = ssl_mode
+    if access_mode is not None:
+        current_metadata["access_mode"] = access_mode
+
+    # Update resource fields
+    update_fields: List[str] = []
+
+    if name is not None and name != resource.name:
+        resource.name = name
+        update_fields.append("name")
+
+    if resource.resource_metadata != current_metadata:
+        resource.resource_metadata = current_metadata
+        update_fields.append("resource_metadata")
+
+    if update_fields:
+        update_fields.append("updated_at")
+        await resource.save(update_fields=update_fields)
+
+    # Update secret if credentials changed
+    if update_credentials and final_connection_string:
+        await _upsert_integration_secret(
+            user=user,
+            provider=POSTGRES_RESOURCE_PROVIDER,
+            name="postgres_connection_string",
+            secret_type="connection_string",
+            value_enc=final_connection_string,
             resource=resource,
             metadata={"binding_mode": "manual"},
         )

@@ -46,8 +46,21 @@ class GmailCreateDraftTool(GoogleAPIClient):
             "properties": {
                 "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients (To)."},
                 "subject": {"type": "string", "description": "Email subject."},
-                "body_text": {"type": "string", "description": "Plain-text body."},
-                "body_html": {"type": "string", "description": "Optional HTML body.", "default": None},
+                "body_text": {
+                    "type": "string",
+                    "description": (
+                        "Email body (supports formatting: bold, italic, underline, strikethrough,"
+                        " links, lists, quotes, code, headings). Automatically converted to HTML."
+                    ),
+                    "x-ui-type": "rich_text",
+                    "x-rich-text-platform": "email",
+                },
+                "body_html": {
+                    "type": "string",
+                    "description": "Optional HTML body. Use the HTML toggle in the editor instead.",
+                    "default": None,
+                    "x-ui-hidden": True,
+                },
                 "cc": {"type": "array", "items": {"type": "string"}, "default": []},
                 "bcc": {"type": "array", "items": {"type": "string"}, "default": []},
                 "from_email": {"type": "string", "default": None},

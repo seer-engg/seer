@@ -182,6 +182,46 @@ def validate_tools_and_triggers(spec: Any) -> List[str]:
     return validate_tool_references(spec) + validate_trigger_references(spec)
 
 
+def _build_reference_hint(spec: Dict[str, Any], exc: Exception) -> str:
+    """Build an actionable hint for ValidationPhaseError by looking up node output schemas."""
+    import re  # pylint: disable=import-outside-toplevel # Reason: Only needed for error parsing
+    from seer.tools.base import get_tool  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+
+    base_hint = "Check that all ${...} references point to valid variables."
+    error_msg = str(exc)
+
+    # Try to extract node_id from patterns like "node_id.property" or "${node_id.property}"
+    match = re.search(r"(?:\$\{)?(\w+)\.(\w+)", error_msg)
+    if not match:
+        return base_hint
+
+    node_id = match.group(1)
+    nodes = spec.get("nodes", [])
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if node.get("id") != node_id:
+            continue
+        tool_name = node.get("tool")
+        if not tool_name:
+            break
+        tool_def = get_tool(tool_name)
+        if not tool_def:
+            break
+        output_schema = getattr(tool_def, "output_schema", None) or {}
+        if isinstance(output_schema, dict):
+            props = sorted(output_schema.get("properties", {}).keys())
+            if props:
+                return (
+                    f"Node '{node_id}' (tool: {tool_name}) outputs: {props}. "
+                    f"Use one of these property names in your ${{...}} references."
+                )
+        break
+
+    return base_hint
+
+
 async def validate_compilation(
     user: Any,
     spec: Dict[str, Any],
@@ -227,7 +267,7 @@ async def validate_compilation(
         logger.warning("Workflow reference validation failed", exc_info=exc)
         error_type = "validation" if detailed_errors else "compilation"
         message = f"Validation failed: {exc}" if detailed_errors else str(exc)
-        hint = "Check that all ${...} references point to valid variables." if detailed_errors else None
+        hint = _build_reference_hint(spec, exc) if detailed_errors else None
         return ValidationError(error_type, message, hint)
     except WorkflowCompilerError as exc:
         logger.warning("Workflow compilation failed", exc_info=exc)

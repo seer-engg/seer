@@ -128,11 +128,10 @@ shared/tools/
 │   ├── repos.py
 │   ├── issues.py
 │   └── pulls.py
-├── supabase/
-│   ├── database.py
-│   ├── auth.py
-│   └── storage.py
-└── postgres.py                # PostgreSQL tools (786 lines)
+└── supabase/
+    ├── database.py
+    ├── auth.py
+    └── storage.py
 ```
 
 ## Adding a New Tool

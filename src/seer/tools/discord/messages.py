@@ -9,11 +9,15 @@ from fastapi import HTTPException
 from seer.logger import get_logger
 from seer.tools.credential_resolver import ResolvedCredentials
 from seer.tools.discord.base import DISCORD_API_BASE, DiscordAPIClient
+from seer.utils.rich_text import Platform, RichTextConverter
 
 if TYPE_CHECKING:
     from seer.core.runtime.context import WorkflowRuntimeContext
 
 logger = get_logger("shared.tools.discord.messages")
+
+# Shared converter instance for Discord tools
+_rich_text_converter = RichTextConverter()
 
 
 class DiscordSendChannelMessageTool(DiscordAPIClient):
@@ -41,8 +45,13 @@ class DiscordSendChannelMessageTool(DiscordAPIClient):
                 },
                 "content": {
                     "type": "string",
-                    "description": "Message content (max 2000 characters). Required if embed is not provided.",
+                    "description": (
+                        "Message content (supports formatting: bold, italic, underline,"
+                        " strikethrough, lists, quotes, code). Max 2000 characters."
+                    ),
                     "maxLength": 2000,
+                    "x-ui-type": "rich_text",
+                    "x-rich-text-platform": "discord",
                 },
                 "embed": {
                     "type": "object",
@@ -125,10 +134,12 @@ class DiscordSendChannelMessageTool(DiscordAPIClient):
                 detail="Message content cannot exceed 2000 characters"
             )
 
-        # Build request body
+        # Build request body with formatted content
         body: Dict[str, Any] = {}
         if content:
-            body["content"] = str(content)
+            # Convert markdown to Discord format
+            formatted_content = _rich_text_converter.convert(str(content), Platform.DISCORD)
+            body["content"] = formatted_content
         if embed:
             body["embed"] = embed
 
@@ -170,8 +181,13 @@ class DiscordSendDirectMessageTool(DiscordAPIClient):
                 },
                 "content": {
                     "type": "string",
-                    "description": "Message content (max 2000 characters). Required if embed is not provided.",
+                    "description": (
+                        "Message content (supports formatting: bold, italic, underline,"
+                        " strikethrough, lists, quotes, code). Max 2000 characters."
+                    ),
                     "maxLength": 2000,
+                    "x-ui-type": "rich_text",
+                    "x-rich-text-platform": "discord",
                 },
                 "embed": {
                     "type": "object",
@@ -249,10 +265,12 @@ class DiscordSendDirectMessageTool(DiscordAPIClient):
                 detail="Failed to create DM channel: no channel ID in response"
             )
 
-        # Step 2: Send message to DM channel
+        # Step 2: Send message to DM channel with formatted content
         message_body: Dict[str, Any] = {}
         if content:
-            message_body["content"] = str(content)
+            # Convert markdown to Discord format
+            formatted_content = _rich_text_converter.convert(str(content), Platform.DISCORD)
+            message_body["content"] = formatted_content
         if embed:
             message_body["embed"] = embed
 

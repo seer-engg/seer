@@ -57,7 +57,7 @@ services:
     volumes:
       - ./:/app
       - /app/.venv
-    command: ["sh", "-c", "uv run aerich upgrade"]
+    command: ["sh", "-c", "PGPASSWORD=${POSTGRES_PASSWORD:-postgres} psql -h postgres -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-seer} -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE SCHEMA IF NOT EXISTS seer;' && uv run aerich upgrade"]
     restart: "no"
 
   # Optional seed service - only runs with: docker compose --profile seed up
@@ -143,7 +143,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.worker
     depends_on:
       migrations:
         condition: service_completed_successfully

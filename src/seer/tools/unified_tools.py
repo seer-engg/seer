@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # Reason: unified surface for all tool implementations, splitting would break the single-source pattern
 """
 Unified tool implementations for both Nexus (LangGraph) and MCP (FastMCP) surfaces.
 
@@ -113,12 +114,12 @@ async def search_tools_impl(
         JSON with top_match (highest confidence tool) and alternatives
     """
     from seer.tools.discovery_shared import (  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-        search_tools_intent,
+        async_search_tools_intent,
         get_available_integrations,
     )
 
     try:
-        results = search_tools_intent(
+        results = await async_search_tools_intent(
             query=query,
             integration_filter=integration_filter,
             top_k=top_k,
@@ -223,12 +224,12 @@ async def search_triggers_impl(
         JSON with list of matching triggers, their keys, descriptions, and config schemas
     """
     from seer.tools.discovery_shared import (  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
-        search_triggers_intent,
+        async_search_triggers_intent,
         get_available_providers,
     )
 
     try:
-        results = search_triggers_intent(
+        results = await async_search_triggers_intent(
             query=query,
             provider_filter=provider_filter,
             top_k=top_k,
@@ -302,7 +303,7 @@ async def get_workflow_template_impl(query: str) -> str:
     from seer.tools.template_shared import search_templates  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
 
     try:
-        result = search_templates(query)
+        result = await search_templates(query)
         return json.dumps(result, indent=2)
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
         logger.exception("Error retrieving template: %s", e)
@@ -325,7 +326,7 @@ async def list_workflow_templates_impl() -> str:
     from seer.tools.template_shared import list_all_templates  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
 
     try:
-        result = list_all_templates()
+        result = await list_all_templates()
         return json.dumps(result, indent=2)
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
         logger.exception("Error listing templates: %s", e)
@@ -335,20 +336,46 @@ async def list_workflow_templates_impl() -> str:
         })
 
 
-async def get_workflow_schema_impl() -> str:
+async def get_workflow_schema_impl(focus: str = "basic") -> str:
     """
-    Get the WorkflowSpec JSON schema for building valid workflows.
+    Get workflow schema with node examples and edge types.
 
-    Use this to understand the structure of valid workflow specifications.
-    The schema defines nodes, edges, triggers, and all their required fields.
+    Returns compact reference (~2KB) with auto-generated node examples and edge types.
+    Use focus="basic" (default) for tool/for_each/hitl/if nodes (covers 80% of workflows).
+    Use focus="full" for all node types including agent/browser/image_gen/mcp.
+
+    Args:
+        focus: "basic" for common nodes only, "full" for all node types
 
     Returns:
-        JSON schema for WorkflowSpec with key validation rules
+        Node examples and edge type reference for building valid workflows
     """
-    from seer.agents.nexus.schema_context import get_workflow_spec_schema_text  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.agents.nexus.schema_context import (  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+        generate_node_type_reference,
+        generate_edge_reference,
+    )
 
     try:
-        return get_workflow_spec_schema_text()
+        full_ref = generate_node_type_reference()
+        edge_ref = generate_edge_reference()
+
+        if focus == "basic":
+            # Filter to only basic node types
+            basic_types = {"### tool", "### for_each", "### hitl", "### if"}
+            lines = full_ref.split("\n")
+            filtered = []
+            include = False
+            for line in lines:
+                if line.startswith("### "):
+                    include = line.lower() in basic_types
+                if include:
+                    filtered.append(line)
+            node_ref = "\n".join(filtered)
+        else:
+            node_ref = full_ref
+
+        return f"**Node Types**\n{node_ref}\n\n{edge_ref}"
+
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
         logger.exception("Error getting workflow schema: %s", e)
         return json.dumps({

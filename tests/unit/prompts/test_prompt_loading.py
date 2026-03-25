@@ -65,8 +65,8 @@ class TestNexusPrompts:
         prompt = get_nexus_system_prompt()
 
         # Should contain key sections
-        assert "Core Principles" in prompt
-        assert "Tool Discovery" in prompt
+        assert "Rules" in prompt
+        assert "search_tools" in prompt
         assert "WorkflowSpec" in prompt
         assert "Validation Checklist" in prompt
 

@@ -341,11 +341,50 @@ class TestProcessTriggerEvent:
                         MockRun.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
                         with patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock, return_value=mock_run):
                             with patch("seer.services.workflows.triggers._execute_run", new_callable=AsyncMock, return_value={"result": "success"}):
-                                with patch("seer.services.workflows.triggers._mark_run_succeeded", new_callable=AsyncMock):
+                                with patch("seer.services.workflows.triggers._mark_run_succeeded", new_callable=AsyncMock) as mock_mark_run_succeeded:
                                     await process_trigger_event(subscription_id=1, event_id=100)
 
         # Event should be marked as processed
         MockEvent.filter.return_value.update.assert_called()
+        mock_mark_run_succeeded.assert_awaited_once_with(mock_run, {"result": "success"})
+
+    @pytest.mark.asyncio
+    async def test_process_trigger_event_leaves_interrupted_run_unfinished(self, mock_subscription, mock_event):
+        """Test process_trigger_event does not mark trigger-created HITL runs as succeeded."""
+        from seer.database import TriggerEventStatus
+        from seer.services.workflows.triggers import process_trigger_event
+
+        mock_version = MagicMock()
+        mock_version.spec = {
+            "version": "2",
+            "nodes": [],
+            "edges": [],
+        }
+
+        mock_run = MagicMock()
+        mock_run.id = 200
+
+        interrupted_output = {
+            "__interrupted__": True,
+            "__interrupt_data__": {"node_id": "hitl_approval", "type": "hitl"},
+            "__interrupt__": [{"value": {"node_id": "hitl_approval", "type": "hitl"}}],
+        }
+
+        with patch("seer.services.workflows.triggers.TriggerSubscription") as MockSub:
+            MockSub.get = AsyncMock(return_value=mock_subscription)
+            with patch("seer.services.workflows.triggers.TriggerEvent") as MockEvent:
+                MockEvent.get = AsyncMock(return_value=mock_event)
+                MockEvent.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
+                with patch("seer.services.workflows.triggers.get_published_version", new_callable=AsyncMock, return_value=mock_version):
+                    with patch("seer.services.workflows.triggers.WorkflowRun") as MockRun:
+                        MockRun.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
+                        with patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock, return_value=mock_run):
+                            with patch("seer.services.workflows.triggers._execute_run", new_callable=AsyncMock, return_value=interrupted_output):
+                                with patch("seer.services.workflows.triggers._mark_run_succeeded", new_callable=AsyncMock) as mock_mark_run_succeeded:
+                                    await process_trigger_event(subscription_id=1, event_id=100)
+
+        MockEvent.filter.return_value.update.assert_awaited_once_with(status=TriggerEventStatus.PROCESSED)
+        mock_mark_run_succeeded.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_process_trigger_event_execution_error(self, mock_subscription, mock_event):

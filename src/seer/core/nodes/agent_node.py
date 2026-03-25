@@ -22,6 +22,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 from seer.core.errors import ExecutionError
+from seer.core.registry.default_models import DEPRECATED_MODEL_MAP
+from seer.logger import get_logger
 from seer.core.expr.typecheck import schema_from_output_contract
 from seer.core.nodes.base import BaseNodeType, NodeExecutionContext, TypeRegistrationContext, get_trace_key
 from seer.core.nodes.registry import register_node_type
@@ -33,7 +35,92 @@ if TYPE_CHECKING:
     from seer.core.runtime.nodes import RuntimeServices
     from seer.core.schema.models import NodeBase
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+_ERROR_PREFIX = "Error executing "
+
+
+# =============================================================================
+# ToolWorker — Supervisor-style tool execution isolation
+# =============================================================================
+
+
+class ToolWorker:
+    """Isolates tool execution from the supervisor agent's context.
+
+    Wraps a tool executor so that on failure, a cheap worker LLM reasons
+    about the error and generates corrected params for a retry. The
+    supervisor only ever sees a clean result or concise failure summary —
+    never raw error strings that would poison its conversation history.
+    """
+
+    def __init__(
+        self,
+        tool_name: str,
+        executor: Any,
+        *,
+        input_schema: Dict[str, Any],
+        worker_llm: Any,
+        max_retries: int = 1,
+    ) -> None:
+        self.tool_name = tool_name
+        self.executor = executor
+        self.input_schema = input_schema
+        self.worker_llm = worker_llm
+        self.max_retries = max_retries
+        self.failure_log: List[Dict[str, Any]] = []
+
+    async def __call__(self, **kwargs: Any) -> str:
+        logger.debug("ToolWorker executing '%s' (max_retries=%d)", self.tool_name, self.max_retries)
+        result = await self.executor(**kwargs)
+
+        if not isinstance(result, str) or not result.startswith(_ERROR_PREFIX):
+            return result
+
+        logger.debug("ToolWorker '%s' first attempt failed, entering retry loop", self.tool_name)
+        self.failure_log.append({"params": kwargs, "error": result})
+
+        for _attempt in range(self.max_retries):
+            corrected = await self._reason_and_correct(kwargs, result)
+            if corrected is None:
+                break
+
+            result = await self.executor(**corrected)
+            if not isinstance(result, str) or not result.startswith(_ERROR_PREFIX):
+                return result
+
+            self.failure_log.append({"params": corrected, "error": result})
+
+        original_error = self.failure_log[0]["error"]
+        reason = original_error.removeprefix(f"{_ERROR_PREFIX}{self.tool_name}: ").strip()
+        if len(reason) > 200:
+            reason = reason[:200] + "..."
+        return (
+            f"Tool '{self.tool_name}' failed: {reason}. "
+            f"Retried {len(self.failure_log)} time(s) without success. "
+            f"Try a different approach."
+        )
+
+    async def _reason_and_correct(self, original_params: Dict[str, Any], error_msg: str) -> Optional[Dict[str, Any]]:
+        """Use cheap LLM to analyze failure and suggest corrected params."""
+        prompt = (
+            f"A tool call to '{self.tool_name}' failed.\n"
+            f"Parameters: {json.dumps(original_params, default=str)}\n"
+            f"Error: {error_msg}\n"
+            f"Parameter schema: {json.dumps(self.input_schema, default=str)}\n\n"
+            f"Can this be fixed by changing the parameters? "
+            f"If yes, respond with ONLY the corrected JSON parameters object. "
+            f"If no (e.g. auth error, service down), respond with exactly: UNFIXABLE"
+        )
+        try:
+            response = await self.worker_llm.ainvoke([HumanMessage(content=prompt)])
+            text = response.content.strip() if isinstance(response.content, str) else str(response.content).strip()
+            if "UNFIXABLE" in text:
+                return None
+            return json.loads(text)
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: Worker LLM failure must not crash the agent
+            logger.warning("ToolWorker LLM failed for %s, skipping retry", self.tool_name)
+            return None
 
 
 # =============================================================================
@@ -258,12 +345,22 @@ async def _bind_tools_for_agent(
     tool_specs: List[Any],
     services: "RuntimeServices",  # pylint: disable=unused-argument  # Reason: Reserved for future use with ToolRegistry
     ctx: NodeExecutionContext,
-) -> List[StructuredTool]:
-    """Convert tool specifications to LangChain StructuredTools with credentials."""
+    *,
+    worker_llm: Any = None,
+    max_retries: int = 1,
+) -> tuple[List[StructuredTool], Dict[str, ToolWorker]]:
+    """Convert tool specifications to LangChain StructuredTools with credentials.
+
+    When worker_llm is provided, each tool executor is wrapped in a ToolWorker
+    that isolates failures from the supervisor agent's conversation history.
+
+    Returns (bound_tools, worker_map) where worker_map maps tool name → ToolWorker.
+    """
     # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
     from seer.tools.base import get_tool
 
     bound_tools: List[StructuredTool] = []
+    worker_map: Dict[str, ToolWorker] = {}
 
     for spec in tool_specs:
         tool_name, connection_id = _parse_tool_spec(spec)
@@ -275,6 +372,7 @@ async def _bind_tools_for_agent(
         tool_executor = _make_tool_executor(base_tool, connection_id, ctx)
 
         # Create input model from schema
+        input_schema: Dict[str, Any] = {}
         try:
             input_schema = base_tool.get_parameters_schema()
             input_model = _create_tool_input_model(tool_name, input_schema)
@@ -282,16 +380,38 @@ async def _bind_tools_for_agent(
             logger.warning("Failed to create input model for %s, using None", tool_name)
             input_model = None  # type: ignore[assignment]
 
+        worker: Optional[ToolWorker] = None
+        if worker_llm is not None:
+            worker = ToolWorker(
+                tool_name=tool_name,
+                executor=tool_executor,
+                input_schema=input_schema,
+                worker_llm=worker_llm,
+                max_retries=max_retries,
+            )
+            # StructuredTool.from_function needs an actual async function, not a callable class.
+            # Wrap in a closure so LangChain can inspect the signature via args_schema.
+            _worker = worker
+
+            async def _shielded_executor(_w: ToolWorker = _worker, **kwargs: Any) -> str:
+                return await _w(**kwargs)
+
+            tool_executor = _shielded_executor
+
+        tool_id = tool_name.replace(".", "_")
         structured_tool = StructuredTool.from_function(
             coroutine=tool_executor,
-            name=tool_name.replace(".", "_"),  # LangGraph requires valid identifiers
+            name=tool_id,
             description=base_tool.description,
             args_schema=input_model,
         )
 
+        if worker is not None:
+            worker_map[tool_id] = worker
+
         bound_tools.append(structured_tool)
 
-    return bound_tools
+    return bound_tools, worker_map
 
 
 def _format_memory_tool_response(memories: List[Dict[str, Any]]) -> str:
@@ -598,6 +718,7 @@ def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
     model_id = node.inputs.get("model")
     if not isinstance(model_id, str):
         raise ExecutionError(f"AgentNode {node.id}: 'model' must be a string in inputs")
+    model_id = DEPRECATED_MODEL_MAP.get(model_id, model_id)
 
     prompt_template = node.inputs.get("prompt")
     if not isinstance(prompt_template, str):
@@ -665,6 +786,7 @@ def _build_agent_trace(
             "output": success_data.get("result_value"),
             "output_key": node_id,
             "artifacts": success_data.get("artifacts", []),
+            "tool_failures": success_data.get("tool_failures", {}),
         })
     elif error:
         trace["error"] = error
@@ -763,6 +885,15 @@ def _build_recursion_limit(max_iterations: Any) -> int:
     return max_iterations * 3 if isinstance(max_iterations, int) else 30
 
 
+def _collect_tool_worker_failures(worker_map: Dict[str, ToolWorker]) -> Dict[str, List[Dict[str, Any]]]:
+    """Extract failure logs from ToolWorker instances for trace data."""
+    failures: Dict[str, List[Dict[str, Any]]] = {}
+    for tool_name, worker in worker_map.items():
+        if worker.failure_log:
+            failures[tool_name] = worker.failure_log
+    return failures
+
+
 # =============================================================================
 # Node Type Implementation
 # =============================================================================
@@ -833,9 +964,15 @@ class AgentNodeType(BaseNodeType):
         ctx: NodeExecutionContext,
         services: "RuntimeServices",
         config: Dict[str, Any],
-    ) -> List[StructuredTool]:
+        *,
+        worker_llm: Any = None,
+        max_retries: int = 1,
+    ) -> tuple[List[StructuredTool], Dict[str, ToolWorker]]:
         """Bind registry tools, attached memory tools, and artifact helpers."""
-        bound_tools = await _bind_tools_for_agent(config["tool_specs"], services, ctx)
+        bound_tools, worker_map = await _bind_tools_for_agent(
+            config["tool_specs"], services, ctx,
+            worker_llm=worker_llm, max_retries=max_retries,
+        )
 
         if config["memory_bank_id"] is not None:
             bound_tools.extend(await _build_attached_memory_tools(ctx, config["memory_bank_id"]))
@@ -846,7 +983,7 @@ class AgentNodeType(BaseNodeType):
 
             bound_tools.append(make_create_artifact_tool(ctx, node.id))
 
-        return bound_tools
+        return bound_tools, worker_map
 
     async def _invoke_agent(
         self,
@@ -1004,7 +1141,25 @@ class AgentNodeType(BaseNodeType):
         validate_against_schema(schema, result_value, schema_id=node.id)
         return result_value
 
-    async def execute_async(
+    @staticmethod
+    def _init_worker_llm(node_id: str) -> tuple[Any, int]:
+        """Initialize worker LLM for supervisor mode. Returns (llm, max_retries)."""
+        from seer.config import config as seer_config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+
+        max_retries = seer_config.agent_tool_max_retries
+        if not seer_config.agent_supervisor_mode:
+            return None, max_retries
+        try:
+            from seer.llm import get_llm  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+            worker_model = seer_config.default_llm_model
+            worker_llm = get_llm(model=worker_model, temperature=0)
+            logger.info("Supervisor mode: worker LLM '%s' initialized for agent node '%s'", worker_model, node_id)
+            return worker_llm, max_retries
+        except Exception:  # pylint: disable=broad-exception-caught  # Reason: Supervisor mode is optional; fall back to flat mode
+            logger.warning("Failed to init worker LLM, falling back to flat agent mode")
+            return None, max_retries
+
+    async def execute_async(  # pylint: disable=too-many-locals  # Reason: Orchestration method, splitting would obscure control flow
         self,
         node: AgentNode,  # type: ignore[override]
         ctx: NodeExecutionContext,
@@ -1014,9 +1169,13 @@ class AgentNodeType(BaseNodeType):
         await self._check_credit_limit(ctx.runtime_context)
         config = _extract_agent_config(node)
         inputs, rendered_prompt, prompt, human_message = await _build_prompt_bundle(node, ctx, config)
+        worker_llm, max_retries = self._init_worker_llm(node.id)
 
         try:
-            bound_tools = await self._build_bound_tools(node, ctx, services, config)
+            bound_tools, worker_map = await self._build_bound_tools(
+                node, ctx, services, config,
+                worker_llm=worker_llm, max_retries=max_retries,
+            )
             result = await self._invoke_agent(
                 node=node,
                 ctx=ctx,
@@ -1037,6 +1196,7 @@ class AgentNodeType(BaseNodeType):
             error_trace = self._build_error_trace(node, ctx, inputs, exc)
             raise ExecutionError(f"Agent node '{node.id}' failed: {exc}", trace_data=error_trace) from exc
 
+        tool_failures = _collect_tool_worker_failures(worker_map)
         output = self._build_success_output(
             node=node,
             ctx=ctx,
@@ -1047,15 +1207,17 @@ class AgentNodeType(BaseNodeType):
                 "steps": steps,
                 "result_value": result_value,
                 "artifacts": artifacts,
+                "tool_failures": tool_failures,
             },
             enable_artifacts=config["enable_artifacts"],
         )
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                "Agent node '%s' completed with %d steps, %d artifacts",
+                "Agent node '%s' completed with %d steps, %d artifacts, %d tool failures",
                 node.id,
                 len(steps),
                 len(artifacts),
+                sum(len(v) for v in tool_failures.values()),
             )
 
         return output

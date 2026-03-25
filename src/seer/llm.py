@@ -1,5 +1,4 @@
 """Shared LLM utilities"""
-import logging
 from typing import Literal, Optional
 
 from dotenv import load_dotenv
@@ -8,17 +7,18 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from seer.config import config
+from seer.logger import get_logger
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _detect_provider(model: str) -> Literal["openai", "anthropic", "openrouter"]:
     """Detect provider from model name."""
     if model.startswith("claude-"):
         return "anthropic"
-    if model.startswith(("moonshot/", "moonshotai/", "openrouter/", "z-ai/", "qwen/", "google/")):
+    if model.startswith(("moonshot/", "moonshotai/", "openrouter/", "z-ai/", "qwen/", "google/", "mistralai/")):
         return "openrouter"
     # Default to OpenRouter for other models
     return "openrouter"
