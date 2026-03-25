@@ -15,6 +15,7 @@ from seer.tools.knowledge import register_knowledge_tools  # noqa: F401
 from seer.tools.linkedin import register_linkedin_tools  # noqa: F401
 from seer.tools.memory import register_memory_tools  # noqa: F401
 from seer.tools.oura import register_oura_tools  # noqa: F401
+from seer.tools.postgres import register_postgres_tools  # noqa: F401
 from seer.tools.slack import register_slack_tools  # noqa: F401
 from seer.tools.supabase import register_supabase_tools  # noqa: F401
 from seer.tools.websearch import register_websearch_tools  # noqa: F401
@@ -22,6 +23,7 @@ from seer.tools.websearch import register_websearch_tools  # noqa: F401
 # Register tools
 register_google_tools()
 register_github_tools()
+register_postgres_tools()
 register_supabase_tools()
 register_discord_tools()
 register_knowledge_tools()
@@ -37,6 +39,7 @@ register_http_tools()
 __all__ = [
     "register_google_tools",
     "register_github_tools",
+    "register_postgres_tools",
     "register_supabase_tools",
     "register_discord_tools",
     "register_knowledge_tools",

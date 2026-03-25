@@ -33,6 +33,42 @@ class SupabaseManualBindRequest(BaseModel):
     )
 
 
+class PostgresBindRequest(BaseModel):
+    """Request to bind a PostgreSQL database using connection string or individual fields."""
+    name: str = Field(..., min_length=1, max_length=100, description="Friendly database display name")
+    connection_string: Optional[str] = Field(
+        default=None,
+        description="PostgreSQL connection string (postgresql://user:pass@host:port/db)",
+    )
+    host: Optional[str] = Field(default=None, description="Database host")
+    port: int = Field(default=5432, ge=1, le=65535, description="Database port")
+    database: Optional[str] = Field(default=None, description="Database name")
+    user: Optional[str] = Field(default=None, description="Database username")
+    password: Optional[str] = Field(default=None, description="Database password")
+    ssl_mode: str = Field(
+        default="prefer",
+        description="SSL mode: disable, allow, prefer, require, verify-ca, verify-full",
+    )
+    access_mode: str = Field(
+        default="restricted",
+        description="Access mode: 'restricted' (read-only) or 'unrestricted' (read-write)",
+    )
+
+
+class PostgresTestRequest(BaseModel):
+    """Request to test a PostgreSQL connection without saving."""
+    connection_string: Optional[str] = Field(
+        default=None,
+        description="PostgreSQL connection string (postgresql://user:pass@host:port/db)",
+    )
+    host: Optional[str] = Field(default=None, description="Database host")
+    port: int = Field(default=5432, ge=1, le=65535, description="Database port")
+    database: Optional[str] = Field(default=None, description="Database name")
+    user: Optional[str] = Field(default=None, description="Database username")
+    password: Optional[str] = Field(default=None, description="Database password")
+    ssl_mode: str = Field(default="prefer", description="SSL mode")
+
+
 
 
 class ToolStatus(BaseModel):
