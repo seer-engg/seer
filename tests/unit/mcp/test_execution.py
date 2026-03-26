@@ -32,11 +32,15 @@ class TestRunWorkflow:
     @pytest.mark.asyncio
     @patch("seer.mcp.tools.execution._ensure_db")
     @patch("seer.mcp.tools.execution._get_mcp_user")
+    @patch("seer.mcp.tools.execution._get_latest_trigger_event")
+    @patch("seer.database.workflow_models.parse_workflow_public_id")
     @patch("seer.api.workflows.services.execution.run_saved_workflow")
-    async def test_run_workflow_success(self, mock_run, mock_get_user, mock_ensure_db):
-        """Test that run_workflow returns correct JSON for a successful run."""
+    async def test_run_workflow_success(self, mock_run, mock_parse_id, mock_get_trigger, mock_get_user, mock_ensure_db):
+        """Test that run_workflow returns correct JSON for a successful run (no triggers)."""
         mock_ensure_db.return_value = None
         mock_get_user.return_value = MagicMock()
+        mock_parse_id.return_value = 123  # Valid workflow pk
+        mock_get_trigger.return_value = (None, None, None)  # No triggers (manual workflow)
         mock_run.return_value = RunResponse(
             run_id="run_abc",
             status="pending",
@@ -52,6 +56,65 @@ class TestRunWorkflow:
         assert data["status"] == "pending"
         assert data["workflow_id"] == "wf_test"
         assert "created_at" in data
+        # Manual workflow - no trigger info
+        assert "trigger_id_used" not in data
+
+    @pytest.mark.asyncio
+    @patch("seer.mcp.tools.execution._ensure_db")
+    @patch("seer.mcp.tools.execution._get_mcp_user")
+    @patch("seer.mcp.tools.execution._get_latest_trigger_event")
+    @patch("seer.database.workflow_models.parse_workflow_public_id")
+    @patch("seer.api.workflows.services.execution.run_saved_workflow")
+    async def test_run_workflow_with_auto_selected_trigger(self, mock_run, mock_parse_id, mock_get_trigger, mock_get_user, mock_ensure_db):
+        """Test that run_workflow auto-selects trigger event and includes metadata."""
+        mock_ensure_db.return_value = None
+        mock_get_user.return_value = MagicMock()
+        mock_parse_id.return_value = 123
+        # Simulate workflow with trigger that has an event
+        mock_get_trigger.return_value = (
+            {"trigger_key": "gmail.new_email", "data": {"subject": "test"}},  # event_envelope
+            "gmail_trigger_1",  # trigger_id_used
+            None,  # no error
+        )
+        mock_run.return_value = RunResponse(
+            run_id="run_xyz",
+            status="pending",
+            workflow_id="wf_triggered",
+            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+
+        from seer.mcp.tools.execution import run_workflow
+        result = await run_workflow.fn("wf_triggered")
+        data = json.loads(result)
+
+        assert data["run_id"] == "run_xyz"
+        assert data["trigger_id_used"] == "gmail_trigger_1"
+        assert data["auto_selected_event"] is True
+
+    @pytest.mark.asyncio
+    @patch("seer.mcp.tools.execution._ensure_db")
+    @patch("seer.mcp.tools.execution._get_mcp_user")
+    @patch("seer.mcp.tools.execution._get_latest_trigger_event")
+    @patch("seer.database.workflow_models.parse_workflow_public_id")
+    async def test_run_workflow_no_trigger_events(self, mock_parse_id, mock_get_trigger, mock_get_user, mock_ensure_db):
+        """Test that run_workflow returns error when trigger has no events."""
+        mock_ensure_db.return_value = None
+        mock_get_user.return_value = MagicMock()
+        mock_parse_id.return_value = 123
+        # Simulate workflow with trigger but no events yet
+        mock_get_trigger.return_value = (
+            None,  # no event_envelope
+            "my_trigger",  # trigger_id
+            "Workflow has trigger 'my_trigger' but no events received yet.",  # error
+        )
+
+        from seer.mcp.tools.execution import run_workflow
+        result = await run_workflow.fn("wf_no_events")
+        data = json.loads(result)
+
+        assert data["error"] == "no_trigger_event"
+        assert "no events received" in data["message"]
+        assert data["trigger_id"] == "my_trigger"
 
 
 @pytest.mark.unit
