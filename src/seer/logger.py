@@ -21,7 +21,6 @@ Usage:
 import asyncio
 import logging
 import os
-import socket
 import sys
 import threading
 import traceback
@@ -32,7 +31,6 @@ import httpx
 # Global cache of loggers
 _loggers = {}
 
-import json
 
 # Lazy import to avoid circular dependencies
 _config = None
@@ -303,7 +301,7 @@ class SlackHandler(logging.Handler):
 
             return message_text
 
-        except Exception as e:
+        except Exception:
             # Ultimate fallback - if even formatting fails, send minimal message
             try:
                 return f"{record.levelname} in {record.name}: {record.getMessage()}"

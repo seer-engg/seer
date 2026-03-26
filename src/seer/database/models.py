@@ -11,7 +11,6 @@ from tortoise import fields, models
 
 if TYPE_CHECKING:
     from seer.api.core.middleware.auth import AuthenticatedUser
-    from seer.database.workflow_models import WorkflowCreationMode
 
 
 class User(models.Model):

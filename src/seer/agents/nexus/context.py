@@ -7,7 +7,6 @@ _submission_attempt_count: ContextVar[int] = ContextVar('_submission_attempt_cou
 
 if TYPE_CHECKING:
     from seer.api.user.models import User
-    from seer.database.workflow_models import WorkflowChatSession, WorkflowDiscoveryChatSession
 
 
 async def get_user_for_thread(thread_id: str) -> Optional["User"]:

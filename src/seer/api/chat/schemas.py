@@ -1,4 +1,5 @@
 """Pydantic schemas for general chat API."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -21,6 +22,7 @@ class ChatSendRequest(BaseModel):
     generate_image: bool = False
     image_model: Optional[str] = None
     image_size: Optional[str] = "1024x1024"
+    timezone: Optional[str] = None
 
 
 class ChatMessageResponse(BaseModel):

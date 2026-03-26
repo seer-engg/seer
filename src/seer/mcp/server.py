@@ -88,9 +88,6 @@ def _register_tools() -> None:
     unified_registry.register_mcp_tools(mcp)
 
     # MCP-only modules (not yet in factory)
-    from seer.mcp.tools import workflows
-    from seer.mcp.tools import execution
-    from seer.mcp.tools import guides
 
 
 def _create_auth_middleware():
