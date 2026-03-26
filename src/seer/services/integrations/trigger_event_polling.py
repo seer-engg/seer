@@ -34,7 +34,7 @@ from seer.core.triggers.polling.adapters.google_calendar_event_changed import (
     CALENDAR_API_BASE,
     MAX_EVENTS_PER_POLL as CALENDAR_MAX_EVENTS,
     GoogleCalendarEventChangedAdapter,
-    _normalize_event as _normalize_calendar_event,
+    _normalize_event_with_type as _normalize_calendar_event,
     _parse_rfc3339,
 )
 from seer.database import User
