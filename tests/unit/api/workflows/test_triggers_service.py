@@ -1,112 +1,18 @@
 """
-Unit tests for api.workflows.services.triggers module.
+Unit tests for api.workflows.services.triggers pure logic.
 
-Tests trigger subscription management, validation, and webhook URL building.
+Tests validation, URL building, expression evaluation, and event generation.
+Heavy mock tests for DB operations have been moved to E2E tests.
 """
 # pylint: disable=redefined-outer-name
 # Reason: pytest fixture pattern requires name reuse
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 
-# =============================================================================
-# Auto Select Provider Connection Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestAutoSelectProviderConnection:
-    """Tests for _auto_select_provider_connection function."""
-
-    # Note: mock_user fixture is provided by tests/unit/conftest.py
-
-    @pytest.fixture
-    def mock_trigger_definition(self):
-        """Create a mock trigger definition."""
-        definition = MagicMock()
-        definition.key = "gmail.new_email"
-        definition.provider = "gmail"
-        return definition
-
-    @pytest.mark.asyncio
-    async def test_auto_select_finds_single_connection(self, mock_user, mock_trigger_definition):
-        """Test auto-select finds connection when only one account exists."""
-        from seer.api.workflows.services.triggers import _auto_select_provider_connection
-
-        mock_connection = MagicMock()
-        mock_connection.id = 123
-
-        with patch("seer.api.workflows.services.triggers.get_oauth_provider", return_value="google"):
-            with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuthConnection:
-                mock_query = MagicMock()
-                mock_query.order_by = MagicMock(
-                    return_value=MagicMock(all=AsyncMock(return_value=[mock_connection]))
-                )
-                MockOAuthConnection.filter = MagicMock(return_value=mock_query)
-
-                result = await _auto_select_provider_connection(mock_user, mock_trigger_definition)
-
-        assert result == 123
-
-    @pytest.mark.asyncio
-    async def test_auto_select_returns_none_when_no_connection(self, mock_user, mock_trigger_definition):
-        """Test auto-select returns None when no active connection found."""
-        from seer.api.workflows.services.triggers import _auto_select_provider_connection
-
-        with patch("seer.api.workflows.services.triggers.get_oauth_provider", return_value="google"):
-            with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuthConnection:
-                mock_query = MagicMock()
-                mock_query.order_by = MagicMock(
-                    return_value=MagicMock(all=AsyncMock(return_value=[]))
-                )
-                MockOAuthConnection.filter = MagicMock(return_value=mock_query)
-
-                result = await _auto_select_provider_connection(mock_user, mock_trigger_definition)
-
-        assert result is None
-
-
-# =============================================================================
-# Load Trigger Definition Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestLoadTriggerDefinition:
-    """Tests for _load_trigger_definition function."""
-
-    def test_load_trigger_definition_success(self):
-        """Test loading existing trigger definition."""
-        from seer.api.workflows.services.triggers import _load_trigger_definition
-
-        mock_definition = MagicMock()
-        mock_definition.key = "webhook.generic"
-
-        with patch("seer.api.workflows.services.triggers.trigger_registry") as mock_registry:
-            mock_registry.maybe_get.return_value = mock_definition
-
-            result = _load_trigger_definition("webhook.generic")
-
-        assert result == mock_definition
-        mock_registry.maybe_get.assert_called_once_with("webhook.generic")
-
-    def test_load_trigger_definition_not_found_raises_problem(self):
-        """Test loading non-existent trigger raises problem."""
-        from seer.api.workflows.services.triggers import _load_trigger_definition
-
-        with patch("seer.api.workflows.services.triggers.trigger_registry") as mock_registry:
-            mock_registry.maybe_get.return_value = None
-            with patch("seer.api.workflows.services.triggers._raise_problem") as mock_raise:
-                mock_raise.side_effect = Exception("Problem raised")
-
-                with pytest.raises(Exception, match="Problem raised"):
-                    _load_trigger_definition("nonexistent.trigger")
-
-        mock_raise.assert_called_once()
-        call_kwargs = mock_raise.call_args[1]
-        assert call_kwargs["status"] == 404
+pytestmark = pytest.mark.unit
 
 
 # =============================================================================
@@ -114,7 +20,6 @@ class TestLoadTriggerDefinition:
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestValidateFiltersPayload:
     """Tests for _validate_filters_payload function."""
 
@@ -182,7 +87,6 @@ class TestValidateFiltersPayload:
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestValidateProviderConfig:
     """Tests for _validate_provider_config function."""
 
@@ -436,7 +340,6 @@ class TestValidateProviderConfig:
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestIsExpression:
     """Tests for _is_expression function."""
 
@@ -469,7 +372,6 @@ class TestIsExpression:
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestBuildWebhookUrl:
     """Tests for _build_webhook_url function."""
 
@@ -496,115 +398,10 @@ class TestBuildWebhookUrl:
 
 
 # =============================================================================
-# Serialize Subscription Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestSerializeSubscription:
-    """Tests for _serialize_subscription function."""
-
-    @pytest.mark.asyncio
-    async def test_serialize_subscription_basic_fields(self):
-        """Test serialization includes all basic fields."""
-        from seer.api.workflows.services.triggers import _serialize_subscription
-
-        mock_subscription = MagicMock()
-        mock_subscription.id = 1
-        mock_subscription.workflow_id = 100
-        mock_subscription.trigger_key = "schedule.cron"
-        mock_subscription.provider_connection_id = 50
-        mock_subscription.enabled = True
-        mock_subscription.filters = {"key": "value"}
-        mock_subscription.provider_config = {"cron": "* * * * *"}
-        mock_subscription.webhook_slug = None  # Not a webhook trigger
-        mock_subscription.form_suffix = None
-        mock_subscription.form_fields = None
-        mock_subscription.form_config = None
-        mock_subscription.created_at = MagicMock()
-        mock_subscription.updated_at = MagicMock()
-
-        mock_conn = MagicMock()
-        mock_conn.provider = "google"
-        mock_conn.provider_account_id = "123"
-        mock_conn.provider_metadata = {"email": "test@example.com"}
-
-        with patch("seer.api.workflows.services.triggers.make_workflow_public_id", return_value="wf_abc123"):
-            with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuthConnection:
-                MockOAuthConnection.get_or_none = AsyncMock(return_value=mock_conn)
-                result = await _serialize_subscription(mock_subscription)
-
-        assert result.subscription_id == 1
-        assert result.workflow_id == "wf_abc123"
-        assert result.trigger_key == "schedule.cron"
-        assert result.provider_connection_id == 50
-        assert result.enabled is True
-        assert result.filters == {"key": "value"}
-        assert result.connection_display_name == "test@example.com"
-
-    @pytest.mark.asyncio
-    async def test_serialize_subscription_with_webhook_url(self):
-        """Test serialization includes webhook URL for webhook triggers."""
-        from seer.api.workflows.services.triggers import _serialize_subscription
-
-        mock_subscription = MagicMock()
-        mock_subscription.id = 123
-        mock_subscription.workflow_id = 100
-        mock_subscription.trigger_key = "webhook.generic"
-        mock_subscription.provider_connection_id = None
-        mock_subscription.enabled = True
-        mock_subscription.filters = {}
-        mock_subscription.provider_config = {}
-        mock_subscription.webhook_slug = "test_slug_abc123"
-        mock_subscription.form_suffix = None
-        mock_subscription.form_fields = None
-        mock_subscription.form_config = None
-        mock_subscription.created_at = MagicMock()
-        mock_subscription.updated_at = MagicMock()
-
-        with patch("seer.api.workflows.services.triggers.make_workflow_public_id", return_value="wf_xyz"):
-            result = await _serialize_subscription(mock_subscription)
-
-        assert result.webhook_url == "/api/v1/webhooks/generic/test_slug_abc123"
-        assert result.secret_token is None  # Deprecated: slug-based URLs don't need secrets
-        assert result.connection_display_name is None
-
-    @pytest.mark.asyncio
-    async def test_serialize_subscription_with_form_url(self):
-        """Test serialization includes form URL for form triggers."""
-        from seer.api.workflows.services.triggers import _serialize_subscription
-
-        mock_subscription = MagicMock()
-        mock_subscription.id = 456
-        mock_subscription.workflow_id = 200
-        mock_subscription.trigger_key = "form.hosted"
-        mock_subscription.provider_connection_id = None
-        mock_subscription.enabled = True
-        mock_subscription.filters = {}
-        mock_subscription.provider_config = {}
-        mock_subscription.webhook_slug = None  # Form triggers don't use webhook_slug
-        mock_subscription.form_suffix = "contact-form"
-        mock_subscription.form_fields = [{"name": "email", "type": "email"}]
-        mock_subscription.form_config = {"title": "Contact Us"}
-        mock_subscription.created_at = MagicMock()
-        mock_subscription.updated_at = MagicMock()
-
-        with patch("seer.api.workflows.services.triggers.make_workflow_public_id", return_value="wf_form"):
-            with patch("seer.api.workflows.services.triggers.shared_config") as mock_config:
-                mock_config.frontend_url = "https://app.example.com"
-                result = await _serialize_subscription(mock_subscription)
-
-        assert result.form_url == "https://app.example.com/forms/contact-form"
-        assert result.form_suffix == "contact-form"
-        assert result.form_fields == [{"name": "email", "type": "email"}]
-
-
-# =============================================================================
 # Validate Form Suffix Tests
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestValidateFormSuffix:
     """Tests for _validate_form_suffix function."""
 
@@ -644,7 +441,6 @@ class TestValidateFormSuffix:
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestExtractEventPath:
     """Tests for _extract_event_path function."""
 
@@ -683,7 +479,6 @@ class TestExtractEventPath:
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestEvaluateBindings:
     """Tests for _evaluate_bindings function."""
 
@@ -732,229 +527,10 @@ class TestEvaluateBindings:
 
 
 # =============================================================================
-# Sync Trigger Subscriptions Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestSyncTriggerSubscriptions:
-    """Tests for sync_trigger_subscriptions function."""
-
-    # Note: mock_user and mock_workflow fixtures are provided by tests/unit/conftest.py
-
-    @pytest.fixture
-    def mock_spec(self):
-        """Create a mock workflow spec with a trigger."""
-        spec = MagicMock()
-        trigger = MagicMock()
-        trigger.id = "trigger_1"
-        trigger.key = "webhook.generic"
-        trigger.filters = {}
-        trigger.provider_config = {}
-        trigger.ui_meta = None
-        spec.triggers = [trigger]
-        return spec
-
-    @pytest.mark.asyncio
-    async def test_sync_reenables_disabled_subscription(self, mock_user, mock_workflow, mock_spec):
-        """
-        Test that sync_trigger_subscriptions re-enables a previously disabled subscription.
-
-        This is important for the "no published version" -> publish flow:
-        1. Trigger fails with "no published version" and gets disabled
-        2. User publishes workflow
-        3. sync_trigger_subscriptions should re-enable the trigger
-        """
-        from seer.api.workflows.services.triggers import sync_trigger_subscriptions
-
-        # Create a mock disabled subscription
-        mock_subscription = MagicMock()
-        mock_subscription.id = 1
-        mock_subscription.trigger_id = "trigger_1"
-        mock_subscription.trigger_key = "webhook.generic"
-        mock_subscription.enabled = False  # Previously disabled due to no published version
-        mock_subscription.secret_token = "existing_secret"
-        mock_subscription.save = AsyncMock()
-
-        # Mock trigger definition
-        mock_definition = MagicMock()
-        mock_definition.title = "Generic Webhook"
-        mock_definition.meta.requires_connection = False
-        mock_definition.schemas.filter = None
-
-        with patch("seer.api.workflows.services.triggers.TriggerSubscription") as MockSub:
-            # Return the disabled subscription as existing
-            MockSub.filter = MagicMock(return_value=AsyncMock(return_value=[mock_subscription])())
-
-            with patch("seer.api.workflows.services.triggers._load_trigger_definition", return_value=mock_definition):
-                with patch("seer.api.workflows.services.triggers._validate_and_adjust_poll_interval", new_callable=AsyncMock, return_value=(60, None)):
-                    with patch("seer.api.workflows.services.triggers.delete_trigger_subscription", new_callable=AsyncMock):
-                        await sync_trigger_subscriptions(
-                            mock_user, mock_workflow, mock_spec, skip_validation=True
-                        )
-
-        # Verify subscription was re-enabled
-        assert mock_subscription.enabled is True
-        mock_subscription.save.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_sync_skip_validation_preserves_provider_connection_id(self, mock_user, mock_workflow):
-        """
-        Regression test: running a draft workflow (skip_validation=True) must not
-        clobber an existing provider_connection_id with None.
-
-        Root cause: line 880 unconditionally overwrote provider_connection_id from
-        the frontend payload, which is empty during draft runs.
-        """
-        from seer.api.workflows.services.triggers import sync_trigger_subscriptions
-
-        # Spec with a gmail trigger that has NO provider_connection_id in provider_config
-        spec = MagicMock()
-        trigger = MagicMock()
-        trigger.id = "gmail_trigger"
-        trigger.key = "poll.gmail.email_received"
-        trigger.filters = {}
-        trigger.provider_config = {}  # frontend doesn't send connection ID on draft run
-        trigger.ui_meta = None
-        spec.triggers = [trigger]
-
-        # Existing subscription WITH a valid provider_connection_id
-        mock_subscription = MagicMock()
-        mock_subscription.id = 45
-        mock_subscription.trigger_id = "gmail_trigger"
-        mock_subscription.trigger_key = "poll.gmail.email_received"
-        mock_subscription.provider_connection_id = 14  # previously set, must survive
-        mock_subscription.enabled = True
-        mock_subscription.webhook_slug = None
-        mock_subscription.form_suffix = None
-        mock_subscription.save = AsyncMock()
-
-        mock_definition = MagicMock()
-        mock_definition.title = "Gmail - New Email"
-        mock_definition.meta.requires_connection = True
-        mock_definition.schemas.filter = None
-
-        with patch("seer.api.workflows.services.triggers.TriggerSubscription") as MockSub:
-            MockSub.filter = MagicMock(return_value=AsyncMock(return_value=[mock_subscription])())
-
-            with patch("seer.api.workflows.services.triggers._load_trigger_definition", return_value=mock_definition):
-                with patch("seer.api.workflows.services.triggers._validate_and_adjust_poll_interval", new_callable=AsyncMock, return_value=(60, None)):
-                    with patch("seer.api.workflows.services.triggers.delete_trigger_subscription", new_callable=AsyncMock):
-                        await sync_trigger_subscriptions(
-                            mock_user, mock_workflow, spec, skip_validation=True
-                        )
-
-        # provider_connection_id must NOT be clobbered to None
-        assert mock_subscription.provider_connection_id == 14
-        mock_subscription.save.assert_called_once()
-
-
-# =============================================================================
-# List Trigger Subscriptions Extended Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestListTriggerSubscriptionsExtended:
-    """Tests for list_trigger_subscriptions_extended function."""
-
-    @pytest.mark.asyncio
-    async def test_handles_orphaned_workflow_gracefully(self, mock_user):
-        """Test that orphaned subscriptions (workflow deleted) show fallback title.
-
-        Regression test for: AttributeError: 'NoneType' object has no attribute 'name'
-        when sub.workflow is None due to deleted workflow.
-        """
-        from seer.api.workflows.services.triggers import list_trigger_subscriptions_extended
-
-        # Create a mock subscription with workflow = None (orphaned)
-        mock_subscription = MagicMock()
-        mock_subscription.id = 1
-        mock_subscription.trigger_id = "trigger_1"
-        mock_subscription.trigger_key = "webhook.generic"
-        mock_subscription.title = "My Trigger"
-        mock_subscription.enabled = True
-        mock_subscription.workflow_id = 999  # FK exists but workflow deleted
-        mock_subscription.workflow = None  # Orphaned - workflow was deleted
-        mock_subscription.created_at = datetime.now(timezone.utc)
-
-        # Mock TriggerSubscription query
-        with patch("seer.api.workflows.services.triggers.TriggerSubscription") as MockSub:
-            mock_query = MagicMock()
-            mock_query.prefetch_related = MagicMock(return_value=mock_query)
-            mock_query.filter = MagicMock(return_value=mock_query)
-            mock_query.order_by = AsyncMock(return_value=[mock_subscription])
-            MockSub.filter = MagicMock(return_value=mock_query)
-
-            # Mock TriggerEvent query for last_event
-            with patch("seer.api.workflows.services.triggers.TriggerEvent") as MockEvent:
-                mock_event_query = MagicMock()
-                mock_event_query.order_by = MagicMock(
-                    return_value=MagicMock(first=AsyncMock(return_value=None))
-                )
-                MockEvent.filter = MagicMock(return_value=mock_event_query)
-
-                with patch(
-                    "seer.api.workflows.services.triggers.make_workflow_public_id",
-                    return_value="wf_999"
-                ):
-                    # Should NOT raise AttributeError
-                    result = await list_trigger_subscriptions_extended(mock_user)
-
-        # Verify the orphaned subscription shows "Deleted Workflow" as title
-        assert len(result.items) == 1
-        assert result.items[0].workflow_title == "Deleted Workflow"
-        assert result.items[0].workflow_id == "wf_999"
-
-    @pytest.mark.asyncio
-    async def test_shows_workflow_name_when_present(self, mock_user):
-        """Test that subscription with valid workflow shows the workflow name."""
-        from seer.api.workflows.services.triggers import list_trigger_subscriptions_extended
-
-        # Create a mock subscription with valid workflow
-        mock_workflow = MagicMock()
-        mock_workflow.name = "My Production Workflow"
-
-        mock_subscription = MagicMock()
-        mock_subscription.id = 2
-        mock_subscription.trigger_id = "trigger_2"
-        mock_subscription.trigger_key = "gmail.new_email"
-        mock_subscription.title = "Gmail Trigger"
-        mock_subscription.enabled = True
-        mock_subscription.workflow_id = 100
-        mock_subscription.workflow = mock_workflow
-        mock_subscription.created_at = datetime.now(timezone.utc)
-
-        with patch("seer.api.workflows.services.triggers.TriggerSubscription") as MockSub:
-            mock_query = MagicMock()
-            mock_query.prefetch_related = MagicMock(return_value=mock_query)
-            mock_query.filter = MagicMock(return_value=mock_query)
-            mock_query.order_by = AsyncMock(return_value=[mock_subscription])
-            MockSub.filter = MagicMock(return_value=mock_query)
-
-            with patch("seer.api.workflows.services.triggers.TriggerEvent") as MockEvent:
-                mock_event_query = MagicMock()
-                mock_event_query.order_by = MagicMock(
-                    return_value=MagicMock(first=AsyncMock(return_value=None))
-                )
-                MockEvent.filter = MagicMock(return_value=mock_event_query)
-
-                with patch(
-                    "seer.api.workflows.services.triggers.make_workflow_public_id",
-                    return_value="wf_100"
-                ):
-                    result = await list_trigger_subscriptions_extended(mock_user)
-
-        assert len(result.items) == 1
-        assert result.items[0].workflow_title == "My Production Workflow"
-
-
-# =============================================================================
 # Generate Cron Event Tests
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestGenerateCronEvent:
     """Tests for generate_cron_event function."""
 
@@ -1008,7 +584,7 @@ class TestGenerateCronEvent:
         occurred_at = datetime.fromisoformat(result["occurred_at"])
         received_at = datetime.fromisoformat(result["received_at"])
 
-        # All timestamps should be close to now (within a second)
+        # All timestamps should be timezone-aware
         assert all(t.tzinfo is not None for t in [scheduled_time, actual_time, occurred_at, received_at])
 
     def test_generate_cron_event_unique_ids(self):

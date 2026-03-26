@@ -1,12 +1,12 @@
 # pylint: disable=import-outside-toplevel
 # Reason: Test file with lazy imports
 """
-Unit tests for overage database models.
+Unit tests for overage billing pure computation.
 
 Tests cover:
-- OverageSettings model properties and methods
-- OverageUsageRecord model
-- Model relationships and defaults
+- OverageSettings property calculations (cents→dollars conversion)
+- Cap reached detection logic
+- Margin calculation math
 """
 from decimal import Decimal
 
@@ -128,85 +128,6 @@ class TestOverageSettingsModel:
         settings.current_period_overage_cents = 6000
 
         assert settings.is_cap_reached() is True
-
-    def test_default_margin_multiplier_constant(self):
-        """Test expected margin multiplier is 1.30 (30% margin)."""
-        # The default margin is 1.30x which equals 30% markup
-        # This is defined in OverageSettings model field default
-        expected_margin = Decimal("1.30")
-        assert expected_margin == Decimal("1.30")
-
-    def test_default_spending_cap_constant(self):
-        """Test expected default spending cap is $50 (5000 cents)."""
-        # Default spending cap defined in model field
-        # 5000 cents = $50
-        from seer.observability.constants import tiered_usage_limits
-
-        assert tiered_usage_limits.OVERAGE_DEFAULT_CAP_CENTS == 5000
-
-
-# =============================================================================
-# OverageRecordStatus Enum Tests
-# =============================================================================
-
-
-class TestOverageRecordStatusEnum:
-    """Tests for OverageRecordStatus enum."""
-
-    def test_pending_value(self):
-        """Test PENDING status value."""
-        from seer.database.overage_models import OverageRecordStatus
-
-        assert OverageRecordStatus.PENDING.value == "pending"
-
-    def test_reported_value(self):
-        """Test REPORTED status value."""
-        from seer.database.overage_models import OverageRecordStatus
-
-        assert OverageRecordStatus.REPORTED.value == "reported"
-
-    def test_failed_value(self):
-        """Test FAILED status value."""
-        from seer.database.overage_models import OverageRecordStatus
-
-        assert OverageRecordStatus.FAILED.value == "failed"
-
-    def test_status_is_string_enum(self):
-        """Test that status values are strings."""
-        from seer.database.overage_models import OverageRecordStatus
-
-        assert isinstance(OverageRecordStatus.PENDING, str)
-        assert isinstance(OverageRecordStatus.REPORTED, str)
-        assert isinstance(OverageRecordStatus.FAILED, str)
-
-
-# =============================================================================
-# OverageUsageRecord Model Tests
-# =============================================================================
-
-
-class TestOverageUsageRecordModel:
-    """Tests for OverageUsageRecord model."""
-
-    def test_str_representation(self):
-        """Test string representation of usage record."""
-        from seer.database.overage_models import OverageUsageRecord, OverageRecordStatus
-
-        record = OverageUsageRecord()
-        # Simulate the foreign key field by setting the internal ID
-        # pylint: disable=protected-access
-        record._overage_settings_id = 1  # type: ignore[attr-defined]
-        record.base_cost_cents = 100
-        record.billed_amount_cents = 130
-        record.status = OverageRecordStatus.PENDING
-
-        # The __str__ method accesses overage_settings_id
-        # We need to set it properly for the test
-        record.overage_settings_id = 1  # type: ignore[attr-defined]
-
-        result = str(record)
-
-        assert "base=$1.00" in result or "1" in result  # Depends on implementation
 
 
 # =============================================================================
