@@ -3,6 +3,7 @@
 """
 Workflow API router for CRUD and execution endpoints.
 """
+
 import uuid
 from typing import Any, Dict, Optional
 
@@ -73,7 +74,10 @@ def _ensure_session_can_start_fresh_chat(session: Any) -> None:
     """Reject invalid fresh-chat transitions for interrupted or active sessions."""
     from seer.database.workflow_models import ChatExecutionStatus  # pylint: disable=import-outside-toplevel # Reason: avoid circular import at module load
 
-    if session.current_execution_status in [ChatExecutionStatus.QUEUED, ChatExecutionStatus.RUNNING]:
+    if session.current_execution_status in [
+        ChatExecutionStatus.QUEUED,
+        ChatExecutionStatus.RUNNING,
+    ]:
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Execution already in progress",
@@ -94,7 +98,10 @@ def _ensure_session_can_resume(session: Any) -> None:
     """Reject invalid resume transitions when no interrupt is pending."""
     from seer.database.workflow_models import ChatExecutionStatus  # pylint: disable=import-outside-toplevel # Reason: avoid circular import at module load
 
-    if session.current_execution_status in [ChatExecutionStatus.QUEUED, ChatExecutionStatus.RUNNING]:
+    if session.current_execution_status in [
+        ChatExecutionStatus.QUEUED,
+        ChatExecutionStatus.RUNNING,
+    ]:
         raise_problem(
             type_uri=VALIDATION_PROBLEM,
             title="Execution already in progress",
@@ -118,14 +125,16 @@ def _require_user(request: Request) -> User:
             type_uri=AUTH_PROBLEM,
             title="Unauthorized",
             detail="Unauthorized",
-            status=401
+            status=401,
         )
     # Type guard: raise_problem raises an exception, so this will never execute if user is None
     assert user is not None
     return user
 
 
-def _get_org_context(request: Request) -> tuple[Optional[Organization], Optional[OrganizationMembership]]:
+def _get_org_context(
+    request: Request,
+) -> tuple[Optional[Organization], Optional[OrganizationMembership]]:
     """Get optional organization context from request state."""
     try:
         org = get_organization(request)
@@ -171,12 +180,13 @@ def _transform_clarification_interrupt(interrupt_data: Dict[str, Any]) -> None: 
             # Note: accounts list is populated by frontend via API call to /tools/{tool_name}/accounts
             # We pass tool_name so frontend knows which tool's accounts to fetch
             question_kwargs["accounts"] = None  # Frontend fetches dynamically
-            question_kwargs["options"] = []  # Account pickers don't use traditional options
+            question_kwargs[
+                "options"
+            ] = []  # Account pickers don't use traditional options
         else:
             # Choice type specific fields
             question_kwargs["options"] = [
-                ClarificationQuestionOption(**opt)
-                for opt in q.get("options", [])
+                ClarificationQuestionOption(**opt) for opt in q.get("options", [])
             ]
             question_kwargs["min_selections"] = q.get("min_selections", 1)
             question_kwargs["max_selections"] = q.get("max_selections")
@@ -190,7 +200,9 @@ def _transform_clarification_interrupt(interrupt_data: Dict[str, Any]) -> None: 
     interrupt_data["clarification_questions"] = questions_obj.model_dump()
 
 
-def _validate_single_answer(answer: ClarificationAnswer, question_data: Dict[str, Any]) -> None:
+def _validate_single_answer(
+    answer: ClarificationAnswer, question_data: Dict[str, Any]
+) -> None:
     """Validate a single answer against its question options."""
     question_type = question_data.get("question_type", "single_choice")
 
@@ -202,7 +214,7 @@ def _validate_single_answer(answer: ClarificationAnswer, question_data: Dict[str
                 type_uri=VALIDATION_PROBLEM,
                 title="Selection required",
                 detail=f"At least one resource must be selected for question {answer.question_id}",
-                status=400
+                status=400,
             )
         return
 
@@ -213,7 +225,7 @@ def _validate_single_answer(answer: ClarificationAnswer, question_data: Dict[str
                 type_uri=VALIDATION_PROBLEM,
                 title="Account selection required",
                 detail=f"An account must be selected for question {answer.question_id}",
-                status=400
+                status=400,
             )
         # Validate that selected_values[0] is a valid integer connection_id
         try:
@@ -223,7 +235,7 @@ def _validate_single_answer(answer: ClarificationAnswer, question_data: Dict[str
                 type_uri=VALIDATION_PROBLEM,
                 title="Invalid account selection",
                 detail=f"Invalid connection_id format for question {answer.question_id}",
-                status=400
+                status=400,
             )
         return
 
@@ -236,11 +248,13 @@ def _validate_single_answer(answer: ClarificationAnswer, question_data: Dict[str
             type_uri=VALIDATION_PROBLEM,
             title="Invalid selections",
             detail=f"Selected values not in available options: {invalid_selections}",
-            status=400
+            status=400,
         )
 
     # Validate wildcard custom input
-    wildcard_options = [opt for opt in question_data.get("options", []) if opt.get("is_wildcard")]
+    wildcard_options = [
+        opt for opt in question_data.get("options", []) if opt.get("is_wildcard")
+    ]
     wildcard_values = {opt["value"] for opt in wildcard_options}
     has_wildcard_selection = any(v in wildcard_values for v in answer.selected_values)
 
@@ -249,7 +263,7 @@ def _validate_single_answer(answer: ClarificationAnswer, question_data: Dict[str
             type_uri=VALIDATION_PROBLEM,
             title="Custom input required",
             detail=f"Custom input is required when selecting wildcard option for question {answer.question_id}",
-            status=400
+            status=400,
         )
 
 
@@ -265,7 +279,9 @@ async def _validate_clarification_answers(
     if not state_tuple:
         return
 
-    interrupt_payload = state_tuple.checkpoint.get("channel_values", {}).get("__interrupt__")
+    interrupt_payload = state_tuple.checkpoint.get("channel_values", {}).get(
+        "__interrupt__"
+    )
     if not interrupt_payload or not interrupt_payload[0]:
         return
 
@@ -285,7 +301,7 @@ async def _validate_clarification_answers(
             type_uri=VALIDATION_PROBLEM,
             title="Missing answers",
             detail=f"Missing answers for questions: {list(missing_answers)}",
-            status=400
+            status=400,
         )
 
     extra_answers = answered_ids - expected_ids
@@ -294,7 +310,7 @@ async def _validate_clarification_answers(
             type_uri=VALIDATION_PROBLEM,
             title="Invalid question IDs",
             detail=f"Answers provided for unknown questions: {list(extra_answers)}",
-            status=400
+            status=400,
         )
 
     # Validate each answer
@@ -339,7 +355,8 @@ async def _build_resume_command(
         await save_chat_message(
             session_id=session_id,
             role="user",
-            content=f"Answered {len(resume_data.answers.answers)} questions:\n" + "\n".join(answer_summaries),
+            content=f"Answered {len(resume_data.answers.answers)} questions:\n"
+            + "\n".join(answer_summaries),
             metadata={"clarification_answers": resume_data.answers.model_dump()},
         )
 
@@ -366,7 +383,7 @@ async def _build_resume_command(
             type_uri=VALIDATION_PROBLEM,
             title="Invalid resume data",
             detail="Exactly one of answers, message, or command must be provided",
-            status=400
+            status=400,
         )
 
     return Command(resume=resume_value)
@@ -399,7 +416,9 @@ async def chat_with_workflow_endpoint(
     )
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
+    workflow = await get_workflow(
+        user, workflow_id, organization=org, membership=membership
+    )
 
     # LLM credit limit check enforced by UsageLimitMiddleware
     model = chat_request.model or config.default_llm_model
@@ -416,7 +435,7 @@ async def chat_with_workflow_endpoint(
 
     # Save current workflow state to session for UI/persistence
     session.current_workflow_state = await workflow_state_snapshot(workflow)
-    await session.save(update_fields=['current_workflow_state'])
+    await session.save(update_fields=["current_workflow_state"])
 
     # Save user message first (before async execution)
     await save_chat_message(
@@ -433,13 +452,15 @@ async def chat_with_workflow_endpoint(
     session.current_execution_error = None
     session.pending_interrupt_type = None
     session.pending_interrupt_data = None
-    await session.save(update_fields=[
-        'current_execution_status',
-        'current_execution_task_id',
-        'current_execution_error',
-        'pending_interrupt_type',
-        'pending_interrupt_data',
-    ])
+    await session.save(
+        update_fields=[
+            "current_execution_status",
+            "current_execution_task_id",
+            "current_execution_error",
+            "pending_interrupt_type",
+            "pending_interrupt_data",
+        ]
+    )
 
     # Enqueue task
     task = await chat_execution_task.kiq(
@@ -449,6 +470,7 @@ async def chat_with_workflow_endpoint(
         workflow_id=workflow.id,
         model=model,
         execution_task_id=execution_owner_id,
+        user_timezone=chat_request.timezone,
     )
 
     logger.info(
@@ -458,7 +480,7 @@ async def chat_with_workflow_endpoint(
             "task_id": task.task_id,
             "execution_owner_id": execution_owner_id,
             "request_id": chat_request.request_id,
-        }
+        },
     )
 
     # Snapshot stream position *before* publishing any new events so the
@@ -469,11 +491,14 @@ async def chat_with_workflow_endpoint(
     # Pre-publish SESSION_INFO so client immediately gets session_id + thread_id
     # before the worker picks up the task
     publisher = StreamPublisher(session_id)
-    await publisher.publish(StreamEventType.SESSION_INFO, {
-        "session_id": session_id,
-        "thread_id": thread_id,
-        "execution_task_id": execution_owner_id,
-    })
+    await publisher.publish(
+        StreamEventType.SESSION_INFO,
+        {
+            "session_id": session_id,
+            "thread_id": thread_id,
+            "execution_task_id": execution_owner_id,
+        },
+    )
 
     return StreamingResponse(
         stream_events_sse(session_id, last_event_id=watermark_id),
@@ -526,7 +551,9 @@ async def create_chat_session_endpoint(
     print(f"Creating chat session for workflow {workflow_id}")
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
+    workflow = await get_workflow(
+        user, workflow_id, organization=org, membership=membership
+    )
 
     thread_id = f"workflow-{workflow_id}-{uuid.uuid4().hex}"
     session = await create_chat_session(
@@ -544,7 +571,9 @@ async def create_chat_session_endpoint(
         title=session.title,
         created_at=session.created_at,
         updated_at=session.updated_at,
-        current_execution_status=session.current_execution_status.value if session.current_execution_status else None,
+        current_execution_status=session.current_execution_status.value
+        if session.current_execution_status
+        else None,
         current_execution_task_id=session.current_execution_task_id,
         pending_interrupt_type=session.pending_interrupt_type,
         pending_interrupt_data=session.pending_interrupt_data,
@@ -562,7 +591,9 @@ async def list_chat_sessions_endpoint(
     print(f"Listing chat sessions for workflow {workflow_id}")
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
+    workflow = await get_workflow(
+        user, workflow_id, organization=org, membership=membership
+    )
     sessions = await list_chat_sessions(workflow, user, limit=limit, offset=offset)
 
     return [
@@ -574,7 +605,9 @@ async def list_chat_sessions_endpoint(
             title=session.title,
             created_at=session.created_at,
             updated_at=session.updated_at,
-            current_execution_status=session.current_execution_status.value if session.current_execution_status else None,
+            current_execution_status=session.current_execution_status.value
+            if session.current_execution_status
+            else None,
             current_execution_task_id=session.current_execution_task_id,
             pending_interrupt_type=session.pending_interrupt_type,
             pending_interrupt_data=session.pending_interrupt_data,
@@ -583,7 +616,9 @@ async def list_chat_sessions_endpoint(
     ]
 
 
-@router.get("/{workflow_id}/chat/sessions/{session_id}", response_model=ChatSessionWithMessages)
+@router.get(
+    "/{workflow_id}/chat/sessions/{session_id}", response_model=ChatSessionWithMessages
+)
 async def get_chat_session_endpoint(
     request: Request,
     workflow_id: str,
@@ -592,7 +627,9 @@ async def get_chat_session_endpoint(
     """Get a chat session with its messages."""
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
+    workflow = await get_workflow(
+        user, workflow_id, organization=org, membership=membership
+    )
     session = await get_chat_session(session_id, workflow)
 
     messages = await load_chat_history(session_id)
@@ -605,7 +642,11 @@ async def get_chat_session_endpoint(
             content=msg.content,
             thinking=msg.thinking,
             suggested_edits=msg.suggested_edits,
-            proposal=WorkflowProposalPublic.model_validate(msg.proposal, from_attributes=True) if msg.proposal else None,
+            proposal=WorkflowProposalPublic.model_validate(
+                msg.proposal, from_attributes=True
+            )
+            if msg.proposal
+            else None,
             metadata=msg.metadata,
             created_at=msg.created_at,
         )
@@ -630,7 +671,9 @@ async def get_chat_session_endpoint(
         title=session.title,
         created_at=session.created_at,
         updated_at=session.updated_at,
-        current_execution_status=session.current_execution_status.value if session.current_execution_status else None,
+        current_execution_status=session.current_execution_status.value
+        if session.current_execution_status
+        else None,
         current_execution_task_id=session.current_execution_task_id,
         pending_interrupt_type=session.pending_interrupt_type,
         pending_interrupt_data=session.pending_interrupt_data,
@@ -665,7 +708,9 @@ async def resume_chat_endpoint(
     )
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
+    workflow = await get_workflow(
+        user, workflow_id, organization=org, membership=membership
+    )
 
     # Get checkpointer and session
     checkpointer = await get_checkpointer()
@@ -675,7 +720,7 @@ async def resume_chat_endpoint(
             type_uri=VALIDATION_PROBLEM,
             title="Session not found",
             detail=f"Chat session not found for thread_id: {resume_data.thread_id}",
-            status=404
+            status=404,
         )
 
     # Type guard: raise_problem raises an exception, so session is guaranteed to be not None here
@@ -695,13 +740,15 @@ async def resume_chat_endpoint(
     session.current_execution_error = None
     session.pending_interrupt_type = None
     session.pending_interrupt_data = None
-    await session.save(update_fields=[
-        'current_execution_status',
-        'current_execution_task_id',
-        'current_execution_error',
-        'pending_interrupt_type',
-        'pending_interrupt_data',
-    ])
+    await session.save(
+        update_fields=[
+            "current_execution_status",
+            "current_execution_task_id",
+            "current_execution_error",
+            "pending_interrupt_type",
+            "pending_interrupt_data",
+        ]
+    )
 
     # Enqueue task
     task = await chat_resume_task.kiq(
@@ -720,7 +767,7 @@ async def resume_chat_endpoint(
             "task_id": task.task_id,
             "execution_owner_id": execution_owner_id,
             "request_id": resume_data.request_id,
-        }
+        },
     )
 
     # Snapshot the stream position *before* publishing any new events.
@@ -732,11 +779,14 @@ async def resume_chat_endpoint(
 
     # Pre-publish SESSION_INFO so client immediately gets session_id + thread_id
     publisher = StreamPublisher(session_id)
-    await publisher.publish(StreamEventType.SESSION_INFO, {
-        "session_id": session_id,
-        "thread_id": resume_data.thread_id,
-        "execution_task_id": execution_owner_id,
-    })
+    await publisher.publish(
+        StreamEventType.SESSION_INFO,
+        {
+            "session_id": session_id,
+            "thread_id": resume_data.thread_id,
+            "execution_task_id": execution_owner_id,
+        },
+    )
 
     return StreamingResponse(
         stream_events_sse(session_id, last_event_id=watermark_id),
@@ -748,7 +798,9 @@ async def resume_chat_endpoint(
     )
 
 
-@router.get("/{workflow_id}/proposals/{proposal_id}", response_model=WorkflowProposalPublic)
+@router.get(
+    "/{workflow_id}/proposals/{proposal_id}", response_model=WorkflowProposalPublic
+)
 async def get_proposal_endpoint(
     request: Request,
     workflow_id: str,
@@ -757,13 +809,18 @@ async def get_proposal_endpoint(
     """Fetch a single workflow proposal."""
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
+    workflow = await get_workflow(
+        user, workflow_id, organization=org, membership=membership
+    )
     proposal = await get_workflow_proposal(workflow, proposal_id)
-    await proposal.fetch_related('created_by', 'workflow', 'session')
+    await proposal.fetch_related("created_by", "workflow", "session")
     return WorkflowProposalPublic.model_validate(proposal, from_attributes=True)
 
 
-@router.post("/{workflow_id}/proposals/{proposal_id}/accept", response_model=WorkflowProposalActionResponse)
+@router.post(
+    "/{workflow_id}/proposals/{proposal_id}/accept",
+    response_model=WorkflowProposalActionResponse,
+)
 async def accept_proposal_endpoint(
     request: Request,
     workflow_id: str,
@@ -772,13 +829,15 @@ async def accept_proposal_endpoint(
     """Accept a workflow proposal and apply its changes."""
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
+    workflow = await get_workflow(
+        user, workflow_id, organization=org, membership=membership
+    )
     proposal, workflow = await accept_workflow_proposal(
         workflow,
         proposal_id,
         actor=user,
     )
-    await proposal.fetch_related('created_by', 'workflow', 'session')
+    await proposal.fetch_related("created_by", "workflow", "session")
 
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
@@ -786,7 +845,10 @@ async def accept_proposal_endpoint(
     )
 
 
-@router.post("/{workflow_id}/proposals/{proposal_id}/reject", response_model=WorkflowProposalActionResponse)
+@router.post(
+    "/{workflow_id}/proposals/{proposal_id}/reject",
+    response_model=WorkflowProposalActionResponse,
+)
 async def reject_proposal_endpoint(
     request: Request,
     workflow_id: str,
@@ -795,15 +857,16 @@ async def reject_proposal_endpoint(
     """Reject a workflow proposal without applying changes."""
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    workflow = await get_workflow(user, workflow_id, organization=org, membership=membership)
+    workflow = await get_workflow(
+        user, workflow_id, organization=org, membership=membership
+    )
     proposal = await reject_workflow_proposal(workflow, proposal_id)
-    await proposal.fetch_related('created_by', 'workflow', 'session')
+    await proposal.fetch_related("created_by", "workflow", "session")
 
     return WorkflowProposalActionResponse(
         proposal=WorkflowProposalPublic.model_validate(proposal, from_attributes=True),
         workflow_graph=None,
     )
-
 
 
 __all__ = ["router"]

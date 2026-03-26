@@ -19,6 +19,7 @@ Usage:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -127,6 +128,25 @@ def list_available_skills() -> list[str]:
         return []
 
     return [f.stem for f in skills_dir.glob("*.md")]
+
+
+def get_datetime_context(user_timezone: str | None = None) -> str:
+    """Return current date/time string for injection into LLM system prompts."""
+    now = datetime.now(timezone.utc)
+    parts = [
+        f"Current date and time: {now.strftime('%Y-%m-%d %H:%M')} UTC ({now.strftime('%A')})"
+    ]
+    if user_timezone:
+        try:
+            from zoneinfo import ZoneInfo  # pylint: disable=import-outside-toplevel  # Reason: Only needed when timezone provided
+
+            local = now.astimezone(ZoneInfo(user_timezone))
+            parts.append(
+                f"User's local time: {local.strftime('%Y-%m-%d %H:%M')} {user_timezone}"
+            )
+        except (KeyError, Exception):  # pylint: disable=broad-exception-caught  # Reason: Invalid tz must not break prompt
+            pass
+    return "\n".join(parts)
 
 
 def clear_prompt_cache() -> None:

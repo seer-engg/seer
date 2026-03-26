@@ -41,7 +41,6 @@ from seer.services.workflows.execution import (
 logger = get_logger(__name__)
 
 
-
 async def _create_run_record(
     user: User,
     *,
@@ -67,14 +66,15 @@ async def _create_run_record(
     return run
 
 
-
 def _serialize_run(run: WorkflowRun) -> api_models.RunResponse:
     workflow_public_id = (
         make_workflow_public_id(run.workflow_id) if run.workflow_id else None
     )
     return api_models.RunResponse(
         run_id=run.run_id,
-        status=run.status.value if isinstance(run.status, WorkflowRunStatus) else run.status,
+        status=run.status.value
+        if isinstance(run.status, WorkflowRunStatus)
+        else run.status,
         workflow_id=workflow_public_id,
         workflow_version_id=run.workflow_version_id,
         created_at=run.created_at,
@@ -89,7 +89,9 @@ def _serialize_run(run: WorkflowRun) -> api_models.RunResponse:
 def _serialize_run_summary(run: WorkflowRun) -> api_models.WorkflowRunSummary:
     return api_models.WorkflowRunSummary(
         run_id=run.run_id,
-        status=run.status.value if isinstance(run.status, WorkflowRunStatus) else run.status,
+        status=run.status.value
+        if isinstance(run.status, WorkflowRunStatus)
+        else run.status,
         workflow_version_id=run.workflow_version_id,
         created_at=run.created_at,
         started_at=run.started_at,
@@ -131,13 +133,13 @@ async def list_workflow_runs(
     organization: Optional[Organization] = None,
     membership: Optional[OrganizationMembership] = None,
 ) -> api_models.WorkflowRunListResponse:
-    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership)
+    workflow = await _get_workflow_org_scoped(
+        user, workflow_id, organization, membership
+    )
     limit = max(1, min(limit, 100))
     # Show all runs for the workflow (not just user's runs) since workflow access was verified
     runs = (
-        await WorkflowRun.filter(workflow=workflow)
-        .order_by("-created_at")
-        .limit(limit)
+        await WorkflowRun.filter(workflow=workflow).order_by("-created_at").limit(limit)
     )
     return api_models.WorkflowRunListResponse(
         workflow_id=workflow.workflow_id,
@@ -161,7 +163,9 @@ async def _handle_trigger_event_override(
     # Determine target trigger
     target_trigger = None
     if payload.trigger_id:
-        target_trigger = next((t for t in trigger_specs if t.id == payload.trigger_id), None)
+        target_trigger = next(
+            (t for t in trigger_specs if t.id == payload.trigger_id), None
+        )
         if not target_trigger:
             _raise_problem(
                 type_uri=RUN_PROBLEM,
@@ -184,7 +188,9 @@ async def _handle_trigger_event_override(
     if target_trigger:
         effective_envelope["trigger_id"] = target_trigger.id
         if not effective_envelope.get("title"):
-            effective_envelope["title"] = target_trigger.ui_meta.get("title", target_trigger.key)
+            effective_envelope["title"] = target_trigger.ui_meta.get(
+                "title", target_trigger.key
+            )
 
     # Look up the TriggerSubscription if we have a resolved target trigger
     linked_subscription = None
@@ -229,7 +235,7 @@ async def _handle_trigger_event_override(
     except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Catch all enqueue failures
         logger.exception(
             "Failed to enqueue run with trigger_event_override",
-            extra={"workflow_id": workflow_id, "run_id": run.run_id}
+            extra={"workflow_id": workflow_id, "run_id": run.run_id},
         )
         await WorkflowRun.filter(id=run.id).update(
             status=WorkflowRunStatus.FAILED,
@@ -251,7 +257,7 @@ async def _handle_trigger_event_override(
             "run_id": run.run_id,
             "trigger_key": effective_envelope.get("trigger_key"),
             "trigger_id": effective_envelope.get("trigger_id"),
-        }
+        },
     )
     return _serialize_run(run)
 
@@ -280,7 +286,7 @@ async def _handle_manual_run(
     except (asyncio.TimeoutError, asyncio.CancelledError, ConnectionError) as exc:
         logger.exception(
             "Failed to enqueue workflow task",
-            extra={"workflow_id": workflow_id, "run_id": run.run_id}
+            extra={"workflow_id": workflow_id, "run_id": run.run_id},
         )
         await WorkflowRun.filter(id=run.id).update(
             status=WorkflowRunStatus.FAILED,
@@ -297,7 +303,7 @@ async def _handle_manual_run(
     except Exception as exc:  # pylint: disable=broad-exception-caught # Reason: Catch all Taskiq broker failures
         logger.exception(
             "UNEXPECTED: Task enqueue failed",
-            extra={"workflow_id": workflow_id, "run_id": run.run_id}
+            extra={"workflow_id": workflow_id, "run_id": run.run_id},
         )
         await WorkflowRun.filter(id=run.id).update(
             status=WorkflowRunStatus.FAILED,
@@ -328,7 +334,9 @@ async def run_saved_workflow(
     - If workflow has triggers, requires trigger_event_override with a real event
     - If workflow has no triggers, creates a manual run
     """
-    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership)
+    workflow = await _get_workflow_org_scoped(
+        user, workflow_id, organization, membership
+    )
 
     if payload.version is not None:
         version = await WorkflowVersion.filter(
@@ -402,6 +410,7 @@ async def resume_workflow_run(
 
     # Fetch the updated run for response
     from seer.database.workflow_models import parse_run_public_id  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+
     run_pk = parse_run_public_id(run_id)
     run = await WorkflowRun.get(id=run_pk)
     return _serialize_run(run)
@@ -417,3 +426,58 @@ async def get_workflow_run_interrupt(
     Returns interrupt data if run is interrupted, None otherwise.
     """
     return await _get_workflow_run_interrupt(user, run_id)
+
+
+async def cancel_workflow_run(
+    user: User,
+    run_id: str,
+    membership: Optional[OrganizationMembership] = None,
+) -> api_models.RunResponse:
+    """Cancel a running or queued workflow run."""
+    from seer.database.workflow_models import parse_run_public_id  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+
+    run_pk = parse_run_public_id(run_id)
+    run = await WorkflowRun.filter(id=run_pk).select_related("workflow").first()
+    if not run:
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Run not found",
+            detail="Run not found",
+            status=404,
+        )
+
+    # Org-scoped ownership check
+    if membership:
+        if run.workflow.organization_id != membership.organization_id:
+            _raise_problem(
+                type_uri=RUN_PROBLEM,
+                title="Run not found",
+                detail="Run not found",
+                status=404,
+            )
+    elif run.workflow.user_id != user.id:
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Run not found",
+            detail="Run not found",
+            status=404,
+        )
+
+    if run.status not in (
+        WorkflowRunStatus.RUNNING,
+        WorkflowRunStatus.QUEUED,
+        WorkflowRunStatus.INTERRUPTED,
+    ):
+        _raise_problem(
+            type_uri=RUN_PROBLEM,
+            title="Cannot cancel run",
+            detail=f"Cannot cancel run with status '{run.status}'",
+            status=409,
+        )
+
+    run.status = WorkflowRunStatus.CANCELLED
+    run.finished_at = _now()
+    run.error = "Cancelled by user"
+    await run.save(update_fields=["status", "finished_at", "error"])
+
+    return _serialize_run(run)
