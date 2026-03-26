@@ -13,32 +13,23 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from seer.core.triggers.polling.adapters.base import (
-    PollAdapter,
     PollAdapterError,
     PollContext,
     PolledEvent,
     PollResult,
     register_adapter,
 )
+from seer.core.triggers.polling.adapters.google_calendar_common import (
+    CALENDAR_API_BASE,
+    GoogleCalendarBaseAdapter,
+    normalize_event,
+    parse_rfc3339,
+)
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
 
-CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
 MAX_EVENTS_PER_POLL = 50
-
-
-def _parse_rfc3339(value: Optional[str]) -> Optional[datetime]:
-    """Parse RFC3339 datetime string to datetime object."""
-    if not value:
-        return None
-    try:
-        # Handle both 'Z' and offset formats
-        if value.endswith("Z"):
-            value = value[:-1] + "+00:00"
-        return datetime.fromisoformat(value)
-    except (ValueError, TypeError):
-        return None
 
 
 def _is_newly_created(event: Dict[str, Any]) -> bool:
@@ -54,8 +45,8 @@ def _is_newly_created(event: Dict[str, Any]) -> bool:
     if not created_str or not updated_str:
         return False
 
-    created_dt = _parse_rfc3339(created_str)
-    updated_dt = _parse_rfc3339(updated_str)
+    created_dt = parse_rfc3339(created_str)
+    updated_dt = parse_rfc3339(updated_str)
 
     if not created_dt or not updated_dt:
         return False
@@ -65,57 +56,14 @@ def _is_newly_created(event: Dict[str, Any]) -> bool:
     return diff < 1.0
 
 
-def _normalize_event(event: Dict[str, Any], calendar_id: str) -> Dict[str, Any]:
-    """Normalize Google Calendar event to trigger payload format."""
-    start = event.get("start", {})
-    end = event.get("end", {})
-    organizer = event.get("organizer", {})
-
-    # Determine if this is an all-day event
-    is_all_day = "date" in start and "dateTime" not in start
-
-    # Build attendees list
-    attendees = []
-    for att in event.get("attendees", []):
-        attendees.append({
-            "email": att.get("email"),
-            "display_name": att.get("displayName"),
-            "response_status": att.get("responseStatus"),
-            "optional": att.get("optional", False),
-            "self": att.get("self", False),
-        })
-
-    return {
-        "event_id": event.get("id"),
-        "event_type": "created" if _is_newly_created(event) else "updated",
-        "calendar_id": calendar_id,
-        "summary": event.get("summary"),
-        "description": event.get("description"),
-        "location": event.get("location"),
-        "status": event.get("status"),
-        "html_link": event.get("htmlLink"),
-        "start": {
-            "datetime": start.get("dateTime") or start.get("date"),
-            "timezone": start.get("timeZone"),
-        },
-        "end": {
-            "datetime": end.get("dateTime") or end.get("date"),
-            "timezone": end.get("timeZone"),
-        },
-        "organizer": {
-            "email": organizer.get("email"),
-            "display_name": organizer.get("displayName"),
-            "self": organizer.get("self", False),
-        },
-        "attendees": attendees,
-        "is_all_day": is_all_day,
-        "recurring_event_id": event.get("recurringEventId"),
-        "created": event.get("created"),
-        "updated": event.get("updated"),
-    }
+def _normalize_event_with_type(event: Dict[str, Any], calendar_id: str) -> Dict[str, Any]:
+    """Normalize event and add event_type field for change detection."""
+    payload = normalize_event(event, calendar_id)
+    payload["event_type"] = "created" if _is_newly_created(event) else "updated"
+    return payload
 
 
-class GoogleCalendarEventChangedAdapter(PollAdapter):
+class GoogleCalendarEventChangedAdapter(GoogleCalendarBaseAdapter):
     """
     Poll Google Calendar for created/updated events using syncToken strategy.
 
@@ -246,10 +194,10 @@ class GoogleCalendarEventChangedAdapter(PollAdapter):
                 continue
             polled_events.append(
                 PolledEvent(
-                    payload=_normalize_event(event, calendar_id),
+                    payload=_normalize_event_with_type(event, calendar_id),
                     raw=event,
                     provider_event_id=event.get("id"),
-                    occurred_at=_parse_rfc3339(event.get("updated")) or datetime.now(timezone.utc),
+                    occurred_at=parse_rfc3339(event.get("updated")) or datetime.now(timezone.utc),
                 )
             )
         return polled_events
@@ -267,35 +215,6 @@ class GoogleCalendarEventChangedAdapter(PollAdapter):
             cursor={"sync_token": sync_token, "page_token": page_token, "calendar_id": calendar_id},
             has_more=bool(page_token),
         )
-
-    async def _raise_for_status(self, response: httpx.Response, operation: str) -> None:
-        """Raise PollAdapterError for HTTP errors."""
-        if response.status_code < 400:
-            return
-
-        detail = {"status": response.status_code, "body": response.text[:500], "operation": operation}
-
-        if response.status_code in {401, 403}:
-            raise PollAdapterError(
-                "Google Calendar authentication error",
-                permanent=True,
-                detail=detail,
-            )
-        if response.status_code == 429:
-            raise PollAdapterError(
-                "Google Calendar rate limited",
-                backoff_seconds=60,
-                detail=detail,
-            )
-        raise PollAdapterError("Google Calendar API error", detail=detail)
-
-    def _resolve_calendar_id(self, ctx: PollContext) -> str:
-        """Get calendar ID from config, defaulting to 'primary'."""
-        config = ctx.subscription.provider_config or {}
-        calendar_id = config.get("calendar_id")
-        if calendar_id and isinstance(calendar_id, str) and calendar_id.strip():
-            return calendar_id.strip()
-        return "primary"
 
     def _resolve_max_results(self, ctx: PollContext) -> int:
         """Get max_results from config with bounds checking."""

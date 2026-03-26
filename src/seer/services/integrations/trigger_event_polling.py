@@ -31,11 +31,13 @@ from seer.core.triggers.polling.adapters.slack_message_received import (
     _parse_slack_timestamp,
 )
 from seer.core.triggers.polling.adapters.google_calendar_event_changed import (
-    CALENDAR_API_BASE,
     MAX_EVENTS_PER_POLL as CALENDAR_MAX_EVENTS,
     GoogleCalendarEventChangedAdapter,
-    _normalize_event as _normalize_calendar_event,
-    _parse_rfc3339,
+    _normalize_event_with_type as _normalize_calendar_event,
+)
+from seer.core.triggers.polling.adapters.google_calendar_common import (
+    CALENDAR_API_BASE,
+    parse_rfc3339 as _parse_rfc3339,
 )
 from seer.database import User
 from seer.logger import get_logger

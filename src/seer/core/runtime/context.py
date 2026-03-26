@@ -7,6 +7,7 @@ from seer.database import Organization, User
 
 if TYPE_CHECKING:
     from seer.core.files.service import WorkflowFileSystem
+    from seer.core.scratch.store import ScratchStore
 
 
 class WorkflowMemoryAccess(Protocol):
@@ -50,6 +51,7 @@ class WorkflowRuntimeResources:
     """Lazy-loaded runtime resources resolved on demand."""
 
     file_system: Optional["WorkflowFileSystem"] = None
+    scratch_store: Optional["ScratchStore"] = None
     organization: Optional[Organization] = None
     organization_loaded: bool = False
 
@@ -148,6 +150,36 @@ class WorkflowRuntimeContext:
         # pylint: disable=import-outside-toplevel  # Avoid circular imports with config
         from seer.config import config
         return config.is_workflow_file_system_configured
+
+    @property
+    def scratch_store(self) -> "ScratchStore":
+        """
+        Get the scratch data store instance.
+
+        The scratch store is lazily loaded on first access. It shares the
+        same S3 backend as the file system but with a different path prefix.
+
+        Returns:
+            ScratchStore singleton instance.
+
+        Raises:
+            ValueError: If S3 storage is not configured.
+        """
+        if self._resources.scratch_store is None:
+            # pylint: disable=import-outside-toplevel  # Avoid circular imports with scratch store
+            from seer.core.scratch.store import ScratchStore
+            self._resources.scratch_store = ScratchStore.instance()
+        return self._resources.scratch_store
+
+    @property
+    def has_scratch_store(self) -> bool:
+        """
+        Check if the scratch store is available.
+
+        Returns:
+            True if S3 storage is configured (same requirement as file system).
+        """
+        return self.has_file_system
 
     async def get_organization(self) -> "Organization | None":
         """Resolve and cache the runtime organization when one is available."""

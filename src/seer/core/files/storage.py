@@ -177,3 +177,86 @@ class FileStorageBackend(ABC):
         Returns:
             True if the file exists, False otherwise.
         """
+
+    # Raw path methods for scratch storage (simpler than WorkflowFileRef workflow)
+
+    async def store_raw(
+        self,
+        path: str,
+        data: bytes,
+        *,
+        mime_type: str = "application/octet-stream",
+    ) -> None:
+        """
+        Store raw bytes at a given path.
+
+        Unlike store(), this doesn't create a WorkflowFileRef or generate
+        file IDs. Used for scratch storage where the path is predetermined.
+
+        Args:
+            path: Storage path (relative to bucket prefix).
+            data: Raw bytes to store.
+            mime_type: MIME type for the data.
+
+        Raises:
+            StorageError: If the upload fails.
+        """
+        raise NotImplementedError("store_raw not implemented for this backend")
+
+    async def retrieve_raw(self, path: str) -> bytes:
+        """
+        Retrieve raw bytes from a given path.
+
+        Args:
+            path: Storage path (relative to bucket prefix).
+
+        Returns:
+            Raw bytes.
+
+        Raises:
+            FileNotFoundError: If the path doesn't exist.
+            StorageError: If the download fails.
+        """
+        raise NotImplementedError("retrieve_raw not implemented for this backend")
+
+    async def exists_raw(self, path: str) -> bool:
+        """
+        Check if a path exists in storage.
+
+        Args:
+            path: Storage path (relative to bucket prefix).
+
+        Returns:
+            True if exists, False otherwise.
+        """
+        raise NotImplementedError("exists_raw not implemented for this backend")
+
+    async def delete_raw(self, path: str) -> bool:
+        """
+        Delete data at a given path.
+
+        Args:
+            path: Storage path (relative to bucket prefix).
+
+        Returns:
+            True if deleted, False if not found.
+
+        Raises:
+            StorageError: If the deletion fails.
+        """
+        raise NotImplementedError("delete_raw not implemented for this backend")
+
+    async def delete_by_prefix(self, prefix: str) -> int:
+        """
+        Delete all objects under a prefix.
+
+        Args:
+            prefix: Path prefix to delete.
+
+        Returns:
+            Number of objects deleted.
+
+        Raises:
+            StorageError: If the deletion fails.
+        """
+        raise NotImplementedError("delete_by_prefix not implemented for this backend")

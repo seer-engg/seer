@@ -265,23 +265,23 @@ def _create_output_model_from_schema(node_id: str, schema: Dict[str, Any]) -> ty
     return create_model(model_name, **field_definitions)
 
 
-def _parse_tool_spec(spec: Any) -> tuple[str, Optional[int]]:
+def _parse_tool_spec(spec: Any) -> tuple[str, Optional[int], Optional[int]]:
     """
-    Parse a tool specification into (tool_name, connection_id).
+    Parse a tool specification into (tool_name, connection_id, integration_resource_id).
 
     Args:
-        spec: Tool name (str) or {name, connection_id} object
+        spec: Tool name (str) or {name, connection_id, integration_resource_id} object
 
     Returns:
-        Tuple of (tool_name, connection_id)
+        Tuple of (tool_name, connection_id, integration_resource_id)
 
     Raises:
         ExecutionError: If spec is not a valid format
     """
     if isinstance(spec, str):
-        return spec, None
+        return spec, None, None
     if isinstance(spec, dict):
-        return spec.get("name", ""), spec.get("connection_id")
+        return spec.get("name", ""), spec.get("connection_id"), spec.get("integration_resource_id")
     raise ExecutionError(f"Invalid tool spec type: {type(spec)}")
 
 
@@ -299,6 +299,7 @@ def _make_tool_executor(
     base_tool: Any,
     connection_id: Optional[int],
     ctx: NodeExecutionContext,
+    integration_resource_id: Optional[int] = None,
 ) -> Any:
     """Create a tool executor closure with credential resolution."""
     # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
@@ -308,6 +309,10 @@ def _make_tool_executor(
         """Execute tool with resolved credentials."""
         # Strip None values so tools fall back to their own defaults
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
+        # Override integration_resource_id with the value from the agent tool spec.
+        # The LLM may hallucinate a wrong resource ID, so the user-configured value always wins.
+        if integration_resource_id is not None:
+            kwargs["integration_resource_id"] = integration_resource_id
         try:
             access_token = None
             credentials = None
@@ -341,6 +346,29 @@ def _make_tool_executor(
     return execute
 
 
+def _wrap_executor_with_worker(
+    tool_name: str,
+    tool_executor: Any,
+    input_schema: Dict[str, Any],
+    worker_llm: Any,
+    max_retries: int,
+) -> tuple[Any, "ToolWorker"]:
+    """Wrap a tool executor in a ToolWorker for isolated failure handling."""
+    worker = ToolWorker(
+        tool_name=tool_name,
+        executor=tool_executor,
+        input_schema=input_schema,
+        worker_llm=worker_llm,
+        max_retries=max_retries,
+    )
+    _worker = worker
+
+    async def _shielded_executor(_w: "ToolWorker" = _worker, **kwargs: Any) -> str:
+        return await _w(**kwargs)
+
+    return _shielded_executor, worker
+
+
 async def _bind_tools_for_agent(
     tool_specs: List[Any],
     services: "RuntimeServices",  # pylint: disable=unused-argument  # Reason: Reserved for future use with ToolRegistry
@@ -363,13 +391,13 @@ async def _bind_tools_for_agent(
     worker_map: Dict[str, ToolWorker] = {}
 
     for spec in tool_specs:
-        tool_name, connection_id = _parse_tool_spec(spec)
+        tool_name, connection_id, resource_id = _parse_tool_spec(spec)
 
         base_tool = get_tool(tool_name)
         if base_tool is None:
             raise ExecutionError(f"Agent tool '{tool_name}' not found in tool registry")
 
-        tool_executor = _make_tool_executor(base_tool, connection_id, ctx)
+        tool_executor = _make_tool_executor(base_tool, connection_id, ctx, resource_id)
 
         # Create input model from schema
         input_schema: Dict[str, Any] = {}
@@ -382,21 +410,11 @@ async def _bind_tools_for_agent(
 
         worker: Optional[ToolWorker] = None
         if worker_llm is not None:
-            worker = ToolWorker(
-                tool_name=tool_name,
-                executor=tool_executor,
-                input_schema=input_schema,
-                worker_llm=worker_llm,
-                max_retries=max_retries,
-            )
             # StructuredTool.from_function needs an actual async function, not a callable class.
             # Wrap in a closure so LangChain can inspect the signature via args_schema.
-            _worker = worker
-
-            async def _shielded_executor(_w: ToolWorker = _worker, **kwargs: Any) -> str:
-                return await _w(**kwargs)
-
-            tool_executor = _shielded_executor
+            tool_executor, worker = _wrap_executor_with_worker(
+                tool_name, tool_executor, input_schema, worker_llm, max_retries
+            )
 
         tool_id = tool_name.replace(".", "_")
         structured_tool = StructuredTool.from_function(
