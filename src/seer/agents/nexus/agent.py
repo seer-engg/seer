@@ -17,7 +17,9 @@ if config.mlflow_enabled:
     _ensure_mlflow_autologging()
 
 
-async def _get_memory_context_for_user(user_id: str, current_query: Optional[str] = None) -> str:
+async def _get_memory_context_for_user(
+    user_id: str, current_query: Optional[str] = None
+) -> str:
     """
     Get formatted memory context for injection into agent system prompt.
 
@@ -41,12 +43,14 @@ async def _get_memory_context_for_user(user_id: str, current_query: Optional[str
         logger.warning("Failed to get memory context for user %s: %s", user_id, e)
         return ""
 
-async def create_nexus_chat_agent(
+
+async def create_nexus_chat_agent(  # pylint: disable=too-many-positional-arguments  # Reason: agent factory requires all config params
     model: str = "qwen/qwen3-235b-a22b-2507",
     checkpointer: Optional[Any] = None,
     user_id: Optional[str] = None,
     current_query: Optional[str] = None,
     workflow_id: Optional[str] = None,
+    timezone: Optional[str] = None,
 ) -> Any:
     """
     Create a LangGraph agent for Nexus chat assistance using create_agent.
@@ -65,13 +69,16 @@ async def create_nexus_chat_agent(
         LangGraph agent compiled with tools and middleware
     """
 
-
     llm = get_llm(model=model, temperature=0)
 
     # Load base system prompt (modular - detailed guides available via get_workflow_guide())
     from seer.mcp.tools.guides import get_started_impl  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
 
-    system_prompt = get_started_impl()
+    from seer.prompts import get_datetime_context  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+
+    system_prompt = (
+        get_datetime_context(user_timezone=timezone) + "\n\n" + get_started_impl()
+    )
 
     # Inject user memory context if enabled
     if user_id and config.memory_enabled and config.memory_context_injection_enabled:
@@ -79,7 +86,11 @@ async def create_nexus_chat_agent(
         if memory_context:
             # Prepend memory context to system prompt
             system_prompt = memory_context + "\n\n" + system_prompt
-            logger.debug("Injected memory context for user %s (%d chars)", user_id, len(memory_context))
+            logger.debug(
+                "Injected memory context for user %s (%d chars)",
+                user_id,
+                len(memory_context),
+            )
 
     # Get workflow tools (with pre-bound workflow_id if provided)
     tools = get_workflow_tools(workflow_id=workflow_id)
@@ -97,15 +108,20 @@ async def create_nexus_chat_agent(
         ToolCallSanitizationMiddleware(),
         SummarizationMiddleware(
             model=summarization_model,
-            max_tokens_before_summary=256000/2,  #Model Limit 256k
+            max_tokens_before_summary=256000 / 2,  # Model Limit 256k
         ),
     ]
 
     # Verify checkpointer is provided (required for persistence)
     if checkpointer is None:
-        logger.warning("No checkpointer provided to create_nexus_chat_agent - traces will not be persisted")
+        logger.warning(
+            "No checkpointer provided to create_nexus_chat_agent - traces will not be persisted"
+        )
     else:
-        logger.debug("Creating Nexus chat agent with checkpointer: %s", type(checkpointer).__name__)
+        logger.debug(
+            "Creating Nexus chat agent with checkpointer: %s",
+            type(checkpointer).__name__,
+        )
 
     # Create agent with middleware
     agent = create_agent(
@@ -116,5 +132,9 @@ async def create_nexus_chat_agent(
         checkpointer=checkpointer,
     )
 
-    logger.info("Created workflow chat agent with model %s, checkpointer=%s", model, 'enabled' if checkpointer else 'disabled')
+    logger.info(
+        "Created workflow chat agent with model %s, checkpointer=%s",
+        model,
+        "enabled" if checkpointer else "disabled",
+    )
     return agent

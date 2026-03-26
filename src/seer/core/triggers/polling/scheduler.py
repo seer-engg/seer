@@ -4,7 +4,6 @@ import asyncio
 from typing import Optional, Callable
 
 # Ensure adapters register themselves.
-import seer.core.triggers.polling.adapters  # pylint: disable=unused-import  # Reason: import side effects register adapters
 from seer.core.triggers.polling.engine import TriggerPollEngine
 from seer.logger import get_logger
 
