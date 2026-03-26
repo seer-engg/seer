@@ -17,7 +17,6 @@ class CollaborationEventType(str, Enum):
     WORKFLOW_DRAFT_UPDATED = "workflow.draft.updated"
     WORKFLOW_PUBLISHED = "workflow.published"
     WORKFLOW_UNPUBLISHED = "workflow.unpublished"
-    WORKFLOW_ACTIVE_CHANGED = "workflow.active.changed"
     WORKFLOW_VERSION_RESTORED = "workflow.version.restored"
     WORKFLOW_DELETED = "workflow.deleted"
 

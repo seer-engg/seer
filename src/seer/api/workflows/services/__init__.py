@@ -42,7 +42,6 @@ from .lifecycle import (
     patch_workflow_draft,
     publish_workflow,
     restore_workflow_version,
-    toggle_workflow_active,
     update_workflow,
 )
 

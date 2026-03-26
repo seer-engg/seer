@@ -293,18 +293,6 @@ async def publish_workflow(
     return await services.publish_workflow(user, workflow_id, payload, organization=org, membership=membership)
 
 
-@router.patch("/workflows/{workflow_id}/active", response_model=api_models.WorkflowSummary)
-async def toggle_workflow_active(
-    request: Request,
-    workflow_id: str,
-    payload: api_models.WorkflowActiveToggleRequest,
-):
-    """Toggle whether a workflow is active or paused."""
-    user = _require_user(request)
-    org, membership = _get_org_context(request)
-    return await services.toggle_workflow_active(user, workflow_id, payload.is_active, organization=org, membership=membership)
-
-
 @router.delete("/workflows/{workflow_id}", status_code=status.HTTP_200_OK)
 async def delete_workflow(request: Request, workflow_id: str):
     user = _require_user(request)
