@@ -18,26 +18,75 @@ from seer.logger import get_logger
 logger = get_logger(__name__)
 
 
+async def _get_latest_trigger_event(
+    workflow_pk: int,
+    trigger_id: Optional[str] = None,
+) -> tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
+    """
+    Fetch the most recent trigger event for a workflow.
+
+    Args:
+        workflow_pk: The workflow's primary key (integer)
+        trigger_id: Optional specific trigger ID for multi-trigger workflows
+
+    Returns:
+        tuple of (event_envelope, trigger_id_used, error_message)
+        - event_envelope: The event dict if found, None otherwise
+        - trigger_id_used: Which trigger was selected
+        - error_message: Error string if no event available, None if success
+    """
+    # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+    from seer.database.workflow_models import TriggerSubscription, TriggerEvent
+
+    # Find trigger subscription(s) for this workflow
+    query = TriggerSubscription.filter(workflow_id=workflow_pk)
+    if trigger_id:
+        query = query.filter(trigger_id=trigger_id)
+
+    subscription = await query.first()
+
+    if not subscription:
+        if trigger_id:
+            return None, None, f"No trigger found with id '{trigger_id}'"
+        # No triggers = manual workflow, proceed normally
+        return None, None, None
+
+    # Get most recent event for this trigger
+    event = await TriggerEvent.filter(
+        subscription_id=subscription.id
+    ).order_by("-received_at").first()
+
+    if not event:
+        return None, subscription.trigger_id, (
+            f"Workflow has trigger '{subscription.trigger_id}' but no events received yet. "
+            "Send a test event first or use the web UI."
+        )
+
+    return event.event, subscription.trigger_id, None
+
+
 @mcp.tool()
 @track_mcp_tool("run_workflow")
 async def run_workflow(
     workflow_id: str,
     inputs: Optional[Dict[str, Any]] = None,
     version: Optional[int] = None,
+    trigger_id: Optional[str] = None,
 ) -> str:
     """
     Execute a workflow and return the run ID.
 
-    If the workflow has triggers, creates one run per trigger with sample data.
-    Otherwise, creates a single manual run.
+    For workflows with triggers, automatically selects the most recent trigger event.
+    For workflows without triggers, creates a manual run.
 
     Args:
         workflow_id: The workflow ID to execute
         inputs: Optional input variables for the workflow
         version: Optional specific version to run (default: draft or latest published)
+        trigger_id: Optional trigger ID for multi-trigger workflows (uses first trigger if not specified)
 
     Returns:
-        JSON with run_id(s), status, and workflow metadata
+        JSON with run_id, status, workflow metadata, and trigger info if auto-selected
     """
     try:
         await _ensure_db()
@@ -46,23 +95,45 @@ async def run_workflow(
         # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
         from seer.api.workflows.services.execution import run_saved_workflow
         from seer.api.workflows.models import RunFromWorkflowRequest
+        from seer.database.workflow_models import parse_workflow_public_id
+
+        # Auto-select latest trigger event if workflow has triggers
+        workflow_pk = parse_workflow_public_id(workflow_id)
+        event_envelope, used_trigger_id, error = await _get_latest_trigger_event(
+            workflow_pk, trigger_id
+        )
+
+        if error:
+            return json.dumps({
+                "error": "no_trigger_event",
+                "message": error,
+                "workflow_id": workflow_id,
+                "trigger_id": used_trigger_id,
+            })
 
         request = RunFromWorkflowRequest(
             version=version,
             inputs=inputs or {},
             config={},
+            trigger_event_override=event_envelope,
+            trigger_id=trigger_id,
         )
 
         response = await run_saved_workflow(user, workflow_id, request)
 
-        # Single run response
-        return json.dumps({
+        result = {
             "run_id": response.run_id,
             "status": response.status,
             "workflow_id": response.workflow_id,
             "created_at": response.created_at.isoformat(),
             "started_at": response.started_at.isoformat() if response.started_at else None,
-        }, indent=2)
+        }
+
+        if event_envelope and used_trigger_id:
+            result["trigger_id_used"] = used_trigger_id
+            result["auto_selected_event"] = True
+
+        return json.dumps(result, indent=2)
 
     except Exception as e:  # pylint: disable=broad-exception-caught # Reason: Return friendly JSON error
         logger.exception("Error running workflow: %s", e)
