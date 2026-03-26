@@ -299,9 +299,11 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
     # WhatsApp (via Twilio) — no OAuth
     "whatsapp": {
         "display_name": "WhatsApp",
+        "oauth_provider": None,
         "requires_oauth": False,
         "icon": {"type": "url", "value": "https://img.logo.dev/whatsapp.com?token=pk_Ovp4v2MYQDqQ0D6xdN7OJA"},
         "brand_color": "#25D366",
+        "default_scopes": [],
         "scopes": [],
         "detection_patterns": {
             "tool_name_patterns": ["whatsapp"],
@@ -311,9 +313,11 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
     # Phone Call (via Twilio) — no OAuth
     "phone": {
         "display_name": "Phone Call",
+        "oauth_provider": None,
         "requires_oauth": False,
         "icon": {"type": "lucide", "value": "Phone"},
         "brand_color": "#4A90D9",
+        "default_scopes": [],
         "scopes": [],
         "detection_patterns": {
             "tool_name_patterns": ["call", "phone"],
