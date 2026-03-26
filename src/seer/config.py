@@ -78,6 +78,12 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     twilio_from_number: Optional[str] = Field(
         default=None, description="Twilio phone number in E.164 format (e.g., +15551234567)"
     )
+    e2b_api_key: Optional[str] = Field(
+        default=None, description="E2B API key for cloud sandbox code execution"
+    )
+    e2b_sandbox_timeout_seconds: int = Field(
+        default=300, description="Default sandbox timeout in seconds (max 3600)"
+    )
 
     # ============================================================================
     # LangGraph Checkpointer Configuration

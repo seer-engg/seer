@@ -390,8 +390,9 @@ async def _create_proposal(
             "trigger_schemas_updated": validation.schema_fixes,
             "recommendation": (
                 "Event schemas were auto-corrected to use canonical schemas from the registry. "
-                "If you have expressions referencing trigger data (e.g., ${trigger.data.subject}), "
-                "verify they use correct field paths from the 'available_fields' shown above."
+                "If you have expressions referencing trigger data (e.g., ${gmail_trigger.event.subject}), "
+                "verify they use correct field paths from the 'available_fields' shown above. "
+                "Remember: use the trigger's `id` as the root, NOT the word 'trigger'."
             )
         }
 

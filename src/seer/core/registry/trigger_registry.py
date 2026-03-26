@@ -69,6 +69,7 @@ POLLING_TRIGGERS = [
     "poll.discord.message_received",
     "poll.slack.message_received",
     "poll.google_calendar.event_changed",
+    "poll.google_calendar.event_start",
     "schedule.cron",
 ]
 
@@ -269,6 +270,24 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             ),
             meta=TriggerMetadata(
                 sample_event=_google_calendar_event_changed_sample_event(),
+                requires_connection=True,
+                required_scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+            ),
+        )
+    )
+    registry.register(
+        TriggerDefinition(
+            key="poll.google_calendar.event_start",
+            title="Google Calendar Timer",
+            provider="google",
+            mode="polling",
+            description="Trigger at a configurable time offset before or after calendar event start times.",
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_google_calendar_event_start_payload_schema()),
+                config=_google_calendar_event_start_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_google_calendar_event_start_sample_event(),
                 requires_connection=True,
                 required_scopes=["https://www.googleapis.com/auth/calendar.readonly"],
             ),
@@ -608,6 +627,155 @@ def _google_calendar_event_changed_sample_event() -> Dict[str, Any]:
         "account_id": None,
         "occurred_at": "2026-01-10T09:00:00Z",
         "received_at": "2026-01-10T09:00:05Z",
+        "data": payload,
+        "raw": {"payload": payload},
+    }
+
+
+def _google_calendar_event_start_payload_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "event_id": {"type": "string", "description": "Google Calendar event ID"},
+            "trigger_type": {
+                "type": "string",
+                "enum": ["before_start", "at_start", "after_start"],
+                "description": "Whether the trigger fired before, at, or after event start",
+            },
+            "offset_minutes": {
+                "type": "integer",
+                "description": "Configured offset in minutes (negative = before start)",
+            },
+            "trigger_time": {"type": "string", "description": "When the trigger fired (RFC3339)"},
+            "event_start": {"type": "string", "description": "Event start time in UTC (RFC3339)"},
+            "calendar_id": {"type": "string", "description": "Calendar being monitored"},
+            "summary": {"type": ["string", "null"], "description": "Event title"},
+            "description": {"type": ["string", "null"], "description": "Event description"},
+            "location": {"type": ["string", "null"], "description": "Event location"},
+            "status": {"type": ["string", "null"], "description": "Event status (confirmed/tentative/cancelled)"},
+            "html_link": {"type": ["string", "null"], "description": "URL to view in Google Calendar"},
+            "start": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "datetime": {"type": ["string", "null"], "description": "Start time (RFC3339 or date)"},
+                    "timezone": {"type": ["string", "null"], "description": "IANA timezone"},
+                },
+            },
+            "end": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "datetime": {"type": ["string", "null"], "description": "End time (RFC3339 or date)"},
+                    "timezone": {"type": ["string", "null"], "description": "IANA timezone"},
+                },
+            },
+            "organizer": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "email": {"type": ["string", "null"]},
+                    "display_name": {"type": ["string", "null"]},
+                    "self": {"type": "boolean"},
+                },
+            },
+            "attendees": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "email": {"type": ["string", "null"]},
+                        "display_name": {"type": ["string", "null"]},
+                        "response_status": {"type": ["string", "null"]},
+                        "optional": {"type": "boolean"},
+                        "self": {"type": "boolean"},
+                    },
+                },
+            },
+            "is_all_day": {"type": "boolean", "description": "Whether this is an all-day event"},
+            "recurring_event_id": {"type": ["string", "null"], "description": "Parent event if recurring instance"},
+            "created": {"type": ["string", "null"], "description": "Event creation timestamp (RFC3339)"},
+            "updated": {"type": ["string", "null"], "description": "Event last modified timestamp (RFC3339)"},
+        },
+        "required": ["event_id", "trigger_type", "offset_minutes", "trigger_time", "event_start", "calendar_id"],
+    }
+
+
+def _google_calendar_event_start_config_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "calendar_id": {
+                "type": "string",
+                "description": "Calendar ID to monitor for events (defaults to primary calendar).",
+                "default": "primary",
+                "x-resource-picker": {
+                    "provider": "google_calendar",
+                    "resource_type": "google_calendar",
+                    "display_field": "name",
+                    "value_field": "id",
+                    "search_enabled": False,
+                },
+            },
+            "offset_minutes": {
+                "type": "integer",
+                "description": "Minutes before (negative) or after (positive) event start to trigger. Default: -15 (15 minutes before).",
+                "default": -15,
+                "minimum": -1440,
+                "maximum": 1440,
+            },
+            "include_all_day_events": {
+                "type": "boolean",
+                "description": "Whether to trigger for all-day events. When enabled, triggers at midnight in the calendar's timezone.",
+                "default": False,
+            },
+            "summary_contains": {
+                "type": "string",
+                "description": "Only trigger for events with this text in the title (case-insensitive).",
+            },
+            "organizer_email": {
+                "type": "string",
+                "description": "Only trigger for events organized by this email address.",
+            },
+            **_oauth_connection_property(),
+        },
+    }
+
+
+def _google_calendar_event_start_sample_event() -> Dict[str, Any]:
+    payload = {
+        "event_id": "abc123def456",
+        "trigger_type": "before_start",
+        "offset_minutes": -15,
+        "trigger_time": "2026-01-15T09:45:00Z",
+        "event_start": "2026-01-15T10:00:00Z",
+        "calendar_id": "primary",
+        "summary": "Team Meeting",
+        "description": "Weekly sync with the engineering team",
+        "location": "Conference Room A",
+        "status": "confirmed",
+        "html_link": "https://www.google.com/calendar/event?eid=abc123",
+        "start": {"datetime": "2026-01-15T10:00:00-05:00", "timezone": "America/New_York"},
+        "end": {"datetime": "2026-01-15T11:00:00-05:00", "timezone": "America/New_York"},
+        "organizer": {"email": "organizer@example.com", "display_name": "Jane Doe", "self": False},
+        "attendees": [
+            {"email": "attendee@example.com", "display_name": "John Smith", "response_status": "accepted", "optional": False, "self": True},
+        ],
+        "is_all_day": False,
+        "recurring_event_id": None,
+        "created": "2026-01-10T09:00:00Z",
+        "updated": "2026-01-10T09:00:00Z",
+    }
+    return {
+        "id": "evt_sample_poll_google_calendar_event_start",
+        "trigger_key": "poll.google_calendar.event_start",
+        "provider": "google",
+        "account_id": None,
+        "occurred_at": "2026-01-15T09:45:00Z",
+        "received_at": "2026-01-15T09:45:05Z",
         "data": payload,
         "raw": {"payload": payload},
     }
