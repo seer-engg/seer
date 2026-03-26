@@ -22,6 +22,8 @@ class TwilioMakeCallTool(TwilioAPIClient):
     """Make a phone call with a text-to-speech message."""
 
     name = "twilio_make_call"
+    integration_type = "phone"
+    provider = None
     description = "Make a phone call and speak a message using text-to-speech. The recipient hears the message when they pick up."
 
     def get_parameters_schema(self) -> Dict[str, Any]:

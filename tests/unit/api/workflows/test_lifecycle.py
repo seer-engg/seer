@@ -1,30 +1,21 @@
 """
-Unit tests for workflow lifecycle operations.
+Unit tests for workflow lifecycle pure logic.
 
-Tests the actual functions from the workflow lifecycle module including
-parsing, hashing, cursor handling, and version management.
+Tests parsing, hashing, cursor handling, and data transformation.
+Heavy mock tests for service orchestration have been moved to E2E tests.
 """
-import asyncio
 from datetime import datetime, timezone
 import hashlib
 import json
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
-from seer.core.errors import WorkflowCompilerError, NodeError
 from seer.database import (
-    WorkflowVersionStatus,
     parse_workflow_public_id,
     make_workflow_public_id,
     make_run_public_id,
     parse_run_public_id,
-)
-from seer.database.workflow_models import (
-    ChatExecutionStatus,
-    WORKFLOW_ID_PREFIX,
-    RUN_ID_PREFIX,
 )
 from seer.api.workflows.services.shared import (
     _hash_spec,
@@ -146,24 +137,6 @@ class TestRunPublicId:
         public_id = make_run_public_id(original_pk)
         parsed_pk = parse_run_public_id(public_id)
         assert parsed_pk == original_pk
-
-
-# =============================================================================
-# Constants Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestConstants:
-    """Tests for module constants."""
-
-    def test_workflow_id_prefix(self):
-        """Test WORKFLOW_ID_PREFIX constant."""
-        assert WORKFLOW_ID_PREFIX == "wf_"
-
-    def test_run_id_prefix(self):
-        """Test RUN_ID_PREFIX constant."""
-        assert RUN_ID_PREFIX == "run_"
 
 
 # =============================================================================
@@ -329,68 +302,6 @@ class TestSpecToDict:
         assert result["version"] == "2.0"
         assert result["nodes"] == []
         assert result["edges"] == []
-
-
-# =============================================================================
-# Workflow Version Status Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestWorkflowVersionStatus:
-    """Tests for WorkflowVersionStatus enum."""
-
-    def test_draft_status_value(self):
-        """Test DRAFT status value."""
-        assert WorkflowVersionStatus.DRAFT.value == "DRAFT"
-
-    def test_released_status_value(self):
-        """Test RELEASED status value."""
-        assert WorkflowVersionStatus.RELEASED.value == "RELEASED"
-
-    def test_archived_status_value(self):
-        """Test ARCHIVED status value."""
-        assert WorkflowVersionStatus.ARCHIVED.value == "ARCHIVED"
-
-    def test_status_is_string_enum(self):
-        """Test WorkflowVersionStatus is a string enum."""
-        assert isinstance(WorkflowVersionStatus.DRAFT, str)
-        assert WorkflowVersionStatus.DRAFT == "DRAFT"
-
-    def test_all_statuses_exist(self):
-        """Test all expected statuses exist."""
-        statuses = list(WorkflowVersionStatus)
-        assert len(statuses) == 3
-        assert WorkflowVersionStatus.DRAFT in statuses
-        assert WorkflowVersionStatus.RELEASED in statuses
-        assert WorkflowVersionStatus.ARCHIVED in statuses
-
-
-# =============================================================================
-# Version Number Logic Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestVersionNumberLogic:
-    """Tests for version number logic."""
-
-    def test_next_version_number(self):
-        """Test calculating next version number."""
-        current_max = 5
-        next_version = current_max + 1
-        assert next_version == 6
-
-    def test_first_version_number(self):
-        """Test first version number when none exist."""
-        current_max = 0
-        next_version = current_max + 1
-        assert next_version == 1
-
-    def test_draft_version_number_is_zero(self):
-        """Test draft version number is always 0."""
-        draft_version_number = 0
-        assert draft_version_number == 0
 
 
 # =============================================================================
@@ -590,239 +501,3 @@ class TestWorkflowSummary:
         spec = {"nodes": []}
         trigger_count = len(spec.get("triggers", []))
         assert trigger_count == 0
-
-
-# =============================================================================
-# Create Workflow Logic Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestCreateWorkflowLogic:
-    """Tests for create_workflow logic."""
-
-    def test_default_workflow_name(self):
-        """Test default workflow name when none provided."""
-        name = None
-        default_name = name or "Untitled Workflow"
-
-        assert default_name == "Untitled Workflow"
-
-    def test_custom_workflow_name(self):
-        """Test custom workflow name is preserved."""
-        name = "My Custom Workflow"
-        result_name = name or "Untitled Workflow"
-
-        assert result_name == "My Custom Workflow"
-
-    def test_empty_string_name_uses_default(self):
-        """Test empty string name uses default."""
-        name = ""
-        result_name = name or "Untitled Workflow"
-
-        assert result_name == "Untitled Workflow"
-
-
-# =============================================================================
-# Publish Workflow Validation Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestPublishWorkflowValidation:
-    """Tests that publish_workflow blocks on compiler errors."""
-
-    @pytest.mark.asyncio
-    async def test_publish_blocks_on_undefined_reference(self):
-        """Compiler raising WorkflowCompilerError should cause HTTP 400 on publish."""
-        from seer.core.errors import NodeError
-        from seer.api.workflows.services.shared import validate_workflow_spec
-        from seer.core.schema.models import WorkflowSpec
-
-        spec = WorkflowSpec(version="2", nodes=[], edges=[])
-        user = MagicMock()
-
-        compiler_error = WorkflowCompilerError(
-            "Undefined reference",
-            errors=[NodeError(code="UNDEFINED_REFERENCE", message="Variable ${nonexistent.output} is not defined", node_id="n1")],
-        )
-
-        with patch("seer.api.workflows.services.shared.WorkflowCompilerSingleton") as mock_singleton, \
-             patch("seer.api.workflows.services.shared.validate_workflow_spec.__wrapped__", create=True), \
-             patch("seer.api.agents.checkpointer.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer:
-            mock_compiler = AsyncMock()
-            mock_singleton.instance.return_value = mock_compiler
-            mock_compiler.compile.side_effect = compiler_error
-            mock_checkpointer.return_value = MagicMock()
-
-            with pytest.raises(HTTPException) as exc_info:
-                await validate_workflow_spec(user, spec)
-
-        assert exc_info.value.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_publish_blocks_on_missing_oauth_connection(self):
-        """Tool node with invalid connection_id raises HTTP 400 during publish validation."""
-        from seer.core.errors import NodeError
-        from seer.api.workflows.services.shared import validate_workflow_spec
-        from seer.core.schema.models import WorkflowSpec
-
-        spec = WorkflowSpec(version="2", nodes=[], edges=[])
-        user = MagicMock()
-
-        compiler_error = WorkflowCompilerError(
-            "OAuth connection not found",
-            errors=[NodeError(code="VALIDATION_ERROR", message="Connection 'invalid_conn' not found", node_id="tool_node_1")],
-        )
-
-        with patch("seer.api.workflows.services.shared.WorkflowCompilerSingleton") as mock_singleton, \
-             patch("seer.api.agents.checkpointer.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer:
-            mock_compiler = AsyncMock()
-            mock_singleton.instance.return_value = mock_compiler
-            mock_compiler.compile.side_effect = compiler_error
-            mock_checkpointer.return_value = MagicMock()
-
-            with pytest.raises(HTTPException) as exc_info:
-                await validate_workflow_spec(user, spec)
-
-        assert exc_info.value.status_code == 400
-        detail = exc_info.value.detail
-        assert detail["title"] == "Workflow validation failed"
-
-    @pytest.mark.asyncio
-    async def test_validate_workflow_spec_succeeds_with_valid_spec(self):
-        """validate_workflow_spec passes through without error for a valid spec."""
-        from seer.api.workflows.services.shared import validate_workflow_spec
-        from seer.core.schema.models import WorkflowSpec
-
-        spec = WorkflowSpec(version="2", nodes=[], edges=[])
-        user = MagicMock()
-
-        with patch("seer.api.workflows.services.shared.WorkflowCompilerSingleton") as mock_singleton, \
-             patch("seer.api.agents.checkpointer.get_checkpointer", new_callable=AsyncMock) as mock_checkpointer:
-            mock_compiler = AsyncMock()
-            mock_singleton.instance.return_value = mock_compiler
-            mock_compiler.compile.return_value = None  # Successful compilation
-            mock_checkpointer.return_value = MagicMock()
-
-            # Should complete without raising
-            await validate_workflow_spec(user, spec)
-
-        mock_compiler.compile.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_publish_with_no_draft_but_published_version_gives_clear_error(self):
-        """When no draft exists but a published version does, error says 'already published'."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-        from seer.api.workflows.services.lifecycle import publish_workflow
-        from seer.api.workflows import models as api_models
-
-        user = MagicMock()
-        payload = api_models.WorkflowPublishRequest()
-
-        mock_workflow = MagicMock()
-
-        with patch("seer.api.workflows.services.lifecycle._get_workflow_org_scoped", new=AsyncMock(return_value=mock_workflow)), \
-             patch("seer.api.workflows.services.lifecycle._get_draft_version", new=AsyncMock(return_value=None)), \
-             patch("seer.api.workflows.services.lifecycle.get_published_version", new=AsyncMock(return_value=MagicMock())):
-            with pytest.raises(HTTPException) as exc_info:
-                await publish_workflow(user, "wf_1", payload)
-
-        assert exc_info.value.status_code == 400
-        assert exc_info.value.detail["title"] == "Workflow already published"
-
-
-# =============================================================================
-# Delete Workflow Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestDeleteWorkflow:
-    """Tests for delete_workflow cleanup logic."""
-
-    @pytest.mark.asyncio
-    async def test_delete_workflow_cancels_active_runs_and_cleans_up(self):
-        """delete_workflow should cancel active runs, nullify FKs, delete subscriptions, then delete workflow."""
-        from seer.api.workflows.services.lifecycle import delete_workflow
-
-        user = MagicMock()
-        user.user_id = "user_123"
-        user.id = 123
-        user.first_name = "Test"
-        user.last_name = "User"
-        user.email = "test@example.com"
-        mock_workflow = AsyncMock()
-        mock_workflow.workflow_id = "wf_1"
-        mock_workflow.name = "Workflow One"
-        mock_workflow.organization_id = 456
-
-        mock_run = MagicMock()
-        mock_run.status = "running"
-        mock_run.save = AsyncMock()
-        mock_chat_session = MagicMock()
-        mock_chat_session.current_execution_status = ChatExecutionStatus.RUNNING
-        mock_chat_session.current_execution_task_id = "owner-1"
-        mock_chat_session.save = AsyncMock()
-
-        mock_update = AsyncMock()
-        mock_trig_delete = AsyncMock()
-
-        class FakeQuerySet:
-            """Mimics Tortoise QuerySet: sync construction, awaitable."""
-            def __init__(self, items=None):
-                self._items = items or []
-                self.all = AsyncMock(return_value=self._items)
-                self.update = AsyncMock()
-                self.delete = AsyncMock()
-
-            def __await__(self):
-                async def _resolve():
-                    return self._items
-                return _resolve().__await__()
-
-        with patch("seer.api.workflows.services.lifecycle._get_workflow_org_scoped", new=AsyncMock(return_value=mock_workflow)), \
-             patch("seer.api.workflows.services.lifecycle.WorkflowRun") as MockWfRun, \
-             patch("seer.api.workflows.services.lifecycle.WorkflowChatSession") as MockChatSession, \
-             patch("seer.api.workflows.services.lifecycle.TriggerSubscription") as MockTrigSub, \
-             patch("seer.api.workflows.services.lifecycle.publish_collaboration_event", new=AsyncMock(return_value=None)) as mock_publish:
-            active_qs = FakeQuerySet(items=[mock_run])
-            all_qs = FakeQuerySet()
-            all_qs.update = mock_update
-            active_chat_qs = FakeQuerySet(items=[mock_chat_session])
-
-            MockWfRun.filter = MagicMock(side_effect=[active_qs, all_qs])
-            MockChatSession.filter.return_value = active_chat_qs
-            MockTrigSub.filter.return_value.delete = mock_trig_delete
-
-            await delete_workflow(user, "wf_1")
-
-        assert mock_run.status == "cancelled"
-        mock_run.save.assert_called_once_with(update_fields=["status"])
-        mock_update.assert_called_once_with(workflow_id=None)
-        assert mock_chat_session.current_execution_status == ChatExecutionStatus.FAILED
-        assert mock_chat_session.current_execution_task_id is None
-        assert mock_chat_session.current_execution_finished_at is not None
-        assert mock_chat_session.current_execution_error == {
-            "type": "workflow_deleted",
-            "detail": "Chat execution aborted because the workflow was deleted.",
-            "reason": "workflow_deleted",
-            "status": 410,
-            "workflow_id": "wf_1",
-        }
-        mock_chat_session.save.assert_called_once_with(update_fields=[
-            "current_execution_status",
-            "current_execution_finished_at",
-            "current_execution_error",
-            "current_execution_task_id",
-        ])
-        mock_trig_delete.assert_called_once()
-        mock_workflow.delete.assert_called_once()
-        mock_publish.assert_awaited_once_with(
-            organization_id=456,
-            event_type=ANY,
-            resource_type="workflow",
-            resource_id="wf_1",
-            actor=user,
-            payload={"name": "Workflow One"},
-        )

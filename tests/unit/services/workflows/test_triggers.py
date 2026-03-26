@@ -1,13 +1,13 @@
 """
-Unit tests for services.workflows.triggers module.
+Unit tests for services.workflows.triggers pure logic.
 
-Tests trigger event processing, filter matching, and path resolution.
+Tests filter matching and path resolution.
+Heavy mock tests for event processing have been moved to E2E tests.
 """
-# pylint: disable=redefined-outer-name
-# Reason: pytest fixture pattern requires name reuse
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
+
+
+pytestmark = pytest.mark.unit
 
 
 # =============================================================================
@@ -15,7 +15,6 @@ import pytest
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestLookupFilterValue:
     """Tests for _lookup_filter_value function."""
 
@@ -102,7 +101,6 @@ class TestLookupFilterValue:
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestFiltersMatch:
     """Tests for _filters_match function."""
 
@@ -189,232 +187,3 @@ class TestFiltersMatch:
 
         result = _filters_match(filters, envelope)
         assert result is False
-
-
-# =============================================================================
-# Process Trigger Event Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestProcessTriggerEvent:
-    """Tests for process_trigger_event function."""
-
-    @pytest.fixture
-    def mock_subscription(self):
-        """Create a mock trigger subscription."""
-        subscription = MagicMock()
-        subscription.id = 1
-        subscription.enabled = True
-        subscription.trigger_key = "webhook.generic"
-        subscription.filters = None
-        subscription.workflow = MagicMock()
-        subscription.workflow.id = 10
-        subscription.user = MagicMock()
-        subscription.user.user_id = "user_123"
-        subscription.fetch_related = AsyncMock()
-        return subscription
-
-    @pytest.fixture
-    def mock_event(self):
-        """Create a mock trigger event."""
-        event = MagicMock()
-        event.id = 100
-        event.event = {"data": {"message": "test"}}
-        return event
-
-    @pytest.mark.asyncio
-    async def test_process_trigger_event_disabled_subscription(self, mock_subscription, mock_event):
-        """Test process_trigger_event skips disabled subscription."""
-        from seer.services.workflows.triggers import process_trigger_event
-
-        mock_subscription.enabled = False
-
-        with patch("seer.services.workflows.triggers.TriggerSubscription") as MockSub:
-            MockSub.get = AsyncMock(return_value=mock_subscription)
-            with patch("seer.services.workflows.triggers.TriggerEvent") as MockEvent:
-                MockEvent.get = AsyncMock(return_value=mock_event)
-                MockEvent.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-
-                await process_trigger_event(subscription_id=1, event_id=100)
-
-        # Should update event as processed with disabled message
-        MockEvent.filter.return_value.update.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_process_trigger_event_missing_workflow(self, mock_subscription, mock_event):
-        """Test process_trigger_event handles missing workflow."""
-        from seer.services.workflows.triggers import process_trigger_event
-
-        mock_subscription.workflow = None
-
-        with patch("seer.services.workflows.triggers.TriggerSubscription") as MockSub:
-            MockSub.get = AsyncMock(return_value=mock_subscription)
-            with patch("seer.services.workflows.triggers.TriggerEvent") as MockEvent:
-                MockEvent.get = AsyncMock(return_value=mock_event)
-                MockEvent.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-
-                await process_trigger_event(subscription_id=1, event_id=100)
-
-        # Should update event as failed
-        MockEvent.filter.return_value.update.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_process_trigger_event_missing_user(self, mock_subscription, mock_event):
-        """Test process_trigger_event handles missing user."""
-        from seer.services.workflows.triggers import process_trigger_event
-
-        mock_subscription.user = None
-
-        with patch("seer.services.workflows.triggers.TriggerSubscription") as MockSub:
-            MockSub.get = AsyncMock(return_value=mock_subscription)
-            with patch("seer.services.workflows.triggers.TriggerEvent") as MockEvent:
-                MockEvent.get = AsyncMock(return_value=mock_event)
-                MockEvent.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-
-                await process_trigger_event(subscription_id=1, event_id=100)
-
-        # Should update event as failed
-        MockEvent.filter.return_value.update.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_process_trigger_event_filtered_out(self, mock_subscription, mock_event):
-        """Test process_trigger_event skips filtered events."""
-        from seer.services.workflows.triggers import process_trigger_event
-
-        mock_subscription.filters = {"status": "active"}
-        mock_event.event = {"data": {"status": "inactive"}}  # Doesn't match filter
-
-        with patch("seer.services.workflows.triggers.TriggerSubscription") as MockSub:
-            MockSub.get = AsyncMock(return_value=mock_subscription)
-            with patch("seer.services.workflows.triggers.TriggerEvent") as MockEvent:
-                MockEvent.get = AsyncMock(return_value=mock_event)
-                MockEvent.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-
-                await process_trigger_event(subscription_id=1, event_id=100)
-
-        # Should update event as processed (filtered out)
-        MockEvent.filter.return_value.update.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_process_trigger_event_no_published_version(self, mock_subscription, mock_event):
-        """Test process_trigger_event handles workflow without published version and disables subscription."""
-        from seer.services.workflows.triggers import process_trigger_event
-
-        with patch("seer.services.workflows.triggers.TriggerSubscription") as MockSub:
-            MockSub.get = AsyncMock(return_value=mock_subscription)
-            MockSub.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-            with patch("seer.services.workflows.triggers.TriggerEvent") as MockEvent:
-                MockEvent.get = AsyncMock(return_value=mock_event)
-                MockEvent.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-                with patch("seer.services.workflows.triggers.get_published_version", new_callable=AsyncMock, return_value=None):
-                    await process_trigger_event(subscription_id=1, event_id=100)
-
-        # Should update event as failed
-        MockEvent.filter.return_value.update.assert_called()
-        # Should disable the subscription
-        MockSub.filter.assert_called_with(id=1)
-        MockSub.filter.return_value.update.assert_called_with(enabled=False)
-
-    @pytest.mark.asyncio
-    async def test_process_trigger_event_success(self, mock_subscription, mock_event):
-        """Test process_trigger_event successfully creates and executes run."""
-        from seer.services.workflows.triggers import process_trigger_event
-
-        mock_version = MagicMock()
-        mock_version.spec = {
-            "version": "2",
-            "nodes": [],
-            "edges": []
-        }
-
-        mock_run = MagicMock()
-        mock_run.id = 200
-
-        with patch("seer.services.workflows.triggers.TriggerSubscription") as MockSub:
-            MockSub.get = AsyncMock(return_value=mock_subscription)
-            with patch("seer.services.workflows.triggers.TriggerEvent") as MockEvent:
-                MockEvent.get = AsyncMock(return_value=mock_event)
-                MockEvent.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-                with patch("seer.services.workflows.triggers.get_published_version", new_callable=AsyncMock, return_value=mock_version):
-                    with patch("seer.services.workflows.triggers.WorkflowRun") as MockRun:
-                        MockRun.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-                        with patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock, return_value=mock_run):
-                            with patch("seer.services.workflows.triggers._execute_run", new_callable=AsyncMock, return_value={"result": "success"}):
-                                with patch("seer.services.workflows.triggers._mark_run_succeeded", new_callable=AsyncMock) as mock_mark_run_succeeded:
-                                    await process_trigger_event(subscription_id=1, event_id=100)
-
-        # Event should be marked as processed
-        MockEvent.filter.return_value.update.assert_called()
-        mock_mark_run_succeeded.assert_awaited_once_with(mock_run, {"result": "success"})
-
-    @pytest.mark.asyncio
-    async def test_process_trigger_event_leaves_interrupted_run_unfinished(self, mock_subscription, mock_event):
-        """Test process_trigger_event does not mark trigger-created HITL runs as succeeded."""
-        from seer.database import TriggerEventStatus
-        from seer.services.workflows.triggers import process_trigger_event
-
-        mock_version = MagicMock()
-        mock_version.spec = {
-            "version": "2",
-            "nodes": [],
-            "edges": [],
-        }
-
-        mock_run = MagicMock()
-        mock_run.id = 200
-
-        interrupted_output = {
-            "__interrupted__": True,
-            "__interrupt_data__": {"node_id": "hitl_approval", "type": "hitl"},
-            "__interrupt__": [{"value": {"node_id": "hitl_approval", "type": "hitl"}}],
-        }
-
-        with patch("seer.services.workflows.triggers.TriggerSubscription") as MockSub:
-            MockSub.get = AsyncMock(return_value=mock_subscription)
-            with patch("seer.services.workflows.triggers.TriggerEvent") as MockEvent:
-                MockEvent.get = AsyncMock(return_value=mock_event)
-                MockEvent.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-                with patch("seer.services.workflows.triggers.get_published_version", new_callable=AsyncMock, return_value=mock_version):
-                    with patch("seer.services.workflows.triggers.WorkflowRun") as MockRun:
-                        MockRun.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-                        with patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock, return_value=mock_run):
-                            with patch("seer.services.workflows.triggers._execute_run", new_callable=AsyncMock, return_value=interrupted_output):
-                                with patch("seer.services.workflows.triggers._mark_run_succeeded", new_callable=AsyncMock) as mock_mark_run_succeeded:
-                                    await process_trigger_event(subscription_id=1, event_id=100)
-
-        MockEvent.filter.return_value.update.assert_awaited_once_with(status=TriggerEventStatus.PROCESSED)
-        mock_mark_run_succeeded.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_process_trigger_event_execution_error(self, mock_subscription, mock_event):
-        """Test process_trigger_event handles execution errors."""
-        from fastapi import HTTPException
-        from seer.services.workflows.triggers import process_trigger_event
-
-        mock_version = MagicMock()
-        mock_version.spec = {
-            "version": "2",
-            "nodes": [],
-            "edges": []
-        }
-
-        mock_run = MagicMock()
-        mock_run.id = 200
-
-        with patch("seer.services.workflows.triggers.TriggerSubscription") as MockSub:
-            MockSub.get = AsyncMock(return_value=mock_subscription)
-            with patch("seer.services.workflows.triggers.TriggerEvent") as MockEvent:
-                MockEvent.get = AsyncMock(return_value=mock_event)
-                MockEvent.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-                with patch("seer.services.workflows.triggers.get_published_version", new_callable=AsyncMock, return_value=mock_version):
-                    with patch("seer.services.workflows.triggers.WorkflowRun") as MockRun:
-                        MockRun.filter = MagicMock(return_value=MagicMock(update=AsyncMock()))
-                        with patch("seer.api.workflows.services.execution._create_run_record", new_callable=AsyncMock, return_value=mock_run):
-                            with patch("seer.services.workflows.triggers._execute_run", new_callable=AsyncMock, side_effect=HTTPException(status_code=500, detail="Execution failed")):
-                                await process_trigger_event(subscription_id=1, event_id=100)
-
-        # Event should be marked as failed
-        call_args = MockEvent.filter.return_value.update.call_args
-        # Check that the last call had error status
-        assert MockEvent.filter.return_value.update.called

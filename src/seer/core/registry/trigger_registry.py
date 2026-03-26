@@ -387,6 +387,24 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
 
     registry.register(
         TriggerDefinition(
+            key="webhook.twilio.whatsapp",
+            title="WhatsApp Message",
+            provider="twilio",
+            mode="webhook",
+            description="Receive inbound WhatsApp messages via Twilio. Triggers when someone sends a WhatsApp message to your Twilio number.",
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_twilio_whatsapp_payload_schema()),
+                config=_twilio_whatsapp_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_twilio_whatsapp_sample_event(),
+                requires_connection=False,
+            ),
+        )
+    )
+
+    registry.register(
+        TriggerDefinition(
             key="form.hitl",
             title="HITL Form",
             provider="form",
@@ -1212,6 +1230,64 @@ def _supabase_db_changes_sample_event() -> Dict[str, Any]:
         "received_at": "2026-01-06T10:00:01Z",
         "data": payload,
         "raw": {"payload": payload},
+    }
+
+
+def _twilio_whatsapp_payload_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "from": {"type": "string", "description": "Sender phone number (E.164, without whatsapp: prefix)"},
+            "to": {"type": "string", "description": "Recipient phone number (your Twilio number)"},
+            "body": {"type": "string", "description": "Message text content"},
+            "message_sid": {"type": "string", "description": "Twilio message SID (unique identifier)"},
+            "num_media": {"type": "integer", "description": "Number of media attachments"},
+            "media_urls": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string"},
+                        "content_type": {"type": ["string", "null"]},
+                    },
+                },
+                "description": "Media attachments (images, documents, etc.)",
+            },
+            "timestamp": {"type": "string", "format": "date-time", "description": "When the message was received"},
+        },
+        "required": ["from", "to", "body", "message_sid"],
+    }
+
+
+def _twilio_whatsapp_config_schema() -> JsonSchema:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+        "description": "WhatsApp trigger uses app-level Twilio credentials. No configuration needed.",
+    }
+
+
+def _twilio_whatsapp_sample_event() -> Dict[str, Any]:
+    payload = {
+        "from": "+14155551234",
+        "to": "+15551234567",
+        "body": "Hey, can you help me with my order?",
+        "message_sid": "SM1234567890abcdef1234567890abcdef",
+        "num_media": 0,
+        "media_urls": [],
+        "timestamp": "2026-03-25T14:30:00Z",
+    }
+    return {
+        "id": "evt_sample_webhook_twilio_whatsapp",
+        "trigger_key": "webhook.twilio.whatsapp",
+        "provider": "twilio",
+        "account_id": None,
+        "occurred_at": "2026-03-25T14:30:00Z",
+        "received_at": "2026-03-25T14:30:01Z",
+        "data": payload,
+        "raw": {"headers": {}, "body": payload},
     }
 
 

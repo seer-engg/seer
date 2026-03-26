@@ -113,6 +113,7 @@ class BaseTool(ABC):
     integration_type: Optional[str] = None  # e.g., 'gmail', 'github', 'googledrive'
     provider: Optional[str] = None  # e.g., 'google', 'github' - OAuth provider for connections
     required_secrets: List[str] = []
+    optional_secrets: List[str] = []  # Resolved if available, but tool still executes without them
     default_resource: Optional[DefaultResourceRequirement] = None
 
     @abstractmethod
@@ -207,6 +208,7 @@ class BaseTool(ABC):
             "integration_type": self.integration_type,
             "provider": self.provider,
             "required_secrets": list(self.required_secrets) if self.required_secrets else [],
+            "optional_secrets": list(self.optional_secrets) if self.optional_secrets else [],
             "default_resource": self.default_resource,
             "parameters": schema,
             "output_schema": output_schema,
