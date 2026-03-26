@@ -22,7 +22,6 @@ class WorkflowBase(BaseModel):
     description: Optional[str] = None
     graph_data: Dict[str, Any] = Field(..., description="ReactFlow nodes/edges JSON")
     schema_version: str = Field(default="1.0", max_length=50)
-    is_active: bool = True
 
 
 class WorkflowCreate(WorkflowBase):
@@ -35,7 +34,6 @@ class WorkflowUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     graph_data: Optional[Dict[str, Any]] = None
-    is_active: Optional[bool] = None
 
 
 class WorkflowPublic(WorkflowBase):

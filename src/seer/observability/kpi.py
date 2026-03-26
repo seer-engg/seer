@@ -109,7 +109,7 @@ async def get_dry_run_adoption(
     Returns dict with total_workflows, previewed_workflows, adoption_rate.
     """
     # Count active workflows
-    wf_qs = Workflow.filter(is_active=True)
+    wf_qs = Workflow.filter()
     if organization and organization.type == OrganizationType.TEAM:
         wf_qs = wf_qs.filter(organization=organization)
     elif user:

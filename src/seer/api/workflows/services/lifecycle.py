@@ -142,7 +142,6 @@ async def _workflow_summary(workflow: Workflow, draft_version: Optional[Workflow
         name=workflow.name,
         created_at=workflow.created_at,
         updated_at=updated_at,
-        is_active=workflow.is_active,
         integrations=integrations,
     )
 
@@ -208,26 +207,6 @@ async def _abort_active_chat_executions(workflow: Workflow) -> int:
     return len(active_sessions)
 
 
-
-
-async def toggle_workflow_active(
-    user: User,
-    workflow_id: str,
-    is_active: bool,
-    organization: Optional[Organization] = None,
-    membership: Optional[OrganizationMembership] = None,
-) -> api_models.WorkflowSummary:
-    """Toggle the is_active flag on a workflow."""
-    workflow = await _get_workflow_org_scoped(user, workflow_id, organization, membership, require_manage=True)
-    workflow.is_active = is_active
-    await workflow.save(update_fields=["is_active", "updated_at"])
-    await _publish_workflow_event(
-        workflow,
-        event_type=CollaborationEventType.WORKFLOW_ACTIVE_CHANGED,
-        actor=user,
-        payload={"is_active": is_active},
-    )
-    return await _workflow_summary(workflow)
 
 
 def _serialize_version_list_item(

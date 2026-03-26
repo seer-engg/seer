@@ -28,13 +28,11 @@ ALLOWED_UNSAFE_MIGRATIONS = {
         "reason": "Contains DROP COLUMN in downgrade(). Already deployed to production on main/dev since Jan 9, 2026. Predates linter introduction.",
         "unsafe_patterns": ["DROP COLUMN"]
     },
-    # Future entries should be added here only after careful review
-    # Example format:
-    # "10_YYYYMMDDHHMMSS_migration_name.py": {
-    #     "added_to_allowlist": "YYYY-MM-DD",
-    #     "reason": "Brief explanation of why this is safe despite being flagged",
-    #     "unsafe_patterns": ["PATTERN_NAME"]
-    # },
+    "60_20260326175047_remove_workflow_is_active.py": {
+        "added_to_allowlist": "2026-03-26",
+        "reason": "Drops is_active column that was never checked in any execution path. Safe to remove.",
+        "unsafe_patterns": ["DROP COLUMN"]
+    },
 }
 
 DANGEROUS_PATTERNS = {
