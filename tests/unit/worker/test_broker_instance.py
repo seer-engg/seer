@@ -16,6 +16,38 @@ def _reload_broker_instance():
     return importlib.import_module(module_name)
 
 
+@pytest.fixture(autouse=True)
+def cleanup_broker_module():
+    """
+    Restore broker modules after each test.
+
+    Tests in this file reload broker_instance with mocks active. Without cleanup,
+    the mocked broker persists in sys.modules and breaks subsequent tests that
+    import worker tasks (trigger_event_task becomes a MagicMock).
+
+    This fixture saves the original modules before the test, then restores them
+    after. This ensures subsequent tests see the real broker, not a mock.
+    """
+    # Save original modules before test modifies them
+    modules_to_restore = [
+        "seer.worker.broker_instance",
+        "seer.worker.tasks.triggers",
+    ]
+    original_modules = {}
+    for module_name in modules_to_restore:
+        if module_name in sys.modules:
+            original_modules[module_name] = sys.modules[module_name]
+
+    yield
+
+    # Restore original modules (or remove if they didn't exist before)
+    for module_name in modules_to_restore:
+        if module_name in original_modules:
+            sys.modules[module_name] = original_modules[module_name]
+        else:
+            sys.modules.pop(module_name, None)
+
+
 @pytest.mark.unit
 def test_broker_passes_configured_idle_timeout():
     """RedisStreamBroker should use the configured reclaim timeout."""

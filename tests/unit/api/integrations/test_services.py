@@ -1,33 +1,17 @@
 """
-Unit tests for integrations services.
+Unit tests for integrations services pure logic.
 
-Tests the actual functions from seer.api.integrations.services including:
-- get_connection_for_provider: OAuth connection lookup
-- disconnect_provider: Provider disconnection with cascade
-- delete_connection_by_id: Connection deletion by ID
-- get_valid_access_token: Token retrieval with refresh
-- list_integration_resources: Resource enumeration
-- list_resource_secrets: Secret listing for resources
-- deactivate_integration_resource: Resource deactivation
-- serialize_integration_resource: Resource serialization
-- serialize_integration_secret: Secret serialization
-- bind_supabase_project_manual: Manual Supabase binding
+Tests pure functions: serialization, fingerprinting, provider mapping.
+Heavy mock tests for DB operations have been moved to E2E tests.
 """
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 import hashlib
 
 import pytest
 from fastapi import HTTPException
 
 from seer.api.integrations.services import (
-    get_connection_for_provider,
-    disconnect_provider,
-    delete_connection_by_id,
-    get_valid_access_token,
-    list_integration_resources,
-    list_resource_secrets,
-    deactivate_integration_resource,
     serialize_integration_resource,
     serialize_integration_secret,
     bind_supabase_project_manual,
@@ -38,29 +22,12 @@ from seer.api.integrations.services import (
 from seer.services.integrations.auth.oauth import get_oauth_provider
 
 
+pytestmark = pytest.mark.unit
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-# Note: mock_user fixture is provided by tests/unit/conftest.py
-
-
-@pytest.fixture
-def mock_oauth_connection():
-    """Create a mock OAuth connection."""
-    connection = MagicMock()
-    connection.id = 1
-    connection.provider = "google"
-    connection.status = "active"
-    connection.access_token_enc = "encrypted_token_123"
-    connection.refresh_token_enc = "encrypted_refresh_123"
-    connection.scopes = "email profile"
-    connection.provider_account_id = "account_123"
-    connection.provider_metadata = {"email": "test@example.com"}
-    connection.expires_at = datetime(2025, 12, 31, tzinfo=timezone.utc)
-    connection.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    connection.updated_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
-    return connection
 
 
 @pytest.fixture
@@ -105,7 +72,6 @@ def mock_integration_secret():
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestGetOAuthProvider:
     """Tests for get_oauth_provider function."""
 
@@ -156,450 +122,10 @@ class TestGetOAuthProvider:
 
 
 # =============================================================================
-# Get Connection Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestGetConnectionForProvider:
-    """Tests for get_connection_for_provider function."""
-
-    @pytest.mark.asyncio
-    async def test_get_connection_found(self, mock_user, mock_oauth_connection):
-        """Test getting existing connection for provider."""
-        with patch("seer.api.integrations.services.OAuthConnection") as MockOAuthConnection:
-            MockOAuthConnection.get_or_none = AsyncMock(return_value=mock_oauth_connection)
-
-            result = await get_connection_for_provider(mock_user, "google")
-
-            assert result == mock_oauth_connection
-            MockOAuthConnection.get_or_none.assert_called_once_with(
-                user=mock_user,
-                provider="google",
-                status="active"
-            )
-
-    @pytest.mark.asyncio
-    async def test_get_connection_not_found(self, mock_user):
-        """Test handling missing connection returns None."""
-        with patch("seer.api.integrations.services.OAuthConnection") as MockOAuthConnection:
-            MockOAuthConnection.get_or_none = AsyncMock(return_value=None)
-
-            result = await get_connection_for_provider(mock_user, "google")
-
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_connection_maps_provider(self, mock_user, mock_oauth_connection):
-        """Test that integration type is mapped to OAuth provider."""
-        with patch("seer.api.integrations.services.OAuthConnection") as MockOAuthConnection:
-            MockOAuthConnection.get_or_none = AsyncMock(return_value=mock_oauth_connection)
-
-            await get_connection_for_provider(mock_user, "gmail")
-
-            # gmail should be mapped to google
-            MockOAuthConnection.get_or_none.assert_called_once_with(
-                user=mock_user,
-                provider="google",
-                status="active"
-            )
-
-    @pytest.mark.asyncio
-    async def test_get_connection_handles_exception(self, mock_user):
-        """Test that exceptions are caught and None is returned."""
-        with patch("seer.api.integrations.services.OAuthConnection") as MockOAuthConnection:
-            MockOAuthConnection.get_or_none = AsyncMock(side_effect=Exception("DB error"))
-
-            result = await get_connection_for_provider(mock_user, "google")
-
-            assert result is None
-
-
-# =============================================================================
-# Disconnect Provider Tests
-# =============================================================================
-
-
-class AsyncQuerySetMock:
-    """A proper async-awaitable mock for Tortoise ORM QuerySets."""
-
-    def __init__(self, items, with_update=False):
-        self._items = items
-        self._update_mock = AsyncMock() if with_update else None
-
-    def __await__(self):
-        async def _coro():
-            return self._items
-        return _coro().__await__()
-
-    def __aiter__(self):
-        return self._async_iter()
-
-    async def _async_iter(self):
-        for item in self._items:
-            yield item
-
-    @property
-    def update(self):
-        return self._update_mock
-
-
-@pytest.mark.unit
-class TestDisconnectProvider:
-    """Tests for disconnect_provider function."""
-
-    @pytest.mark.asyncio
-    async def test_disconnect_revokes_connections(self, mock_user, mock_oauth_connection):
-        """Test that disconnect revokes all connections for provider."""
-        with patch("seer.api.integrations.services.OAuthConnection") as MockOAuthConnection, \
-             patch("seer.api.integrations.services.IntegrationResource") as MockResource, \
-             patch("seer.api.integrations.services.IntegrationSecret") as MockSecret, \
-             patch("seer.api.integrations.services.deactivate_integration_resource"):
-
-            # First call returns connections list, second call is for update
-            connections_qs = AsyncQuerySetMock([mock_oauth_connection])
-            update_qs = AsyncQuerySetMock([], with_update=True)
-            MockOAuthConnection.filter = MagicMock(side_effect=[connections_qs, update_qs])
-
-            # Mock resource filter - returns empty list (no linked resources)
-            resource_qs = AsyncQuerySetMock([])
-            MockResource.filter = MagicMock(return_value=resource_qs)
-
-            # Mock secret filter with update
-            secret_qs = AsyncQuerySetMock([], with_update=True)
-            MockSecret.filter = MagicMock(return_value=secret_qs)
-
-            await disconnect_provider(mock_user, "google")
-
-            # Verify filter was called to update status
-            assert MockOAuthConnection.filter.call_count >= 1
-
-    @pytest.mark.asyncio
-    async def test_disconnect_cascades_to_resources(self, mock_user, mock_oauth_connection, mock_integration_resource):
-        """Test that disconnect cascades to linked resources."""
-        with patch("seer.api.integrations.services.OAuthConnection") as MockOAuthConnection, \
-             patch("seer.api.integrations.services.IntegrationResource") as MockResource, \
-             patch("seer.api.integrations.services.IntegrationSecret") as MockSecret, \
-             patch("seer.api.integrations.services.deactivate_integration_resource") as mock_deactivate:
-
-            # First call returns connections list, second call is for update
-            connections_qs = AsyncQuerySetMock([mock_oauth_connection])
-            update_qs = AsyncQuerySetMock([], with_update=True)
-            MockOAuthConnection.filter = MagicMock(side_effect=[connections_qs, update_qs])
-
-            # Mock resource filter to return a linked resource
-            resource_qs = AsyncQuerySetMock([mock_integration_resource])
-            MockResource.filter = MagicMock(return_value=resource_qs)
-
-            # Mock secret filter with update
-            secret_qs = AsyncQuerySetMock([], with_update=True)
-            MockSecret.filter = MagicMock(return_value=secret_qs)
-
-            mock_deactivate.return_value = mock_integration_resource
-
-            await disconnect_provider(mock_user, "google")
-
-            # Verify deactivate was called for linked resources
-            mock_deactivate.assert_called_once_with(mock_user, mock_integration_resource.id)
-
-
-# =============================================================================
-# Delete Connection By ID Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestDeleteConnectionById:
-    """Tests for delete_connection_by_id function."""
-
-    @pytest.mark.asyncio
-    async def test_delete_connection_parses_compound_id(self, mock_user, mock_oauth_connection):
-        """Test that compound IDs (provider:id) are parsed correctly."""
-        with patch("seer.api.integrations.services.OAuthConnection") as MockOAuthConnection, \
-             patch("seer.api.integrations.services.IntegrationResource") as MockResource, \
-             patch("seer.api.integrations.services.IntegrationSecret") as MockSecret, \
-             patch("seer.api.integrations.services.deactivate_integration_resource"):
-
-            MockOAuthConnection.get_or_none = AsyncMock(return_value=mock_oauth_connection)
-
-            # Mock filter for update
-            oauth_filter_qs = AsyncQuerySetMock([], with_update=True)
-            MockOAuthConnection.filter = MagicMock(return_value=oauth_filter_qs)
-
-            # Mock resource filter
-            resource_qs = AsyncQuerySetMock([])
-            MockResource.filter = MagicMock(return_value=resource_qs)
-
-            # Mock secret filter with update
-            secret_qs = AsyncQuerySetMock([], with_update=True)
-            MockSecret.filter = MagicMock(return_value=secret_qs)
-
-            await delete_connection_by_id(mock_user, "google:123")
-
-            MockOAuthConnection.get_or_none.assert_called_with(id=123, user=mock_user)
-
-    @pytest.mark.asyncio
-    async def test_delete_connection_parses_simple_id(self, mock_user, mock_oauth_connection):
-        """Test that simple IDs are parsed correctly."""
-        with patch("seer.api.integrations.services.OAuthConnection") as MockOAuthConnection, \
-             patch("seer.api.integrations.services.IntegrationResource") as MockResource, \
-             patch("seer.api.integrations.services.IntegrationSecret") as MockSecret, \
-             patch("seer.api.integrations.services.deactivate_integration_resource"):
-
-            MockOAuthConnection.get_or_none = AsyncMock(return_value=mock_oauth_connection)
-
-            # Mock filter for update
-            oauth_filter_qs = AsyncQuerySetMock([], with_update=True)
-            MockOAuthConnection.filter = MagicMock(return_value=oauth_filter_qs)
-
-            # Mock resource filter
-            resource_qs = AsyncQuerySetMock([])
-            MockResource.filter = MagicMock(return_value=resource_qs)
-
-            # Mock secret filter with update
-            secret_qs = AsyncQuerySetMock([], with_update=True)
-            MockSecret.filter = MagicMock(return_value=secret_qs)
-
-            await delete_connection_by_id(mock_user, "456")
-
-            MockOAuthConnection.get_or_none.assert_called_with(id=456, user=mock_user)
-
-    @pytest.mark.asyncio
-    async def test_delete_connection_not_found_raises_404(self, mock_user):
-        """Test that deleting non-existent connection raises 404."""
-        with patch("seer.api.integrations.services.OAuthConnection") as MockOAuthConnection:
-            MockOAuthConnection.get_or_none = AsyncMock(return_value=None)
-
-            with pytest.raises(HTTPException) as exc_info:
-                await delete_connection_by_id(mock_user, "999")
-
-            assert exc_info.value.status_code == 404
-            assert exc_info.value.detail == "Connection not found"
-
-
-# =============================================================================
-# Get Valid Access Token Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestGetValidAccessToken:
-    """Tests for get_valid_access_token function."""
-
-    @pytest.mark.asyncio
-    async def test_get_token_success(self, mock_user):
-        """Test getting valid access token."""
-        with patch("seer.api.integrations.services.get_oauth_token") as mock_get_token:
-            mock_get_token.return_value = (MagicMock(), "valid_access_token")
-
-            result = await get_valid_access_token(mock_user, "google")
-
-            assert result == "valid_access_token"
-            mock_get_token.assert_called_once_with(mock_user, provider="google")
-
-    @pytest.mark.asyncio
-    async def test_get_token_not_found_returns_none(self, mock_user):
-        """Test that 404 HTTPException returns None."""
-        with patch("seer.api.integrations.services.get_oauth_token") as mock_get_token:
-            mock_get_token.side_effect = HTTPException(status_code=404, detail="Not found")
-
-            result = await get_valid_access_token(mock_user, "google")
-
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_token_other_error_raises(self, mock_user):
-        """Test that non-404 HTTPException is re-raised."""
-        with patch("seer.api.integrations.services.get_oauth_token") as mock_get_token:
-            mock_get_token.side_effect = HTTPException(status_code=401, detail="Unauthorized")
-
-            with pytest.raises(HTTPException) as exc_info:
-                await get_valid_access_token(mock_user, "google")
-
-            assert exc_info.value.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_get_token_maps_provider(self, mock_user):
-        """Test that integration type is mapped to OAuth provider."""
-        with patch("seer.api.integrations.services.get_oauth_token") as mock_get_token:
-            mock_get_token.return_value = (MagicMock(), "valid_access_token")
-
-            await get_valid_access_token(mock_user, "gmail")
-
-            # gmail should be mapped to google
-            mock_get_token.assert_called_once_with(mock_user, provider="google")
-
-
-# =============================================================================
-# List Integration Resources Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestListIntegrationResources:
-    """Tests for list_integration_resources function."""
-
-    @pytest.mark.asyncio
-    async def test_list_resources_returns_all_active(self, mock_user, mock_integration_resource):
-        """Test listing all active resources for user."""
-        with patch("seer.api.integrations.services.IntegrationResource") as MockResource:
-            mock_queryset = MagicMock()
-            mock_queryset.filter = MagicMock(return_value=mock_queryset)
-            mock_queryset.order_by = AsyncMock(return_value=[mock_integration_resource])
-            MockResource.filter = MagicMock(return_value=mock_queryset)
-
-            result = await list_integration_resources(mock_user)
-
-            assert len(result) == 1
-            assert result[0] == mock_integration_resource
-            MockResource.filter.assert_called_once_with(user=mock_user, status="active")
-
-    @pytest.mark.asyncio
-    async def test_list_resources_empty(self, mock_user):
-        """Test listing resources when none exist."""
-        with patch("seer.api.integrations.services.IntegrationResource") as MockResource:
-            mock_queryset = MagicMock()
-            mock_queryset.filter = MagicMock(return_value=mock_queryset)
-            mock_queryset.order_by = AsyncMock(return_value=[])
-            MockResource.filter = MagicMock(return_value=mock_queryset)
-
-            result = await list_integration_resources(mock_user)
-
-            assert result == []
-
-    @pytest.mark.asyncio
-    async def test_list_resources_filters_by_provider(self, mock_user, mock_integration_resource):
-        """Test filtering resources by provider."""
-        with patch("seer.api.integrations.services.IntegrationResource") as MockResource:
-            mock_queryset = MagicMock()
-            mock_queryset.filter = MagicMock(return_value=mock_queryset)
-            mock_queryset.order_by = AsyncMock(return_value=[mock_integration_resource])
-            MockResource.filter = MagicMock(return_value=mock_queryset)
-
-            result = await list_integration_resources(mock_user, provider="supabase")
-
-            assert len(result) == 1
-            # Verify filter was called with provider
-            mock_queryset.filter.assert_called_with(provider="supabase")
-
-    @pytest.mark.asyncio
-    async def test_list_resources_filters_by_resource_type(self, mock_user, mock_integration_resource):
-        """Test filtering resources by resource type."""
-        with patch("seer.api.integrations.services.IntegrationResource") as MockResource:
-            mock_queryset = MagicMock()
-            mock_queryset.filter = MagicMock(return_value=mock_queryset)
-            mock_queryset.order_by = AsyncMock(return_value=[mock_integration_resource])
-            MockResource.filter = MagicMock(return_value=mock_queryset)
-
-            result = await list_integration_resources(mock_user, resource_type="project")
-
-            assert len(result) == 1
-            mock_queryset.filter.assert_called_with(resource_type="project")
-
-
-# =============================================================================
-# List Resource Secrets Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestListResourceSecrets:
-    """Tests for list_resource_secrets function."""
-
-    @pytest.mark.asyncio
-    async def test_list_secrets_for_resource(self, mock_user, mock_integration_resource, mock_integration_secret):
-        """Test listing secrets for a resource."""
-        with patch("seer.api.integrations.services.IntegrationResource") as MockResource, \
-             patch("seer.api.integrations.services.IntegrationSecret") as MockSecret:
-
-            MockResource.get_or_none = AsyncMock(return_value=mock_integration_resource)
-
-            mock_queryset = MagicMock()
-            mock_queryset.order_by = AsyncMock(return_value=[mock_integration_secret])
-            MockSecret.filter = MagicMock(return_value=mock_queryset)
-
-            result = await list_resource_secrets(mock_user, resource_id=1)
-
-            assert len(result) == 1
-            assert result[0] == mock_integration_secret
-
-    @pytest.mark.asyncio
-    async def test_list_secrets_resource_not_found_raises_404(self, mock_user):
-        """Test that listing secrets for non-existent resource raises 404."""
-        with patch("seer.api.integrations.services.IntegrationResource") as MockResource:
-            MockResource.get_or_none = AsyncMock(return_value=None)
-
-            with pytest.raises(HTTPException) as exc_info:
-                await list_resource_secrets(mock_user, resource_id=999)
-
-            assert exc_info.value.status_code == 404
-            assert "999" in exc_info.value.detail
-
-
-# =============================================================================
-# Deactivate Integration Resource Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestDeactivateIntegrationResource:
-    """Tests for deactivate_integration_resource function."""
-
-    @pytest.mark.asyncio
-    async def test_deactivate_resource_success(self, mock_user, mock_integration_resource):
-        """Test deactivating a resource."""
-        with patch("seer.api.integrations.services.IntegrationResource") as MockResource, \
-             patch("seer.api.integrations.services.IntegrationSecret") as MockSecret:
-
-            MockResource.get_or_none = AsyncMock(return_value=mock_integration_resource)
-            mock_integration_resource.save = AsyncMock()
-
-            mock_secret_filter = MagicMock()
-            mock_secret_filter.update = AsyncMock()
-            MockSecret.filter = MagicMock(return_value=mock_secret_filter)
-
-            result = await deactivate_integration_resource(mock_user, resource_id=1)
-
-            assert result.status == "revoked"
-            mock_integration_resource.save.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_deactivate_resource_cascades_to_secrets(self, mock_user, mock_integration_resource):
-        """Test that deactivating resource cascades to secrets."""
-        with patch("seer.api.integrations.services.IntegrationResource") as MockResource, \
-             patch("seer.api.integrations.services.IntegrationSecret") as MockSecret:
-
-            MockResource.get_or_none = AsyncMock(return_value=mock_integration_resource)
-            mock_integration_resource.save = AsyncMock()
-
-            mock_secret_filter = MagicMock()
-            mock_secret_filter.update = AsyncMock()
-            MockSecret.filter = MagicMock(return_value=mock_secret_filter)
-
-            await deactivate_integration_resource(mock_user, resource_id=1)
-
-            # Verify secrets were updated to revoked
-            MockSecret.filter.assert_called_once_with(resource=mock_integration_resource, user=mock_user)
-            mock_secret_filter.update.assert_called_once_with(status="revoked")
-
-    @pytest.mark.asyncio
-    async def test_deactivate_resource_not_found_raises_404(self, mock_user):
-        """Test that deactivating non-existent resource raises 404."""
-        with patch("seer.api.integrations.services.IntegrationResource") as MockResource:
-            MockResource.get_or_none = AsyncMock(return_value=None)
-
-            with pytest.raises(HTTPException) as exc_info:
-                await deactivate_integration_resource(mock_user, resource_id=999)
-
-            assert exc_info.value.status_code == 404
-
-
-# =============================================================================
 # Serialization Tests
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestSerializeIntegrationResource:
     """Tests for serialize_integration_resource function."""
 
@@ -641,7 +167,6 @@ class TestSerializeIntegrationResource:
         assert result["updated_at"] is None
 
 
-@pytest.mark.unit
 class TestSerializeIntegrationSecret:
     """Tests for serialize_integration_secret function."""
 
@@ -688,7 +213,6 @@ class TestSerializeIntegrationSecret:
 # =============================================================================
 
 
-@pytest.mark.unit
 class TestFingerprintSecret:
     """Tests for _fingerprint_secret function."""
 
@@ -724,7 +248,6 @@ class TestFingerprintSecret:
         assert result == expected
 
 
-@pytest.mark.unit
 class TestFormatSupabaseSecretName:
     """Tests for _format_supabase_secret_name function."""
 
@@ -770,7 +293,6 @@ class TestFormatSupabaseSecretName:
         assert _format_supabase_secret_name("  anon  ") == "supabase_anon_key"
 
 
-@pytest.mark.unit
 class TestBuildManualSupabaseMetadata:
     """Tests for _build_manual_supabase_metadata function."""
 
@@ -800,13 +322,12 @@ class TestBuildManualSupabaseMetadata:
 
 
 # =============================================================================
-# Bind Supabase Project Manual Tests
+# Bind Supabase Project Validation Tests
 # =============================================================================
 
 
-@pytest.mark.unit
-class TestBindSupabaseProjectManual:
-    """Tests for bind_supabase_project_manual function."""
+class TestBindSupabaseProjectManualValidation:
+    """Tests for bind_supabase_project_manual validation logic."""
 
     @pytest.mark.asyncio
     async def test_bind_validates_project_ref_required(self, mock_user):
@@ -833,98 +354,3 @@ class TestBindSupabaseProjectManual:
 
         assert exc_info.value.status_code == 400
         assert "service_role_key" in exc_info.value.detail
-
-    @pytest.mark.asyncio
-    async def test_bind_creates_resource_and_secrets(self, mock_user, mock_integration_resource):
-        """Test that binding creates resource and secrets."""
-        with patch("seer.api.integrations.services._upsert_integration_resource") as mock_upsert_resource, \
-             patch("seer.api.integrations.services._upsert_integration_secret") as mock_upsert_secret:
-
-            mock_upsert_resource.return_value = mock_integration_resource
-            mock_upsert_secret.return_value = MagicMock()
-
-            result = await bind_supabase_project_manual(
-                mock_user,
-                project_ref="abc123",
-                service_role_key="service_key_123",
-                project_name="My Project",
-                anon_key="anon_key_123"
-            )
-
-            assert result == mock_integration_resource
-
-            # Verify resource was created
-            mock_upsert_resource.assert_called_once()
-            call_kwargs = mock_upsert_resource.call_args.kwargs
-            assert call_kwargs["user"] == mock_user
-            assert call_kwargs["provider"] == "supabase"
-            assert call_kwargs["resource_type"] == "project"
-            assert call_kwargs["resource_id"] == "abc123"
-
-            # Verify both secrets were created (service_role + anon)
-            assert mock_upsert_secret.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_bind_creates_only_service_role_when_no_anon(self, mock_user, mock_integration_resource):
-        """Test that only service_role secret is created when anon_key not provided."""
-        with patch("seer.api.integrations.services._upsert_integration_resource") as mock_upsert_resource, \
-             patch("seer.api.integrations.services._upsert_integration_secret") as mock_upsert_secret:
-
-            mock_upsert_resource.return_value = mock_integration_resource
-            mock_upsert_secret.return_value = MagicMock()
-
-            await bind_supabase_project_manual(
-                mock_user,
-                project_ref="abc123",
-                service_role_key="service_key_123"
-            )
-
-            # Verify only one secret was created (service_role only)
-            assert mock_upsert_secret.call_count == 1
-            call_kwargs = mock_upsert_secret.call_args.kwargs
-            assert call_kwargs["name"] == "supabase_service_role_key"
-
-    @pytest.mark.asyncio
-    async def test_bind_trims_project_ref(self, mock_user, mock_integration_resource):
-        """Test that project_ref is trimmed."""
-        with patch("seer.api.integrations.services._upsert_integration_resource") as mock_upsert_resource, \
-             patch("seer.api.integrations.services._upsert_integration_secret") as mock_upsert_secret:
-
-            mock_upsert_resource.return_value = mock_integration_resource
-            mock_upsert_secret.return_value = MagicMock()
-
-            await bind_supabase_project_manual(
-                mock_user,
-                project_ref="  abc123  ",
-                service_role_key="service_key_123"
-            )
-
-            call_kwargs = mock_upsert_resource.call_args.kwargs
-            assert call_kwargs["resource_id"] == "abc123"
-
-
-# =============================================================================
-# Connection Status Tests
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestConnectionStatus:
-    """Tests for OAuth connection status handling."""
-
-    def test_valid_status_values(self):
-        """Test valid connection status values."""
-        valid_statuses = ["active", "revoked", "error"]
-
-        for status in valid_statuses:
-            assert status in valid_statuses
-
-    def test_active_status_is_queryable(self, mock_oauth_connection):
-        """Test that active status is the default query filter."""
-        mock_oauth_connection.status = "active"
-        assert mock_oauth_connection.status == "active"
-
-    def test_revoked_status_indicates_disconnection(self, mock_oauth_connection):
-        """Test revoked status indicates disconnection."""
-        mock_oauth_connection.status = "revoked"
-        assert mock_oauth_connection.status == "revoked"

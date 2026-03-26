@@ -384,7 +384,7 @@ async def get_run_interrupt(request: Request, run_id: str):
         ],
         timeout_seconds=interrupt_payload.get("timeout_seconds"),
         expires_at=interrupt_data.get("expires_at"),
-        is_expired=interrupt_data.get("is_expired", False),
+        is_expired=interrupt_data.get("is_expired") or False,
     )
 
 
