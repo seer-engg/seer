@@ -6,11 +6,13 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 import httpx
 
+from seer.core.triggers.polling.adapters.google_calendar_common import (
+    parse_rfc3339 as _parse_rfc3339,
+)
 from seer.core.triggers.polling.adapters.google_calendar_event_changed import (
     GoogleCalendarEventChangedAdapter,
-    _parse_rfc3339,
     _is_newly_created,
-    _normalize_event,
+    _normalize_event_with_type as _normalize_event,
 )
 from seer.core.triggers.polling.adapters.base import (
     PollContext,

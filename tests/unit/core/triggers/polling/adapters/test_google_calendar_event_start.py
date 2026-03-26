@@ -6,10 +6,12 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 import httpx
 
+from seer.core.triggers.polling.adapters.google_calendar_common import (
+    parse_rfc3339 as _parse_rfc3339,
+    normalize_event as _normalize_event,
+)
 from seer.core.triggers.polling.adapters.google_calendar_event_start import (
     GoogleCalendarEventStartAdapter,
-    _parse_rfc3339,
-    _normalize_event,
     _get_event_start_utc,
     _make_instance_key,
 )

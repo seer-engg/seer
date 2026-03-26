@@ -382,3 +382,109 @@ class S3FileStorage(FileStorageBackend):
                 return False
             logger.error("Failed to check file existence: %s", e)
             raise StorageError(f"Failed to check file existence: {e}") from e
+
+    # Raw path methods for scratch storage
+
+    async def store_raw(
+        self,
+        path: str,
+        data: bytes,
+        *,
+        mime_type: str = "application/octet-stream",
+    ) -> None:
+        """Store raw bytes at a given path (relative to prefix)."""
+        key = f"{self.prefix}/{path}"
+
+        try:
+            logger.debug("Storing raw data: bucket=%s key=%s size=%d", self.bucket, key, len(data))
+            await self._run_sync(
+                self._client.put_object,
+                Bucket=self.bucket,
+                Key=key,
+                Body=data,
+                ContentType=mime_type,
+            )
+        except ClientError as e:
+            logger.error("Failed to store raw data: %s", e)
+            raise StorageError(f"Failed to store raw data: {e}") from e
+
+    async def retrieve_raw(self, path: str) -> bytes:
+        """Retrieve raw bytes from a given path (relative to prefix)."""
+        key = f"{self.prefix}/{path}"
+
+        try:
+            logger.debug("Retrieving raw data: bucket=%s key=%s", self.bucket, key)
+            response = await self._run_sync(
+                self._client.get_object, Bucket=self.bucket, Key=key
+            )
+            body = response["Body"]
+            data = await self._run_sync(body.read)
+            return data
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code in ("NoSuchKey", "404"):
+                raise StorageFileNotFoundError(f"Data not found at path: {path}") from e
+            logger.error("Failed to retrieve raw data: %s", e)
+            raise StorageError(f"Failed to retrieve raw data: {e}") from e
+
+    async def exists_raw(self, path: str) -> bool:
+        """Check if a path exists in storage (relative to prefix)."""
+        key = f"{self.prefix}/{path}"
+
+        try:
+            await self._run_sync(self._client.head_object, Bucket=self.bucket, Key=key)
+            return True
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code in ("404", "NoSuchKey"):
+                return False
+            logger.error("Failed to check existence: %s", e)
+            raise StorageError(f"Failed to check existence: {e}") from e
+
+    async def delete_raw(self, path: str) -> bool:
+        """Delete data at a given path (relative to prefix)."""
+        key = f"{self.prefix}/{path}"
+
+        try:
+            # Check if exists first
+            if not await self.exists_raw(path):
+                return False
+
+            logger.debug("Deleting raw data: bucket=%s key=%s", self.bucket, key)
+            await self._run_sync(self._client.delete_object, Bucket=self.bucket, Key=key)
+            return True
+        except ClientError as e:
+            logger.error("Failed to delete raw data: %s", e)
+            raise StorageError(f"Failed to delete raw data: {e}") from e
+
+    async def delete_by_prefix(self, prefix: str) -> int:
+        """Delete all objects under a prefix (relative to storage prefix)."""
+        full_prefix = f"{self.prefix}/{prefix}"
+        deleted_count = 0
+
+        try:
+            logger.info("Deleting all objects with prefix: %s", full_prefix)
+            paginator = self._client.get_paginator("list_objects_v2")
+
+            async def list_and_delete():
+                nonlocal deleted_count
+                for page in paginator.paginate(Bucket=self.bucket, Prefix=full_prefix):
+                    contents = page.get("Contents", [])
+                    if not contents:
+                        continue
+
+                    objects_to_delete = [{"Key": obj["Key"]} for obj in contents]
+                    if objects_to_delete:
+                        await self._run_sync(
+                            self._client.delete_objects,
+                            Bucket=self.bucket,
+                            Delete={"Objects": objects_to_delete},
+                        )
+                        deleted_count += len(objects_to_delete)
+
+            await list_and_delete()
+            logger.info("Deleted %d objects with prefix: %s", deleted_count, full_prefix)
+            return deleted_count
+        except ClientError as e:
+            logger.error("Failed to delete by prefix: %s", e)
+            raise StorageError(f"Failed to delete by prefix: {e}") from e
