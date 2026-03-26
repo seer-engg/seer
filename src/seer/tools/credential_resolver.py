@@ -137,15 +137,18 @@ class CredentialResolver:
         resource: Optional[IntegrationResource],
         connection: Optional[OAuthConnection],
     ) -> Tuple[Dict[str, str], Dict[str, IntegrationSecret]]:
-        if not self.tool.required_secrets:
+        optional_secrets = getattr(self.tool, "optional_secrets", [])
+        if not self.tool.required_secrets and not optional_secrets:
             return {}, {}
 
         provider = self._infer_provider(connection, resource)
         if not provider:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Tool '{self.tool.name}' declares required secrets but no provider could be inferred.",
-            )
+            if self.tool.required_secrets:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tool '{self.tool.name}' declares required secrets but no provider could be inferred.",
+                )
+            return {}, {}
 
         secrets: Dict[str, str] = {}
         secret_records: Dict[str, IntegrationSecret] = {}
@@ -159,6 +162,12 @@ class CredentialResolver:
                 )
             secrets[name] = secret.value_enc
             secret_records[name] = secret
+
+        for name in optional_secrets:
+            secret = await self._find_secret(provider, name, resource, connection)
+            if secret:
+                secrets[name] = secret.value_enc
+                secret_records[name] = secret
 
         return secrets, secret_records
 

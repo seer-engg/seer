@@ -26,6 +26,7 @@ def mock_tool_no_scopes():
     tool.required_scopes = []
     tool.requires_oauth = False
     tool.required_secrets = []
+    tool.optional_secrets = []
     tool.default_resource = None
     tool.provider = None
     tool.integration_type = None
@@ -53,9 +54,25 @@ def mock_tool_with_secrets():
     tool.required_scopes = []
     tool.requires_oauth = False
     tool.required_secrets = ["api_key", "api_secret"]
+    tool.optional_secrets = []
     tool.default_resource = None
     tool.provider = "custom"
     tool.integration_type = "custom"
+    return tool
+
+
+@pytest.fixture
+def mock_tool_with_optional_secrets():
+    """Create a mock tool with only optional secrets (like Twilio)."""
+    tool = MagicMock()
+    tool.name = "twilio_tool"
+    tool.required_scopes = []
+    tool.requires_oauth = False
+    tool.required_secrets = []
+    tool.optional_secrets = ["twilio_account_sid", "twilio_auth_token", "twilio_from_number"]
+    tool.default_resource = None
+    tool.provider = "twilio"
+    tool.integration_type = "twilio"
     return tool
 
 
@@ -370,6 +387,48 @@ class TestResolveSecrets:
         assert "api_secret" in secrets
         assert secrets["api_key"] == "encrypted_value"
         assert records["api_key"] == mock_secret
+
+    @pytest.mark.asyncio
+    async def test_resolve_optional_secrets_found(self, mock_user, mock_tool_with_optional_secrets):
+        """Test optional secrets are resolved when available."""
+        from seer.tools.credential_resolver import CredentialResolver
+
+        mock_secret = MagicMock()
+        mock_secret.value_enc = "enc_value"
+
+        with patch.object(CredentialResolver, "_find_secret", new_callable=AsyncMock, return_value=mock_secret):
+            resolver = CredentialResolver(user=mock_user, tool=mock_tool_with_optional_secrets)
+            secrets, records = await resolver._resolve_secrets(None, None)
+
+        assert "twilio_account_sid" in secrets
+        assert "twilio_auth_token" in secrets
+        assert "twilio_from_number" in secrets
+
+    @pytest.mark.asyncio
+    async def test_resolve_optional_secrets_missing_no_error(self, mock_user, mock_tool_with_optional_secrets):
+        """Test optional secrets don't raise when missing — tool handles fallback."""
+        from seer.tools.credential_resolver import CredentialResolver
+
+        with patch.object(CredentialResolver, "_find_secret", new_callable=AsyncMock, return_value=None):
+            resolver = CredentialResolver(user=mock_user, tool=mock_tool_with_optional_secrets)
+            secrets, records = await resolver._resolve_secrets(None, None)
+
+        assert secrets == {}
+        assert records == {}
+
+    @pytest.mark.asyncio
+    async def test_resolve_optional_secrets_no_provider_no_error(self, mock_user, mock_tool_with_optional_secrets):
+        """Test optional-only secrets with no provider returns empty, no error."""
+        from seer.tools.credential_resolver import CredentialResolver
+
+        mock_tool_with_optional_secrets.provider = None
+        mock_tool_with_optional_secrets.integration_type = None
+
+        resolver = CredentialResolver(user=mock_user, tool=mock_tool_with_optional_secrets)
+        secrets, records = await resolver._resolve_secrets(None, None)
+
+        assert secrets == {}
+        assert records == {}
 
 
 # =============================================================================

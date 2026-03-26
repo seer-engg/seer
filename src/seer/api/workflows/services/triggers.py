@@ -232,7 +232,12 @@ def _is_form_trigger(trigger_key: str) -> bool:
     return trigger_key == "form.hosted"
 
 
+_FIXED_URL_WEBHOOKS = {"webhook.twilio.whatsapp"}
+
+
 def _should_emit_webhook_url(trigger_key: str) -> bool:
+    if trigger_key in _FIXED_URL_WEBHOOKS:
+        return False
     return trigger_key.startswith("webhook.")
 
 
@@ -261,7 +266,9 @@ async def _serialize_subscription(
     webhook_url = None
     form_url = None
 
-    if _should_emit_webhook_url(subscription.trigger_key) and subscription.webhook_slug:
+    if subscription.trigger_key in _FIXED_URL_WEBHOOKS:
+        webhook_url = "/api/v1/webhooks/twilio/whatsapp"
+    elif _should_emit_webhook_url(subscription.trigger_key) and subscription.webhook_slug:
         webhook_url = _build_webhook_url(subscription.webhook_slug, subscription.trigger_key)
 
     # Build form URL for form triggers

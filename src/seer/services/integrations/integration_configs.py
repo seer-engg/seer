@@ -296,6 +296,30 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
             "scope_keywords": ["supabase"]
         }
     },
+    # WhatsApp (via Twilio) — no OAuth
+    "whatsapp": {
+        "display_name": "WhatsApp",
+        "requires_oauth": False,
+        "icon": {"type": "url", "value": "https://img.logo.dev/whatsapp.com?token=pk_Ovp4v2MYQDqQ0D6xdN7OJA"},
+        "brand_color": "#25D366",
+        "scopes": [],
+        "detection_patterns": {
+            "tool_name_patterns": ["whatsapp"],
+            "scope_keywords": []
+        }
+    },
+    # Phone Call (via Twilio) — no OAuth
+    "phone": {
+        "display_name": "Phone Call",
+        "requires_oauth": False,
+        "icon": {"type": "lucide", "value": "Phone"},
+        "brand_color": "#4A90D9",
+        "scopes": [],
+        "detection_patterns": {
+            "tool_name_patterns": ["call", "phone"],
+            "scope_keywords": []
+        }
+    },
     # Slack integration
     "slack": {
         "display_name": "Slack",
