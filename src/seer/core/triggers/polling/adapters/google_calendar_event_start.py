@@ -15,18 +15,22 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from seer.core.triggers.polling.adapters.base import (
-    PollAdapter,
     PollAdapterError,
     PollContext,
     PolledEvent,
     PollResult,
     register_adapter,
 )
+from seer.core.triggers.polling.adapters.google_calendar_common import (
+    CALENDAR_API_BASE,
+    GoogleCalendarBaseAdapter,
+    normalize_event,
+    parse_rfc3339,
+)
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
 
-CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
 LOOKAHEAD_HOURS = 24
 MAX_EVENTS_PER_POLL = 100
 CURSOR_CLEANUP_DAYS = 7
@@ -39,72 +43,13 @@ class _PollConfig:
     include_all_day: bool
 
 
-def _parse_rfc3339(value: Optional[str]) -> Optional[datetime]:
-    """Parse RFC3339 datetime string to datetime object."""
-    if not value:
-        return None
-    try:
-        if value.endswith("Z"):
-            value = value[:-1] + "+00:00"
-        return datetime.fromisoformat(value)
-    except (ValueError, TypeError):
-        return None
-
-
-def _normalize_event(event: Dict[str, Any], calendar_id: str) -> Dict[str, Any]:
-    """Normalize Google Calendar event to trigger payload format."""
-    start = event.get("start", {})
-    end = event.get("end", {})
-    organizer = event.get("organizer", {})
-
-    is_all_day = "date" in start and "dateTime" not in start
-
-    attendees = []
-    for att in event.get("attendees", []):
-        attendees.append({
-            "email": att.get("email"),
-            "display_name": att.get("displayName"),
-            "response_status": att.get("responseStatus"),
-            "optional": att.get("optional", False),
-            "self": att.get("self", False),
-        })
-
-    return {
-        "event_id": event.get("id"),
-        "calendar_id": calendar_id,
-        "summary": event.get("summary"),
-        "description": event.get("description"),
-        "location": event.get("location"),
-        "status": event.get("status"),
-        "html_link": event.get("htmlLink"),
-        "start": {
-            "datetime": start.get("dateTime") or start.get("date"),
-            "timezone": start.get("timeZone"),
-        },
-        "end": {
-            "datetime": end.get("dateTime") or end.get("date"),
-            "timezone": end.get("timeZone"),
-        },
-        "organizer": {
-            "email": organizer.get("email"),
-            "display_name": organizer.get("displayName"),
-            "self": organizer.get("self", False),
-        },
-        "attendees": attendees,
-        "is_all_day": is_all_day,
-        "recurring_event_id": event.get("recurringEventId"),
-        "created": event.get("created"),
-        "updated": event.get("updated"),
-    }
-
-
 def _get_event_start_utc(event: Dict[str, Any]) -> Optional[datetime]:
     """Extract UTC start time from event, handling all-day events."""
     start = event.get("start", {})
     datetime_str = start.get("dateTime")
 
     if datetime_str:
-        return _parse_rfc3339(datetime_str)
+        return parse_rfc3339(datetime_str)
 
     # All-day event: use the date at midnight UTC
     date_str = start.get("date")
@@ -122,7 +67,7 @@ def _make_instance_key(event_id: str, start_utc: datetime) -> str:
     return f"{event_id}_{start_utc.isoformat()}"
 
 
-class GoogleCalendarEventStartAdapter(PollAdapter):
+class GoogleCalendarEventStartAdapter(GoogleCalendarBaseAdapter):
     """
     Poll Google Calendar for events approaching their trigger time.
 
@@ -189,9 +134,9 @@ class GoogleCalendarEventStartAdapter(PollAdapter):
     def _unpack_cursor(
         self, cursor: Dict[str, Any], now: datetime
     ) -> tuple[datetime, Dict[str, str], Optional[datetime]]:
-        bootstrapped_at = _parse_rfc3339(cursor.get("bootstrapped_at")) or now
+        bootstrapped_at = parse_rfc3339(cursor.get("bootstrapped_at")) or now
         triggered_instances: Dict[str, str] = cursor.get("triggered_instances", {})
-        last_cleanup = _parse_rfc3339(cursor.get("last_cleanup_utc"))
+        last_cleanup = parse_rfc3339(cursor.get("last_cleanup_utc"))
         return bootstrapped_at, triggered_instances, last_cleanup
 
     async def _fetch_calendar_events(
@@ -279,7 +224,7 @@ class GoogleCalendarEventStartAdapter(PollAdapter):
         else:
             trigger_type = "after_start"
 
-        payload = _normalize_event(event, config.calendar_id)
+        payload = normalize_event(event, config.calendar_id)
         payload.update({
             "trigger_type": trigger_type,
             "offset_minutes": offset_minutes,
@@ -306,7 +251,7 @@ class GoogleCalendarEventStartAdapter(PollAdapter):
         cutoff = now - timedelta(days=CURSOR_CLEANUP_DAYS)
         cleaned = {
             k: v for k, v in triggered_instances.items()
-            if _parse_rfc3339(v) and _parse_rfc3339(v) > cutoff  # type: ignore[operator]
+            if parse_rfc3339(v) and parse_rfc3339(v) > cutoff  # type: ignore[operator]
         }
         return cleaned, now
 
@@ -356,35 +301,6 @@ class GoogleCalendarEventStartAdapter(PollAdapter):
                 break
 
         return all_events
-
-    async def _raise_for_status(self, response: httpx.Response, operation: str) -> None:
-        """Raise PollAdapterError for HTTP errors."""
-        if response.status_code < 400:
-            return
-
-        detail = {"status": response.status_code, "body": response.text[:500], "operation": operation}
-
-        if response.status_code in {401, 403}:
-            raise PollAdapterError(
-                "Google Calendar authentication error",
-                permanent=True,
-                detail=detail,
-            )
-        if response.status_code == 429:
-            raise PollAdapterError(
-                "Google Calendar rate limited",
-                backoff_seconds=60,
-                detail=detail,
-            )
-        raise PollAdapterError("Google Calendar API error", detail=detail)
-
-    def _resolve_calendar_id(self, ctx: PollContext) -> str:
-        """Get calendar ID from config, defaulting to 'primary'."""
-        config = ctx.subscription.provider_config or {}
-        calendar_id = config.get("calendar_id")
-        if calendar_id and isinstance(calendar_id, str) and calendar_id.strip():
-            return calendar_id.strip()
-        return "primary"
 
     def _resolve_offset_minutes(self, ctx: PollContext) -> int:
         """Get offset_minutes from config with bounds checking."""
