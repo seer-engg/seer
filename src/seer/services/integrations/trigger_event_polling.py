@@ -7,7 +7,7 @@ These functions fetch live events from external APIs for trigger event browsing.
 # pylint: disable=too-many-lines # Reason: Further splitting would fragment related event browsing code across multiple modules; cohesion is preferred over arbitrary line limits
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -37,7 +37,11 @@ from seer.core.triggers.polling.adapters.google_calendar_event_changed import (
 )
 from seer.core.triggers.polling.adapters.google_calendar_common import (
     CALENDAR_API_BASE,
+    normalize_event as _normalize_calendar_event_common,
     parse_rfc3339 as _parse_rfc3339,
+)
+from seer.core.triggers.polling.adapters.google_calendar_event_start import (
+    GoogleCalendarEventStartAdapter,
 )
 from seer.database import User
 from seer.logger import get_logger
@@ -722,6 +726,153 @@ def _build_google_calendar_event_item(
         "metadata": {
             "calendar_id": calendar_id,
             "event_type": normalized_payload.get("event_type"),
+            "is_all_day": normalized_payload.get("is_all_day"),
+            "status": normalized_payload.get("status"),
+        },
+    }
+
+
+async def list_google_calendar_event_start_events(
+    user: User,
+    provider_connection_id: int,
+    options,
+    _gcal_start_adapter: GoogleCalendarEventStartAdapter,  # pylint: disable=unused-argument # Reason: Interface consistency with other list_*_events functions
+) -> Dict[str, Any]:
+    """List Google Calendar events for browsing with event_start trigger payload format."""
+    _, access_token = await get_oauth_token(
+        user, connection_id=str(provider_connection_id)
+    )
+
+    calendar_id = (options.filter_params or {}).get("calendar_id", "primary")
+    query = (options.filter_params or {}).get("query", "")
+    page_size = min(options.page_size, CALENDAR_MAX_EVENTS)
+
+    # For event_start browsing, show events from now through the next 48 hours
+    now = datetime.now(timezone.utc)
+    time_min = now
+    time_max = now + timedelta(hours=48)
+
+    params: Dict[str, Any] = {
+        "maxResults": page_size,
+        "singleEvents": True,
+        "orderBy": "startTime",
+        "timeMin": time_min.isoformat(),
+        "timeMax": time_max.isoformat(),
+    }
+    if query:
+        params["q"] = query
+    if options.page_token:
+        params["pageToken"] = options.page_token
+
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{CALENDAR_API_BASE}/calendars/{calendar_id}/events",
+                headers=headers,
+                params=params,
+            )
+            if resp.status_code >= 400:
+                _handle_google_calendar_error(resp, calendar_id)
+
+            data = resp.json()
+            events = data.get("items", []) or []
+            next_page_token = data.get("nextPageToken")
+
+            if not events:
+                return {
+                    "items": [],
+                    "next_page_token": None,
+                    "trigger_key": options.trigger_key,
+                    "supports_search": True,
+                }
+
+            items: List[Dict[str, Any]] = []
+            for event in events:
+                if event.get("status") == "cancelled":
+                    continue
+                items.append(_build_google_calendar_event_start_item(
+                    event=event,
+                    calendar_id=calendar_id,
+                    trigger_key=options.trigger_key,
+                    trigger_id=options.trigger_id,
+                    provider_connection_id=provider_connection_id,
+                ))
+
+            return {
+                "items": items,
+                "next_page_token": next_page_token,
+                "trigger_key": options.trigger_key,
+                "supports_search": True,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to list Google Calendar events for event_start")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch Calendar events: {str(exc)}"
+        ) from exc
+
+
+def _build_google_calendar_event_start_item(
+    *,
+    event: Dict[str, Any],
+    calendar_id: str,
+    trigger_key: str,
+    trigger_id: str,
+    provider_connection_id: int,
+) -> Dict[str, Any]:
+    """Build a TriggerEventItem from Google Calendar event data with event_start payload format."""
+    normalized_payload = _normalize_calendar_event_common(event, calendar_id)
+
+    # Add event_start-specific fields (matching what the polling adapter produces)
+    start_info = event.get("start", {})
+    start_dt_str = start_info.get("dateTime") or start_info.get("date") or ""
+    start_dt = _parse_rfc3339(start_dt_str)
+    event_start_iso = start_dt.isoformat() if start_dt else start_dt_str
+
+    normalized_payload.update({
+        "trigger_type": "before_start",
+        "offset_minutes": -15,
+        "trigger_time": event_start_iso,
+        "event_start": event_start_iso,
+    })
+
+    summary = normalized_payload.get("summary") or "(No title)"
+    occurred_at = _parse_rfc3339(event.get("updated")) or datetime.now(timezone.utc)
+
+    if start_dt:
+        display_subtitle = start_dt.strftime("%b %d, %Y %I:%M %p")
+    else:
+        display_subtitle = start_dt_str if start_dt_str else occurred_at.strftime("%b %d, %Y")
+
+    location = normalized_payload.get("location") or ""
+    description = normalized_payload.get("description") or ""
+    preview = location if location else (description[:200] if description else None)
+
+    envelope = build_event_envelope(
+        TriggerEventEnvelopeInput(
+            trigger_id=trigger_id,
+            trigger_key=trigger_key,
+            title=summary,
+            provider="google_calendar",
+            provider_connection_id=provider_connection_id,
+            payload=normalized_payload,
+            raw=event,
+            occurred_at=occurred_at,
+        )
+    )
+
+    return {
+        "id": normalized_payload.get("event_id"),
+        "display_title": summary,
+        "display_subtitle": display_subtitle,
+        "preview": preview,
+        "envelope": envelope,
+        "metadata": {
+            "calendar_id": calendar_id,
             "is_all_day": normalized_payload.get("is_all_day"),
             "status": normalized_payload.get("status"),
         },
