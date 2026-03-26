@@ -78,6 +78,9 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     twilio_from_number: Optional[str] = Field(
         default=None, description="Twilio phone number in E.164 format (e.g., +15551234567)"
     )
+    twilio_whatsapp_from_number: Optional[str] = Field(
+        default=None, description="Twilio WhatsApp from-number (defaults to twilio_from_number if unset)"
+    )
     e2b_api_key: Optional[str] = Field(
         default=None, description="E2B API key for cloud sandbox code execution"
     )

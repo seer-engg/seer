@@ -33,11 +33,12 @@ class TestTwilioMakeCallTool:
     def test_tool_attributes(self):
         tool = TwilioMakeCallTool()
         assert tool.name == "twilio_make_call"
-        assert tool.provider == "twilio"
-        assert tool.integration_type == "twilio"
-        assert "twilio_account_sid" in tool.required_secrets
-        assert "twilio_auth_token" in tool.required_secrets
-        assert "twilio_from_number" in tool.required_secrets
+        assert tool.provider is None
+        assert tool.integration_type == "phone"
+        assert tool.required_secrets == []
+        assert "twilio_account_sid" in tool.optional_secrets
+        assert "twilio_auth_token" in tool.optional_secrets
+        assert "twilio_from_number" in tool.optional_secrets
 
     def test_get_parameters_schema(self):
         tool = TwilioMakeCallTool()

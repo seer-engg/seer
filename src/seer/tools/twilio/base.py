@@ -30,7 +30,8 @@ class TwilioAPIClient(BaseTool, ABC):
 
     provider = "twilio"
     integration_type = "twilio"
-    required_secrets = ["twilio_account_sid", "twilio_auth_token", "twilio_from_number"]
+    required_secrets: list[str] = []
+    optional_secrets = ["twilio_account_sid", "twilio_auth_token", "twilio_from_number", "twilio_whatsapp_from_number"]
     default_timeout: float = 30.0
 
     def _get_credentials(self, credentials: Optional[ResolvedCredentials] = None) -> tuple[str, str, str]:
