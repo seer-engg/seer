@@ -25,9 +25,19 @@ from seer.core.errors import ExecutionError
 from seer.core.registry.default_models import DEPRECATED_MODEL_MAP
 from seer.logger import get_logger
 from seer.core.expr.typecheck import schema_from_output_contract
-from seer.core.nodes.base import BaseNodeType, NodeExecutionContext, TypeRegistrationContext, get_trace_key
+from seer.core.nodes.base import (
+    BaseNodeType,
+    NodeExecutionContext,
+    TypeRegistrationContext,
+    get_trace_key,
+)
 from seer.core.nodes.registry import register_node_type
-from seer.core.schema.models import AgentNode, InlineSchema, OutputMode, enforce_all_properties_required
+from seer.core.schema.models import (
+    AgentNode,
+    InlineSchema,
+    OutputMode,
+    enforce_all_properties_required,
+)
 from seer.runtime_credit_limits import check_runtime_credit_limit
 
 if TYPE_CHECKING:
@@ -71,13 +81,19 @@ class ToolWorker:
         self.failure_log: List[Dict[str, Any]] = []
 
     async def __call__(self, **kwargs: Any) -> str:
-        logger.debug("ToolWorker executing '%s' (max_retries=%d)", self.tool_name, self.max_retries)
+        logger.debug(
+            "ToolWorker executing '%s' (max_retries=%d)",
+            self.tool_name,
+            self.max_retries,
+        )
         result = await self.executor(**kwargs)
 
         if not isinstance(result, str) or not result.startswith(_ERROR_PREFIX):
             return result
 
-        logger.debug("ToolWorker '%s' first attempt failed, entering retry loop", self.tool_name)
+        logger.debug(
+            "ToolWorker '%s' first attempt failed, entering retry loop", self.tool_name
+        )
         self.failure_log.append({"params": kwargs, "error": result})
 
         for _attempt in range(self.max_retries):
@@ -92,7 +108,9 @@ class ToolWorker:
             self.failure_log.append({"params": corrected, "error": result})
 
         original_error = self.failure_log[0]["error"]
-        reason = original_error.removeprefix(f"{_ERROR_PREFIX}{self.tool_name}: ").strip()
+        reason = original_error.removeprefix(
+            f"{_ERROR_PREFIX}{self.tool_name}: "
+        ).strip()
         if len(reason) > 200:
             reason = reason[:200] + "..."
         return (
@@ -101,7 +119,9 @@ class ToolWorker:
             f"Try a different approach."
         )
 
-    async def _reason_and_correct(self, original_params: Dict[str, Any], error_msg: str) -> Optional[Dict[str, Any]]:
+    async def _reason_and_correct(
+        self, original_params: Dict[str, Any], error_msg: str
+    ) -> Optional[Dict[str, Any]]:
         """Use cheap LLM to analyze failure and suggest corrected params."""
         prompt = (
             f"A tool call to '{self.tool_name}' failed.\n"
@@ -114,12 +134,18 @@ class ToolWorker:
         )
         try:
             response = await self.worker_llm.ainvoke([HumanMessage(content=prompt)])
-            text = response.content.strip() if isinstance(response.content, str) else str(response.content).strip()
+            text = (
+                response.content.strip()
+                if isinstance(response.content, str)
+                else str(response.content).strip()
+            )
             if "UNFIXABLE" in text:
                 return None
             return json.loads(text)
         except Exception:  # pylint: disable=broad-exception-caught  # Reason: Worker LLM failure must not crash the agent
-            logger.warning("ToolWorker LLM failed for %s, skipping retry", self.tool_name)
+            logger.warning(
+                "ToolWorker LLM failed for %s, skipping retry", self.tool_name
+            )
             return None
 
 
@@ -141,26 +167,36 @@ _JSON_TYPE_TO_PYTHON: Dict[str, type] = {
 
 class _RecallMemoriesInput(BaseModel):
     query: str = Field(description="Semantic search query for relevant memories")
-    limit: int = Field(default=5, ge=1, le=20, description="Maximum number of memories to return")
+    limit: int = Field(
+        default=5, ge=1, le=20, description="Maximum number of memories to return"
+    )
 
 
 class _RememberFactInput(BaseModel):
     content: str = Field(description="Memory content to store")
-    infer: bool = Field(default=True, description="Whether to let the memory system infer related facts")
-    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Optional metadata to attach to the memory")
+    infer: bool = Field(
+        default=True, description="Whether to let the memory system infer related facts"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None, description="Optional metadata to attach to the memory"
+    )
 
 
 class _UpdateMemoryInput(BaseModel):
     memory_id: str = Field(description="Memory ID to update")
     content: str = Field(description="Replacement content for the memory")
-    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Optional metadata override")
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None, description="Optional metadata override"
+    )
 
 
 class _DeleteMemoryInput(BaseModel):
     memory_id: str = Field(description="Memory ID to delete")
 
 
-def _json_schema_to_pydantic_type(prop_schema: Dict[str, Any], model_name_prefix: str = "nested") -> type:
+def _json_schema_to_pydantic_type(
+    prop_schema: Dict[str, Any], model_name_prefix: str = "nested"
+) -> type:
     """Convert JSON schema type to Python type for Pydantic model creation."""
     prop_type = prop_schema.get("type", "string")
 
@@ -175,14 +211,18 @@ def _json_schema_to_pydantic_type(prop_schema: Dict[str, Any], model_name_prefix
     # Recurse into array item schemas so the LLM sees typed list elements
     if prop_type == "array":
         items_schema = prop_schema.get("items", {})
-        item_type = _json_schema_to_pydantic_type(items_schema, f"{model_name_prefix}_item")
+        item_type = _json_schema_to_pydantic_type(
+            items_schema, f"{model_name_prefix}_item"
+        )
         return List[item_type]  # type: ignore[valid-type]
 
     # Look up in type map, default to str
     return _JSON_TYPE_TO_PYTHON.get(prop_type, str)
 
 
-def _create_tool_input_model(tool_name: str, input_schema: Dict[str, Any]) -> type[BaseModel]:
+def _create_tool_input_model(
+    tool_name: str, input_schema: Dict[str, Any]
+) -> type[BaseModel]:
     """Create a Pydantic model from tool's parameter schema."""
     properties = input_schema.get("properties", {})
     required = input_schema.get("required", [])
@@ -228,14 +268,18 @@ def _strip_null_optional_fields(data: Any, schema: Dict[str, Any]) -> Any:
         elif isinstance(value, list):
             items_schema = prop_schema.get("items", {})
             value = [
-                _strip_null_optional_fields(item, items_schema) if isinstance(item, dict) else item
+                _strip_null_optional_fields(item, items_schema)
+                if isinstance(item, dict)
+                else item
                 for item in value
             ]
         result[key] = value
     return result
 
 
-def _create_output_model_from_schema(node_id: str, schema: Dict[str, Any]) -> type[BaseModel]:
+def _create_output_model_from_schema(
+    node_id: str, schema: Dict[str, Any]
+) -> type[BaseModel]:
     """
     Create a Pydantic model from output JSON schema for structured output.
 
@@ -258,7 +302,10 @@ def _create_output_model_from_schema(node_id: str, schema: Dict[str, Any]) -> ty
         if prop_name in required_fields:
             field_definitions[prop_name] = (python_type, Field(description=description))
         else:
-            field_definitions[prop_name] = (Optional[python_type], Field(default=None, description=description))
+            field_definitions[prop_name] = (
+                Optional[python_type],
+                Field(default=None, description=description),
+            )
 
     # Create a valid Python class name from node_id
     model_name = f"{node_id.replace('-', '_').replace('.', '_').title()}Output"
@@ -281,7 +328,11 @@ def _parse_tool_spec(spec: Any) -> tuple[str, Optional[int], Optional[int]]:
     if isinstance(spec, str):
         return spec, None, None
     if isinstance(spec, dict):
-        return spec.get("name", ""), spec.get("connection_id"), spec.get("integration_resource_id")
+        return (
+            spec.get("name", ""),
+            spec.get("connection_id"),
+            spec.get("integration_resource_id"),
+        )
     raise ExecutionError(f"Invalid tool spec type: {type(spec)}")
 
 
@@ -334,9 +385,12 @@ def _make_tool_executor(
             )
 
             from seer.config import config as seer_config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+
             max_chars = seer_config.agent_tool_output_max_chars
             if isinstance(result, (dict, list)):
-                return _truncate_tool_output(json.dumps(result, indent=2, default=str), max_chars)
+                return _truncate_tool_output(
+                    json.dumps(result, indent=2, default=str), max_chars
+                )
             return _truncate_tool_output(str(result), max_chars)
 
         except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Agent needs error as string
@@ -480,7 +534,11 @@ async def _persist_attached_memory_conversation(
     steps: List[Dict[str, Any]],
 ) -> None:
     """Persist the latest agent exchange into the attached bank for future recall."""
-    if memory_bank_id is None or not user_prompt.strip() or not assistant_output.strip():
+    if (
+        memory_bank_id is None
+        or not user_prompt.strip()
+        or not assistant_output.strip()
+    ):
         return
 
     runtime_context = ctx.runtime_context
@@ -508,16 +566,25 @@ async def _persist_attached_memory_conversation(
             infer=True,
         )
         if stored is None:
-            logger.warning("Automatic memory persistence returned no result for agent node '%s'", node_id)
+            logger.warning(
+                "Automatic memory persistence returned no result for agent node '%s'",
+                node_id,
+            )
     except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: memory persistence must not fail the workflow run
-        logger.warning("Automatic memory persistence failed for agent node '%s': %s", node_id, exc)
+        logger.warning(
+            "Automatic memory persistence failed for agent node '%s': %s", node_id, exc
+        )
 
 
-async def _build_attached_memory_tools(ctx: NodeExecutionContext, memory_bank_id: str) -> List[StructuredTool]:
+async def _build_attached_memory_tools(
+    ctx: NodeExecutionContext, memory_bank_id: str
+) -> List[StructuredTool]:
     """Create bank-bound convenience tools for an attached agent node."""
     runtime_context = ctx.runtime_context
     if runtime_context is None or runtime_context.memory_access is None:
-        raise ExecutionError("Agent node requires runtime memory access when memory_bank_id is configured")
+        raise ExecutionError(
+            "Agent node requires runtime memory access when memory_bank_id is configured"
+        )
 
     memory_access = runtime_context.memory_access
 
@@ -525,21 +592,33 @@ async def _build_attached_memory_tools(ctx: NodeExecutionContext, memory_bank_id
         memories = await memory_access.search(memory_bank_id, query, limit=limit)
         return _format_memory_tool_response(memories)
 
-    async def remember_fact(content: str, infer: bool = True, metadata: Optional[Dict[str, Any]] = None) -> str:
-        created = await memory_access.add(memory_bank_id, content, metadata=metadata, infer=infer)
+    async def remember_fact(
+        content: str, infer: bool = True, metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        created = await memory_access.add(
+            memory_bank_id, content, metadata=metadata, infer=infer
+        )
         if not created:
             return "No memory was stored."
         return json.dumps(created, indent=2, default=str)
 
-    async def update_memory(memory_id: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> str:
-        updated = await memory_access.update(memory_bank_id, memory_id, content, metadata=metadata)
+    async def update_memory(
+        memory_id: str, content: str, metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        updated = await memory_access.update(
+            memory_bank_id, memory_id, content, metadata=metadata
+        )
         if not updated:
             return f"Memory {memory_id} was not found."
         return json.dumps(updated, indent=2, default=str)
 
     async def delete_memory(memory_id: str) -> str:
         deleted = await memory_access.delete(memory_bank_id, memory_id)
-        return f"Deleted memory {memory_id}." if deleted else f"Memory {memory_id} was not found."
+        return (
+            f"Deleted memory {memory_id}."
+            if deleted
+            else f"Memory {memory_id} was not found."
+        )
 
     return [
         StructuredTool.from_function(
@@ -585,30 +664,41 @@ def _parse_agent_result(messages: List[Any]) -> tuple[str, List[Dict[str, Any]]]
         if isinstance(msg, AIMessage):
             step: Dict[str, Any] = {
                 "type": "reasoning",
-                "content": msg.content if isinstance(msg.content, str) else str(msg.content),
+                "content": msg.content
+                if isinstance(msg.content, str)
+                else str(msg.content),
             }
 
             # Extract tool calls if present
             if hasattr(msg, "tool_calls") and msg.tool_calls:
                 step["tool_calls"] = [
-                    {"tool": tc.get("name", tc.get("id", "unknown")), "input": tc.get("args", {})}
+                    {
+                        "tool": tc.get("name", tc.get("id", "unknown")),
+                        "input": tc.get("args", {}),
+                    }
                     for tc in msg.tool_calls
                 ]
 
             steps.append(step)
 
         elif isinstance(msg, ToolMessage):
-            steps.append({
-                "type": "tool_response",
-                "tool": msg.name or "unknown",
-                "content": msg.content if isinstance(msg.content, str) else str(msg.content),
-            })
+            steps.append(
+                {
+                    "type": "tool_response",
+                    "tool": msg.name or "unknown",
+                    "content": msg.content
+                    if isinstance(msg.content, str)
+                    else str(msg.content),
+                }
+            )
 
     # Extract final output from last AI message
     final_output = ""
     for msg in reversed(messages):
         if isinstance(msg, AIMessage):
-            final_output = msg.content if isinstance(msg.content, str) else str(msg.content)
+            final_output = (
+                msg.content if isinstance(msg.content, str) else str(msg.content)
+            )
             break
 
     return final_output, steps
@@ -636,12 +726,16 @@ def _collect_artifacts_from_messages(messages: List[Any]) -> List[Dict[str, Any]
     for msg in messages:
         if isinstance(msg, ToolMessage) and msg.name == ARTIFACT_TOOL_NAME:
             try:
-                content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                content = (
+                    msg.content if isinstance(msg.content, str) else str(msg.content)
+                )
                 data = json.loads(content)
                 if is_file_ref(data):
                     artifacts.append(data)
             except (json.JSONDecodeError, TypeError):
-                logger.warning("Failed to parse artifact from create_artifact tool response")
+                logger.warning(
+                    "Failed to parse artifact from create_artifact tool response"
+                )
     return artifacts
 
 
@@ -694,12 +788,14 @@ async def _resolve_llm_file_inputs(
         if is_file_ref(value):
             file_ref = parse_file_ref(value)
             content = await context.file_system.get_file_content(file_ref)
-            file_contents.append({
-                "key": key,
-                "mime_type": file_ref.mime_type,
-                "filename": file_ref.filename,
-                "content": content,
-            })
+            file_contents.append(
+                {
+                    "key": key,
+                    "mime_type": file_ref.mime_type,
+                    "filename": file_ref.filename,
+                    "content": content,
+                }
+            )
             resolved[key] = {
                 "_resolved_file": file_ref.filename,
                 "mime_type": file_ref.mime_type,
@@ -712,16 +808,20 @@ async def _resolve_llm_file_inputs(
                 if is_file_ref(item):
                     file_ref = parse_file_ref(item)
                     content = await context.file_system.get_file_content(file_ref)
-                    file_contents.append({
-                        "key": key,
-                        "mime_type": file_ref.mime_type,
-                        "filename": file_ref.filename,
-                        "content": content,
-                    })
-                    resolved_list.append({
-                        "_resolved_file": file_ref.filename,
-                        "mime_type": file_ref.mime_type,
-                    })
+                    file_contents.append(
+                        {
+                            "key": key,
+                            "mime_type": file_ref.mime_type,
+                            "filename": file_ref.filename,
+                            "content": content,
+                        }
+                    )
+                    resolved_list.append(
+                        {
+                            "_resolved_file": file_ref.filename,
+                            "mime_type": file_ref.mime_type,
+                        }
+                    )
                 else:
                     resolved_list.append(item)
             resolved[key] = resolved_list
@@ -740,7 +840,9 @@ def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
 
     prompt_template = node.inputs.get("prompt")
     if not isinstance(prompt_template, str):
-        raise ExecutionError(f"AgentNode {node.id}: 'prompt' must be a string in inputs")
+        raise ExecutionError(
+            f"AgentNode {node.id}: 'prompt' must be a string in inputs"
+        )
 
     tool_specs = node.inputs.get("tools", [])
     if not isinstance(tool_specs, list):
@@ -769,7 +871,11 @@ def _build_inputs_for_trace(config: Dict[str, Any]) -> Dict[str, Any]:
         "model": config["model_id"],
         "prompt_template": config["prompt_template"],
         "tools": [
-            spec if isinstance(spec, str) else spec.get("name", "unknown") if isinstance(spec, dict) else str(spec)
+            spec
+            if isinstance(spec, str)
+            else spec.get("name", "unknown")
+            if isinstance(spec, dict)
+            else str(spec)
             for spec in tool_specs
         ],
         "max_iterations": config["max_iterations"],
@@ -796,23 +902,27 @@ def _build_agent_trace(
 
     if status == "succeeded" and success_data:
         steps = success_data.get("steps", [])
-        trace.update({
-            "prompt": success_data.get("prompt", ""),
-            "tools": success_data.get("tool_names", []),
-            "steps": steps,
-            "iterations": len([s for s in steps if s.get("type") == "reasoning"]),
-            "output": success_data.get("result_value"),
-            "output_key": node_id,
-            "artifacts": success_data.get("artifacts", []),
-            "tool_failures": success_data.get("tool_failures", {}),
-        })
+        trace.update(
+            {
+                "prompt": success_data.get("prompt", ""),
+                "tools": success_data.get("tool_names", []),
+                "steps": steps,
+                "iterations": len([s for s in steps if s.get("type") == "reasoning"]),
+                "output": success_data.get("result_value"),
+                "output_key": node_id,
+                "artifacts": success_data.get("artifacts", []),
+                "tool_failures": success_data.get("tool_failures", {}),
+            }
+        )
     elif error:
         trace["error"] = error
 
     return trace
 
 
-async def _build_human_message(prompt: str, file_contents: List[Any]) -> tuple[str, Any]:
+async def _build_human_message(
+    prompt: str, file_contents: List[Any]
+) -> tuple[str, Any]:
     """Build HumanMessage from prompt and optional file contents.
 
     Returns (possibly extended prompt, HumanMessage) where prompt may have
@@ -822,6 +932,7 @@ async def _build_human_message(prompt: str, file_contents: List[Any]) -> tuple[s
         return prompt, HumanMessage(content=prompt)
 
     from seer.core.runtime.file_processor import FileContentProcessor  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+
     processor = FileContentProcessor()
     processed = await processor.process_files(file_contents)
     image_blocks = processed.get("image_blocks", [])
@@ -842,7 +953,11 @@ def _build_agent_eval_context(ctx: NodeExecutionContext) -> Any:
     from seer.core.expr.evaluator import EvaluationContext
     from seer.core.runtime.state import INTERNAL_STATE_PREFIX
 
-    visible_state = {key: value for key, value in ctx.state.items() if not key.startswith(INTERNAL_STATE_PREFIX)}
+    visible_state = {
+        key: value
+        for key, value in ctx.state.items()
+        if not key.startswith(INTERNAL_STATE_PREFIX)
+    }
     return EvaluationContext(
         state=visible_state,
         locals=ctx.locals_ctx or {},
@@ -852,11 +967,21 @@ def _build_agent_eval_context(ctx: NodeExecutionContext) -> Any:
     )
 
 
-async def _resolve_agent_file_contents(node: AgentNode, eval_ctx: Any, runtime_context: Any) -> list[Dict[str, Any]]:
+async def _resolve_agent_file_contents(
+    node: AgentNode, eval_ctx: Any, runtime_context: Any
+) -> list[Dict[str, Any]]:
     """Evaluate auxiliary inputs and resolve any attached file references."""
     from seer.core.expr.evaluator import evaluate_value  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
 
-    reserved_keys = {"model", "prompt", "tools", "max_iterations", "temperature", "enable_artifacts", "memory_bank_id"}
+    reserved_keys = {
+        "model",
+        "prompt",
+        "tools",
+        "max_iterations",
+        "temperature",
+        "enable_artifacts",
+        "memory_bank_id",
+    }
     auxiliary = {
         key: evaluate_value(eval_ctx, value)
         for key, value in node.inputs.items()
@@ -875,10 +1000,14 @@ async def _build_prompt_bundle(
     from seer.core.expr.evaluator import render_template  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
 
     eval_ctx = _build_agent_eval_context(ctx)
-    file_contents = await _resolve_agent_file_contents(node, eval_ctx, ctx.runtime_context)
+    file_contents = await _resolve_agent_file_contents(
+        node, eval_ctx, ctx.runtime_context
+    )
     inputs = _build_inputs_for_trace(config)
     if file_contents:
-        inputs["file_inputs"] = [{"key": item["key"], "filename": item["filename"]} for item in file_contents]
+        inputs["file_inputs"] = [
+            {"key": item["key"], "filename": item["filename"]} for item in file_contents
+        ]
 
     rendered_prompt = render_template(eval_ctx, config["prompt_template"])
     prompt = rendered_prompt
@@ -886,7 +1015,9 @@ async def _build_prompt_bundle(
 
     if memory_bank_id is not None:
         if ctx.runtime_context is None or ctx.runtime_context.memory_access is None:
-            raise ExecutionError(f"Agent node '{node.id}' requires runtime memory access for memory_bank_id '{memory_bank_id}'")
+            raise ExecutionError(
+                f"Agent node '{node.id}' requires runtime memory access for memory_bank_id '{memory_bank_id}'"
+            )
         memory_context = await ctx.runtime_context.memory_access.get_prompt_context(
             memory_bank_id,
             current_query=prompt,
@@ -903,7 +1034,9 @@ def _build_recursion_limit(max_iterations: Any) -> int:
     return max_iterations * 3 if isinstance(max_iterations, int) else 30
 
 
-def _collect_tool_worker_failures(worker_map: Dict[str, ToolWorker]) -> Dict[str, List[Dict[str, Any]]]:
+def _collect_tool_worker_failures(
+    worker_map: Dict[str, ToolWorker],
+) -> Dict[str, List[Dict[str, Any]]]:
     """Extract failure logs from ToolWorker instances for trace data."""
     failures: Dict[str, List[Dict[str, Any]]] = {}
     for tool_name, worker in worker_map.items():
@@ -988,12 +1121,17 @@ class AgentNodeType(BaseNodeType):
     ) -> tuple[List[StructuredTool], Dict[str, ToolWorker]]:
         """Bind registry tools, attached memory tools, and artifact helpers."""
         bound_tools, worker_map = await _bind_tools_for_agent(
-            config["tool_specs"], services, ctx,
-            worker_llm=worker_llm, max_retries=max_retries,
+            config["tool_specs"],
+            services,
+            ctx,
+            worker_llm=worker_llm,
+            max_retries=max_retries,
         )
 
         if config["memory_bank_id"] is not None:
-            bound_tools.extend(await _build_attached_memory_tools(ctx, config["memory_bank_id"]))
+            bound_tools.extend(
+                await _build_attached_memory_tools(ctx, config["memory_bank_id"])
+            )
 
         if config["enable_artifacts"]:
             # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
@@ -1016,7 +1154,9 @@ class AgentNodeType(BaseNodeType):
         """Create and invoke the LangChain agent with usage tracking callbacks."""
         model_def = services.model_registry.get(config["model_id"])
         llm = model_def.get_chat_model(
-            temperature=config["temperature"] if isinstance(config["temperature"], (int, float)) else 0.2
+            temperature=config["temperature"]
+            if isinstance(config["temperature"], (int, float))
+            else 0.2
         )
         # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
         from langchain.agents.middleware import SummarizationMiddleware
@@ -1027,9 +1167,12 @@ class AgentNodeType(BaseNodeType):
                 trigger=("tokens", 100000),
             ),
         ]
+        from seer.prompts import get_datetime_context  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+
         agent = create_agent(
             model=llm,
             tools=bound_tools,
+            system_prompt=get_datetime_context(),
             response_format=self._resolve_response_format(node, services),
             middleware=middleware,
         )
@@ -1073,8 +1216,14 @@ class AgentNodeType(BaseNodeType):
         """Parse the agent result and persist any attached memory transcript."""
         messages = result.get("messages", [])
         final_output, steps = _parse_agent_result(messages)
-        artifacts = _collect_artifacts_from_messages(messages) if config["enable_artifacts"] else []
-        result_value: Any = await self._handle_json_output(node, services, result, final_output)
+        artifacts = (
+            _collect_artifacts_from_messages(messages)
+            if config["enable_artifacts"]
+            else []
+        )
+        result_value: Any = await self._handle_json_output(
+            node, services, result, final_output
+        )
         await _persist_attached_memory_conversation(
             ctx,
             node_id=node.id,
@@ -1093,7 +1242,9 @@ class AgentNodeType(BaseNodeType):
         exc: Exception,
     ) -> Dict[str, Any]:
         """Build and store trace data for a failed execution."""
-        trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
+        trace_key = get_trace_key(
+            node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {}
+        )
         trace_data = _build_agent_trace(
             node.id,
             inputs,
@@ -1114,7 +1265,9 @@ class AgentNodeType(BaseNodeType):
         enable_artifacts: bool,
     ) -> Dict[str, Any]:
         """Build the final workflow output payload, including traces."""
-        trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})
+        trace_key = get_trace_key(
+            node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {}
+        )
         artifacts = success_data["artifacts"]
         output: Dict[str, Any] = {
             node.id: success_data["result_value"],
@@ -1147,7 +1300,11 @@ class AgentNodeType(BaseNodeType):
             return final_output
         structured_response = result.get("structured_response")
         if structured_response is not None:
-            result_value = structured_response.model_dump() if isinstance(structured_response, BaseModel) else structured_response
+            result_value = (
+                structured_response.model_dump()
+                if isinstance(structured_response, BaseModel)
+                else structured_response
+            )
         else:
             try:
                 result_value = json.loads(_extract_json_from_markdown(final_output))
@@ -1169,9 +1326,14 @@ class AgentNodeType(BaseNodeType):
             return None, max_retries
         try:
             from seer.llm import get_llm  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
+
             worker_model = seer_config.default_llm_model
             worker_llm = get_llm(model=worker_model, temperature=0)
-            logger.info("Supervisor mode: worker LLM '%s' initialized for agent node '%s'", worker_model, node_id)
+            logger.info(
+                "Supervisor mode: worker LLM '%s' initialized for agent node '%s'",
+                worker_model,
+                node_id,
+            )
             return worker_llm, max_retries
         except Exception:  # pylint: disable=broad-exception-caught  # Reason: Supervisor mode is optional; fall back to flat mode
             logger.warning("Failed to init worker LLM, falling back to flat agent mode")
@@ -1186,13 +1348,19 @@ class AgentNodeType(BaseNodeType):
         """Execute agent node with credit checking and usage tracking."""
         await self._check_credit_limit(ctx.runtime_context)
         config = _extract_agent_config(node)
-        inputs, rendered_prompt, prompt, human_message = await _build_prompt_bundle(node, ctx, config)
+        inputs, rendered_prompt, prompt, human_message = await _build_prompt_bundle(
+            node, ctx, config
+        )
         worker_llm, max_retries = self._init_worker_llm(node.id)
 
         try:
             bound_tools, worker_map = await self._build_bound_tools(
-                node, ctx, services, config,
-                worker_llm=worker_llm, max_retries=max_retries,
+                node,
+                ctx,
+                services,
+                config,
+                worker_llm=worker_llm,
+                max_retries=max_retries,
             )
             result = await self._invoke_agent(
                 node=node,
@@ -1212,7 +1380,9 @@ class AgentNodeType(BaseNodeType):
             )
         except Exception as exc:
             error_trace = self._build_error_trace(node, ctx, inputs, exc)
-            raise ExecutionError(f"Agent node '{node.id}' failed: {exc}", trace_data=error_trace) from exc
+            raise ExecutionError(
+                f"Agent node '{node.id}' failed: {exc}", trace_data=error_trace
+            ) from exc
 
         tool_failures = _collect_tool_worker_failures(worker_map)
         output = self._build_success_output(
@@ -1240,7 +1410,9 @@ class AgentNodeType(BaseNodeType):
 
         return output
 
-    def get_analytics_properties(self, node: AgentNode, ctx: "NodeExecutionContext") -> dict:  # type: ignore[override]
+    def get_analytics_properties(
+        self, node: AgentNode, ctx: "NodeExecutionContext"
+    ) -> dict:  # type: ignore[override]
         return {"agent_type": node.inputs.get("model", "unknown")}
 
     def register_type_sync(
@@ -1255,17 +1427,28 @@ class AgentNodeType(BaseNodeType):
         schema = schema_from_output_contract(node.outputs, ctx.schema_registry)
 
         # Enforce strict schema for LLM structured output so the model cannot silently omit fields
-        if node.outputs.mode == OutputMode.json and isinstance(node.outputs.schema, InlineSchema):
+        if node.outputs.mode == OutputMode.json and isinstance(
+            node.outputs.schema, InlineSchema
+        ):
             enforce_all_properties_required(node.outputs.schema.json_schema)
 
         # Validate that tools exist in registry
         tool_specs_raw = node.inputs.get("tools", [])
-        tool_specs_list: List[Any] = tool_specs_raw if isinstance(tool_specs_raw, list) else []
+        tool_specs_list: List[Any] = (
+            tool_specs_raw if isinstance(tool_specs_raw, list) else []
+        )
         for spec in tool_specs_list:
-            tool_name = spec if isinstance(spec, str) else spec.get("name", "") if isinstance(spec, dict) else ""
+            tool_name = (
+                spec
+                if isinstance(spec, str)
+                else spec.get("name", "")
+                if isinstance(spec, dict)
+                else ""
+            )
             if tool_name:
                 # Check in BaseTool registry
                 from seer.tools.base import get_tool  # pylint: disable=import-outside-toplevel
+
                 if get_tool(tool_name) is None:
                     # Also check in the ToolRegistry (for workflow tools)
                     tool_def = ctx.tool_registry.maybe_get(tool_name)

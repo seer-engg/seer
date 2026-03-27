@@ -1,7 +1,8 @@
 """Background task for general chat execution."""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Optional
 
 from seer.config import config
@@ -28,7 +29,7 @@ def _build_langchain_messages(messages: List[GeneralChatMessage]):
 
 
 @broker.task
-async def general_chat_task(  # pylint: disable=too-many-positional-arguments  # Reason: Task interface requires all params
+async def general_chat_task(  # pylint: disable=too-many-positional-arguments,too-many-arguments,too-many-locals  # Reason: Task interface requires all params
     session_id: int,
     message: str,
     user_id: int,
@@ -36,19 +37,34 @@ async def general_chat_task(  # pylint: disable=too-many-positional-arguments  #
     generate_image: bool = False,
     image_model: Optional[str] = None,
     image_size: str = "1024x1024",
+    timezone: Optional[str] = None,
 ) -> None:
     """Execute general chat completion in background."""
-    logger.info("Starting general chat task", extra={"session_id": session_id, "user_id": user_id})
+    logger.info(
+        "Starting general chat task",
+        extra={"session_id": session_id, "user_id": user_id},
+    )
 
     session = await GeneralChatSession.get(id=session_id)
     session.current_execution_status = ChatExecutionStatus.RUNNING
     session.current_execution_started_at = datetime.now(timezone.utc)
-    await session.save(update_fields=["current_execution_status", "current_execution_started_at"])
+    await session.save(
+        update_fields=["current_execution_status", "current_execution_started_at"]
+    )
 
     try:
-        # Build conversation history
-        history = await GeneralChatMessage.filter(session=session).order_by("created_at").all()
-        lc_messages = _build_langchain_messages(history)
+        # Build conversation history with datetime context
+        from langchain_core.messages import SystemMessage  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+        from seer.prompts import get_datetime_context  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+
+        history = (
+            await GeneralChatMessage.filter(session=session)
+            .order_by("created_at")
+            .all()
+        )
+        lc_messages = [
+            SystemMessage(content=get_datetime_context(user_timezone=timezone))
+        ] + _build_langchain_messages(history)
 
         # Simple chat completion (no agent/tools)
         llm = get_llm(model=model or config.default_llm_model)
@@ -61,7 +77,11 @@ async def general_chat_task(  # pylint: disable=too-many-positional-arguments  #
             try:
                 from seer.services.image_gen import generate_image as gen_img  # pylint: disable=import-outside-toplevel  # Reason: Optional feature
 
-                img_url, _ = await gen_img(prompt=message, model=image_model or "sourceful/riverflow-v2-fast", size=image_size)
+                img_url, _ = await gen_img(
+                    prompt=message,
+                    model=image_model or "sourceful/riverflow-v2-fast",
+                    size=image_size,
+                )
                 if img_url:
                     image_urls = [img_url]
             except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Image gen failure shouldn't fail the chat
@@ -71,20 +91,43 @@ async def general_chat_task(  # pylint: disable=too-many-positional-arguments  #
         from seer.api.chat.services import save_message  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
 
         await save_message(
-            session_id=session_id, role="assistant", content=response_text,
-            model=model or config.default_llm_model, image_urls=image_urls,
+            session_id=session_id,
+            role="assistant",
+            content=response_text,
+            model=model or config.default_llm_model,
+            image_urls=image_urls,
         )
 
         session.current_execution_status = ChatExecutionStatus.COMPLETED
         session.current_execution_finished_at = datetime.now(timezone.utc)
         session.current_execution_error = None
-        await session.save(update_fields=["current_execution_status", "current_execution_finished_at", "current_execution_error"])
+        await session.save(
+            update_fields=[
+                "current_execution_status",
+                "current_execution_finished_at",
+                "current_execution_error",
+            ]
+        )
 
         logger.info("General chat task completed", extra={"session_id": session_id})
 
     except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Background task must catch all exceptions
-        logger.error("General chat task failed", exc_info=True, extra={"session_id": session_id, "error": str(e)})
+        logger.error(
+            "General chat task failed",
+            exc_info=True,
+            extra={"session_id": session_id, "error": str(e)},
+        )
         session.current_execution_status = ChatExecutionStatus.FAILED
         session.current_execution_finished_at = datetime.now(timezone.utc)
-        session.current_execution_error = {"type": "execution_error", "detail": str(e), "status": 500}
-        await session.save(update_fields=["current_execution_status", "current_execution_finished_at", "current_execution_error"])
+        session.current_execution_error = {
+            "type": "execution_error",
+            "detail": str(e),
+            "status": 500,
+        }
+        await session.save(
+            update_fields=[
+                "current_execution_status",
+                "current_execution_finished_at",
+                "current_execution_error",
+            ]
+        )

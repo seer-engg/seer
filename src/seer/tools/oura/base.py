@@ -20,7 +20,7 @@ from seer.tools.base import BaseTool
 from seer.tools.credential_resolver import ResolvedCredentials
 
 if TYPE_CHECKING:
-    from seer.core.runtime.context import WorkflowRuntimeContext
+    pass
 
 logger = get_logger("shared.tools.oura.base")
 

@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # Reason: Workflow router consolidates all workflow CRUD + execution endpoints
 from __future__ import annotations
 
 import asyncio
@@ -27,11 +28,15 @@ router = APIRouter(prefix="/v1", tags=["workflows"])
 def _require_user(request: Request) -> User:
     user = getattr(request.state, "db_user", None)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
+        )
     return user
 
 
-def _get_org_context(request: Request) -> tuple[Optional[Organization], Optional[OrganizationMembership]]:
+def _get_org_context(
+    request: Request,
+) -> tuple[Optional[Organization], Optional[OrganizationMembership]]:
     """Get optional organization context from request state."""
     try:
         org = get_organization(request)
@@ -53,14 +58,20 @@ async def get_trigger_catalog(request: Request):
     return await services.list_triggers(user)
 
 
-@router.get("/triggers/{trigger_key}/accounts", response_model=api_models.TriggerAccountsResponse)
+@router.get(
+    "/triggers/{trigger_key}/accounts",
+    response_model=api_models.TriggerAccountsResponse,
+)
 async def get_trigger_accounts(request: Request, trigger_key: str):
     """Get available OAuth accounts for a specific trigger."""
     user = _require_user(request)
     return await services.get_trigger_accounts(user, trigger_key)
 
 
-@router.get("/trigger-subscriptions", response_model=api_models.TriggerSubscriptionListItemsResponse)
+@router.get(
+    "/trigger-subscriptions",
+    response_model=api_models.TriggerSubscriptionListItemsResponse,
+)
 async def list_trigger_subscriptions(
     request: Request,
     workflow_id: str | None = Query(None),
@@ -85,8 +96,12 @@ async def toggle_trigger_subscription(
 ):
     """Toggle the enabled status of a trigger subscription."""
     user = _require_user(request)
-    update_payload = api_models.TriggerSubscriptionUpdateRequest(enabled=payload.enabled)
-    return await services.update_trigger_subscription(user, subscription_id, update_payload)
+    update_payload = api_models.TriggerSubscriptionUpdateRequest(
+        enabled=payload.enabled
+    )
+    return await services.update_trigger_subscription(
+        user, subscription_id, update_payload
+    )
 
 
 @router.post(
@@ -157,13 +172,12 @@ async def generate_trigger_event(
     if trigger_key != "schedule.cron":
         raise HTTPException(
             status_code=400,
-            detail=f"Trigger '{trigger_key}' does not support instant triggering"
+            detail=f"Trigger '{trigger_key}' does not support instant triggering",
         )
 
     envelope = services.generate_cron_event(payload.trigger_id, payload.provider_config)
     return api_models.TriggerEventGenerateResponse(
-        envelope=envelope,
-        display_title="Manual Trigger"
+        envelope=envelope, display_title="Manual Trigger"
     )
 
 
@@ -173,7 +187,9 @@ async def get_model_registry(request: Request):
     return await services.list_models()
 
 
-@router.get("/registries/browser-models", response_model=api_models.ModelRegistryResponse)
+@router.get(
+    "/registries/browser-models", response_model=api_models.ModelRegistryResponse
+)
 async def get_browser_model_registry(request: Request):
     _require_user(request)
     return await services.list_browser_models()
@@ -185,14 +201,22 @@ async def list_mcp_tools(request: Request, payload: api_models.McpToolsRequest):
     return await services.list_mcp_tools(payload)
 
 
-@router.post("/workflows", response_model=api_models.WorkflowResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/workflows",
+    response_model=api_models.WorkflowResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_workflow(request: Request, payload: api_models.WorkflowCreateRequest):
     user = _require_user(request)
     org, _ = _get_org_context(request)
     return await services.create_workflow(user, payload, organization=org)
 
 
-@router.post("/workflows/import", response_model=api_models.WorkflowResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/workflows/import",
+    response_model=api_models.WorkflowResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def import_workflow(
     request: Request,
     payload: api_models.WorkflowImportRequest,
@@ -210,14 +234,18 @@ async def list_workflows(
 ):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    return await services.list_workflows(user, limit=limit, cursor=cursor, organization=org, membership=membership)
+    return await services.list_workflows(
+        user, limit=limit, cursor=cursor, organization=org, membership=membership
+    )
 
 
 @router.get("/workflows/{workflow_id}", response_model=api_models.WorkflowResponse)
 async def get_workflow(request: Request, workflow_id: str):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    return await services.get_workflow(user, workflow_id, organization=org, membership=membership)
+    return await services.get_workflow(
+        user, workflow_id, organization=org, membership=membership
+    )
 
 
 @router.get("/workflows/{workflow_id}/export")
@@ -228,25 +256,32 @@ async def export_workflow(
 ):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    export_data = await services.export_workflow(user, workflow_id, include_triggers, organization=org, membership=membership)
+    export_data = await services.export_workflow(
+        user, workflow_id, include_triggers, organization=org, membership=membership
+    )
 
     # Return as downloadable JSON file
-    workflow = await services.get_workflow(user, workflow_id, organization=org, membership=membership)
+    workflow = await services.get_workflow(
+        user, workflow_id, organization=org, membership=membership
+    )
     filename = f"{workflow.name.replace(' ', '_')}.seer.json"
 
     return JSONResponse(
         content=export_data,
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
-@router.get("/workflows/{workflow_id}/versions", response_model=api_models.WorkflowVersionListResponse)
+@router.get(
+    "/workflows/{workflow_id}/versions",
+    response_model=api_models.WorkflowVersionListResponse,
+)
 async def list_workflow_versions(request: Request, workflow_id: str):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    return await services.list_workflow_versions(user, workflow_id, organization=org, membership=membership)
+    return await services.list_workflow_versions(
+        user, workflow_id, organization=org, membership=membership
+    )
 
 
 @router.post(
@@ -261,17 +296,25 @@ async def restore_workflow_version(
 ):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    return await services.restore_workflow_version(user, workflow_id, version_id, payload, organization=org, membership=membership)
+    return await services.restore_workflow_version(
+        user, workflow_id, version_id, payload, organization=org, membership=membership
+    )
 
 
 @router.put("/workflows/{workflow_id}", response_model=api_models.WorkflowResponse)
-async def update_workflow(request: Request, workflow_id: str, payload: api_models.WorkflowUpdateRequest):
+async def update_workflow(
+    request: Request, workflow_id: str, payload: api_models.WorkflowUpdateRequest
+):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    return await services.update_workflow(user, workflow_id, payload, organization=org, membership=membership)
+    return await services.update_workflow(
+        user, workflow_id, payload, organization=org, membership=membership
+    )
 
 
-@router.patch("/workflows/{workflow_id}/draft", response_model=api_models.WorkflowResponse)
+@router.patch(
+    "/workflows/{workflow_id}/draft", response_model=api_models.WorkflowResponse
+)
 async def patch_workflow_draft(
     request: Request,
     workflow_id: str,
@@ -279,30 +322,26 @@ async def patch_workflow_draft(
 ):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    return await services.patch_workflow_draft(user, workflow_id, payload, organization=org, membership=membership)
+    return await services.patch_workflow_draft(
+        user, workflow_id, payload, organization=org, membership=membership
+    )
 
 
-@router.post("/workflows/{workflow_id}/publish", response_model=api_models.WorkflowResponse)
+@router.post(
+    "/workflows/{workflow_id}/publish", response_model=api_models.WorkflowResponse
+)
 async def publish_workflow(
     request: Request,
     workflow_id: str,
-    payload: api_models.WorkflowPublishRequest = Body(default_factory=api_models.WorkflowPublishRequest),
+    payload: api_models.WorkflowPublishRequest = Body(
+        default_factory=api_models.WorkflowPublishRequest
+    ),
 ):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    return await services.publish_workflow(user, workflow_id, payload, organization=org, membership=membership)
-
-
-@router.patch("/workflows/{workflow_id}/active", response_model=api_models.WorkflowSummary)
-async def toggle_workflow_active(
-    request: Request,
-    workflow_id: str,
-    payload: api_models.WorkflowActiveToggleRequest,
-):
-    """Toggle whether a workflow is active or paused."""
-    user = _require_user(request)
-    org, membership = _get_org_context(request)
-    return await services.toggle_workflow_active(user, workflow_id, payload.is_active, organization=org, membership=membership)
+    return await services.publish_workflow(
+        user, workflow_id, payload, organization=org, membership=membership
+    )
 
 
 @router.delete("/workflows/{workflow_id}", status_code=status.HTTP_200_OK)
@@ -311,26 +350,37 @@ async def delete_workflow(request: Request, workflow_id: str):
     org, membership = _get_org_context(request)
     try:
         await asyncio.wait_for(
-            services.delete_workflow(user, workflow_id, organization=org, membership=membership),
+            services.delete_workflow(
+                user, workflow_id, organization=org, membership=membership
+            ),
             timeout=30.0,
         )
     except asyncio.TimeoutError as exc:
-        raise HTTPException(status_code=504, detail="Delete operation timed out. The workflow may have active runs.") from exc
+        raise HTTPException(
+            status_code=504,
+            detail="Delete operation timed out. The workflow may have active runs.",
+        ) from exc
     return {"ok": True}
 
 
 @router.post(
     "/workflows/{workflow_id}/runs",
     response_model=api_models.RunResponse,
-    status_code=status.HTTP_201_CREATED
+    status_code=status.HTTP_201_CREATED,
 )
-async def run_workflow(request: Request, workflow_id: str, payload: api_models.RunFromWorkflowRequest):
+async def run_workflow(
+    request: Request, workflow_id: str, payload: api_models.RunFromWorkflowRequest
+):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    return await services.run_saved_workflow(user, workflow_id, payload, organization=org, membership=membership)
+    return await services.run_saved_workflow(
+        user, workflow_id, payload, organization=org, membership=membership
+    )
 
 
-@router.get("/workflows/{workflow_id}/runs", response_model=api_models.WorkflowRunListResponse)
+@router.get(
+    "/workflows/{workflow_id}/runs", response_model=api_models.WorkflowRunListResponse
+)
 async def list_workflow_runs(
     request: Request,
     workflow_id: str,
@@ -338,7 +388,9 @@ async def list_workflow_runs(
 ):
     user = _require_user(request)
     org, membership = _get_org_context(request)
-    return await services.list_workflow_runs(user, workflow_id, limit=limit, organization=org, membership=membership)
+    return await services.list_workflow_runs(
+        user, workflow_id, limit=limit, organization=org, membership=membership
+    )
 
 
 @router.get("/runs/{run_id}", response_model=api_models.RunResponse)
@@ -363,7 +415,7 @@ async def get_run_interrupt(request: Request, run_id: str):
     if interrupt_data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No pending interrupt for this run"
+            detail="No pending interrupt for this run",
         )
 
     # Transform interrupt data to response model
@@ -388,12 +440,21 @@ async def get_run_interrupt(request: Request, run_id: str):
     )
 
 
+@router.post("/runs/{run_id}/cancel", response_model=api_models.RunResponse)
+async def cancel_run(request: Request, run_id: str):
+    """Cancel a running, queued, or interrupted workflow run."""
+    user = _require_user(request)
+    _, membership = _get_org_context(request)
+    return await services.cancel_workflow_run(user, run_id, membership=membership)
+
+
 @router.post("/runs/{run_id}/resume", response_model=api_models.RunResponse)
-async def resume_run(request: Request, run_id: str, payload: api_models.HITLResumeRequest):
+async def resume_run(
+    request: Request, run_id: str, payload: api_models.HITLResumeRequest
+):
     """Resume a workflow run that is paused at an HITL interrupt."""
     user = _require_user(request)
     return await services.resume_workflow_run(user, run_id, payload.responses)
-
 
 
 @router.get("/runs/{run_id}/files", response_model=api_models.WorkflowFileListResponse)
@@ -404,7 +465,9 @@ async def list_run_files(request: Request, run_id: str):
     return await services.list_run_files(user, run_id, membership=membership)
 
 
-@router.get("/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileResponse)
+@router.get(
+    "/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileResponse
+)
 async def get_run_file(request: Request, run_id: str, file_id: str):
     """Get metadata for a specific file in a workflow run."""
     user = _require_user(request)
@@ -412,15 +475,23 @@ async def get_run_file(request: Request, run_id: str, file_id: str):
     return await services.get_run_file(user, run_id, file_id, membership=membership)
 
 
-@router.get("/runs/{run_id}/files/{file_id}/download", response_model=api_models.WorkflowFileDownloadResponse)
+@router.get(
+    "/runs/{run_id}/files/{file_id}/download",
+    response_model=api_models.WorkflowFileDownloadResponse,
+)
 async def download_run_file(request: Request, run_id: str, file_id: str):
     """Get a presigned download URL for a file from a workflow run."""
     user = _require_user(request)
     _, membership = _get_org_context(request)
-    return await services.get_run_file_download_url(user, run_id, file_id, membership=membership)
+    return await services.get_run_file_download_url(
+        user, run_id, file_id, membership=membership
+    )
 
 
-@router.delete("/runs/{run_id}/files/{file_id}", response_model=api_models.WorkflowFileDeleteResponse)
+@router.delete(
+    "/runs/{run_id}/files/{file_id}",
+    response_model=api_models.WorkflowFileDeleteResponse,
+)
 async def delete_run_file(request: Request, run_id: str, file_id: str):
     """Delete a file from a workflow run."""
     user = _require_user(request)
@@ -434,7 +505,10 @@ async def get_workflow_template(request: Request, workflow_id: str):
     user = _require_user(request)
     result = await get_workflow_template_meta(user, workflow_id)
     if not result:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No template found for this workflow")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No template found for this workflow",
+        )
     return result
 
 
@@ -442,7 +516,9 @@ async def get_workflow_template(request: Request, workflow_id: str):
     "/workflows/{workflow_id}/share-as-template",
     response_model=ShareAsTemplateResponse,
 )
-async def share_as_template(request: Request, workflow_id: str, payload: ShareAsTemplateRequest):
+async def share_as_template(
+    request: Request, workflow_id: str, payload: ShareAsTemplateRequest
+):
     user = _require_user(request)
     return await share_workflow_as_template(user, workflow_id, payload)
 
@@ -462,29 +538,43 @@ async def list_global_variables(request: Request):
     _require_user(request)
     org, _ = _get_org_context(request)
     if org is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context required")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required",
+        )
     rows = await GlobalVariable.filter(organization=org).order_by("key")
     items = []
     for row in rows:
-        items.append(api_models.GlobalVariableItem(
-            id=row.id,
-            key=row.key,
-            value="" if row.is_secret else row.value,
-            is_secret=row.is_secret,
-            description=row.description,
-            created_at=row.created_at,
-            updated_at=row.updated_at,
-        ))
+        items.append(
+            api_models.GlobalVariableItem(
+                id=row.id,
+                key=row.key,
+                value="" if row.is_secret else row.value,
+                is_secret=row.is_secret,
+                description=row.description,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+            )
+        )
     return api_models.GlobalVariableListResponse(items=items)
 
 
-@router.post("/variables", response_model=api_models.GlobalVariableItem, status_code=status.HTTP_201_CREATED)
-async def create_global_variable(request: Request, payload: api_models.GlobalVariableCreateRequest):
+@router.post(
+    "/variables",
+    response_model=api_models.GlobalVariableItem,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_global_variable(
+    request: Request, payload: api_models.GlobalVariableCreateRequest
+):
     """Create a new global variable."""
     user = _require_user(request)
     org, _ = _get_org_context(request)
     if org is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context required")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required",
+        )
     try:
         row = await GlobalVariable.create(
             organization=org,
@@ -495,7 +585,10 @@ async def create_global_variable(request: Request, payload: api_models.GlobalVar
             created_by=user,
         )
     except IntegrityError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Variable '{payload.key}' already exists") from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Variable '{payload.key}' already exists",
+        ) from exc
     return api_models.GlobalVariableItem(
         id=row.id,
         key=row.key,
@@ -508,15 +601,22 @@ async def create_global_variable(request: Request, payload: api_models.GlobalVar
 
 
 @router.patch("/variables/{variable_id}", response_model=api_models.GlobalVariableItem)
-async def update_global_variable(request: Request, variable_id: int, payload: api_models.GlobalVariableUpdateRequest):
+async def update_global_variable(
+    request: Request, variable_id: int, payload: api_models.GlobalVariableUpdateRequest
+):
     """Update an existing global variable."""
     _require_user(request)
     org, _ = _get_org_context(request)
     if org is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context required")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required",
+        )
     row = await GlobalVariable.filter(id=variable_id, organization=org).first()
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variable not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Variable not found"
+        )
     if payload.value is not None:
         row.value = payload.value
     if payload.is_secret is not None:
@@ -541,8 +641,13 @@ async def delete_global_variable(request: Request, variable_id: int):
     _require_user(request)
     org, _ = _get_org_context(request)
     if org is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organization context required")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization context required",
+        )
     deleted = await GlobalVariable.filter(id=variable_id, organization=org).delete()
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variable not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Variable not found"
+        )
     return {"ok": True}

@@ -33,6 +33,14 @@ def parse_rfc3339(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _format_12h(dt_str: Optional[str]) -> Optional[str]:
+    """Convert an ISO datetime string to 12-hour format (e.g. '7:30 PM')."""
+    parsed = parse_rfc3339(dt_str)
+    if not parsed:
+        return None
+    return parsed.strftime("%I:%M %p").lstrip("0")
+
+
 def normalize_event(event: Dict[str, Any], calendar_id: str) -> Dict[str, Any]:
     """Normalize Google Calendar event to trigger payload format."""
     start = event.get("start", {})
@@ -51,6 +59,11 @@ def normalize_event(event: Dict[str, Any], calendar_id: str) -> Dict[str, Any]:
             "self": att.get("self", False),
         })
 
+    start_dt_str = start.get("dateTime") or start.get("date")
+    end_dt_str = end.get("dateTime") or end.get("date")
+    start_12h = _format_12h(start_dt_str)
+    end_12h = _format_12h(end_dt_str)
+
     return {
         "event_id": event.get("id"),
         "calendar_id": calendar_id,
@@ -60,12 +73,14 @@ def normalize_event(event: Dict[str, Any], calendar_id: str) -> Dict[str, Any]:
         "status": event.get("status"),
         "html_link": event.get("htmlLink"),
         "start": {
-            "datetime": start.get("dateTime") or start.get("date"),
+            "datetime": start_dt_str,
             "timezone": start.get("timeZone"),
+            "time_12h": start_12h,
         },
         "end": {
-            "datetime": end.get("dateTime") or end.get("date"),
+            "datetime": end_dt_str,
             "timezone": end.get("timeZone"),
+            "time_12h": end_12h,
         },
         "organizer": {
             "email": organizer.get("email"),

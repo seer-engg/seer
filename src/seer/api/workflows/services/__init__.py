@@ -1,4 +1,3 @@
-
 """
 Workflow services module.
 Provides backwards-compatible imports for the router.
@@ -17,6 +16,7 @@ from .catalog import (
 # Import from execution module
 from .execution import (
     _create_run_record,
+    cancel_workflow_run,
     get_workflow_run_interrupt,
     list_workflow_runs,
     resume_workflow_run,
@@ -42,7 +42,6 @@ from .lifecycle import (
     patch_workflow_draft,
     publish_workflow,
     restore_workflow_version,
-    toggle_workflow_active,
     update_workflow,
 )
 
@@ -110,6 +109,7 @@ __all__ = [
     "get_subscription_event_count",
     "generate_cron_event",
     "_create_run_record",
+    "cancel_workflow_run",
     # File management
     "list_run_files",
     "get_run_file",
