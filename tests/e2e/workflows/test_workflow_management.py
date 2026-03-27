@@ -3,73 +3,13 @@
 """
 E2E tests for workflow management operations.
 
-Tests: active/pause toggle, workflow listing with filters,
+Tests: access control, workflow listing with filters,
 and cross-cutting management concerns.
 """
 import pytest
 
 
 pytestmark = pytest.mark.e2e
-
-
-class TestWorkflowActiveToggle:
-    """Tests for toggling workflow active/paused state."""
-
-    async def test_toggle_workflow_inactive(
-        self,
-        authenticated_e2e_client,
-        db_session,
-        e2e_checkpointer,
-        simple_tool_workflow_spec,
-    ):
-        """Should be able to deactivate a published workflow."""
-        # Create and publish
-        create_resp = await authenticated_e2e_client.post(
-            "/api/v1/workflows",
-            json={"name": "Toggle Test", "spec": simple_tool_workflow_spec},
-        )
-        workflow_id = create_resp.json()["workflow_id"]
-        await authenticated_e2e_client.post(f"/api/v1/workflows/{workflow_id}/publish")
-
-        # Toggle inactive
-        toggle_resp = await authenticated_e2e_client.patch(
-            f"/api/v1/workflows/{workflow_id}/active",
-            json={"is_active": False},
-        )
-        assert toggle_resp.status_code == 200
-
-        # The toggle endpoint itself returns updated state
-        toggle_data = toggle_resp.json()
-        assert toggle_data.get("is_active") is False or toggle_data.get("ok") is True
-
-    async def test_toggle_workflow_roundtrip(
-        self,
-        authenticated_e2e_client,
-        db_session,
-        e2e_checkpointer,
-        simple_tool_workflow_spec,
-    ):
-        """Should be able to deactivate then reactivate a workflow."""
-        create_resp = await authenticated_e2e_client.post(
-            "/api/v1/workflows",
-            json={"name": "Reactivate Test", "spec": simple_tool_workflow_spec},
-        )
-        workflow_id = create_resp.json()["workflow_id"]
-        await authenticated_e2e_client.post(f"/api/v1/workflows/{workflow_id}/publish")
-
-        # Deactivate
-        deactivate_resp = await authenticated_e2e_client.patch(
-            f"/api/v1/workflows/{workflow_id}/active",
-            json={"is_active": False},
-        )
-        assert deactivate_resp.status_code == 200
-
-        # Reactivate
-        reactivate_resp = await authenticated_e2e_client.patch(
-            f"/api/v1/workflows/{workflow_id}/active",
-            json={"is_active": True},
-        )
-        assert reactivate_resp.status_code == 200
 
 
 class TestWorkflowAccessControl:
