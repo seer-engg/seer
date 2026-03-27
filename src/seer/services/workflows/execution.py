@@ -365,7 +365,9 @@ async def _execute_resume(
     user: User,
     compiled: Any,
     responses: Dict[str, Any],
+    *,
     organization_id: Optional[int] = None,
+    prev_interrupt_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Execute the resume operation and handle result."""
     run_config = dict(run.config or {})
@@ -399,16 +401,26 @@ async def _execute_resume(
     hitl_interrupt = _extract_hitl_interrupt(result)
     if hitl_interrupt:
         interrupted_node_id = hitl_interrupt.get("node_id")
-        # If the node that "interrupted" also has output in the result, it actually
-        # completed — the __interrupt__ is stale from the prior pause, not a new one.
+        # If the node that "interrupted" also has output in the result, it MAY be
+        # stale (prior pause echo) or a NEW interrupt from the next loop iteration.
+        # Distinguish by comparing display content: in a loop each iteration renders
+        # different template values, so a truly stale interrupt has identical display.
         if interrupted_node_id and interrupted_node_id in result:
-            logger.debug(
-                "Ignoring stale __interrupt__ after resume for run '%s' "
-                "(node '%s' has output, interrupt is from prior pause)",
-                run.run_id,
-                interrupted_node_id,
-            )
-            hitl_interrupt = None
+            if (prev_interrupt_data or {}).get("display") == hitl_interrupt.get("display"):
+                logger.debug(
+                    "Ignoring stale __interrupt__ after resume for run '%s' "
+                    "(node '%s' has output, interrupt display unchanged)",
+                    run.run_id,
+                    interrupted_node_id,
+                )
+                hitl_interrupt = None
+            else:
+                logger.debug(
+                    "Keeping new __interrupt__ for run '%s' "
+                    "(node '%s' has output but display changed — new loop iteration)",
+                    run.run_id,
+                    interrupted_node_id,
+                )
     if hitl_interrupt:
         logger.info(
             "Another HITL interrupt detected for run '%s' at node '%s'",
@@ -486,6 +498,9 @@ async def resume_workflow_run(
         },
     )
 
+    # Save previous interrupt data before clearing (needed for stale-interrupt detection in loops)
+    prev_interrupt_data = run.pending_interrupt_data
+
     # Mark run as running again
     await WorkflowRun.filter(id=run.id).update(
         status=WorkflowRunStatus.RUNNING,
@@ -512,7 +527,7 @@ async def resume_workflow_run(
 
     # Execute resume
     try:
-        return await _execute_resume(run, user, compiled, responses, organization_id=organization_id)
+        return await _execute_resume(run, user, compiled, responses, organization_id=organization_id, prev_interrupt_data=prev_interrupt_data)
     except Exception as exc:
         from seer.observability.exceptions import RunCostCapExceeded  # pylint: disable=import-outside-toplevel  # Reason: circular dependency
 

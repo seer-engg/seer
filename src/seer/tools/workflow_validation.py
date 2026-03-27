@@ -159,9 +159,11 @@ def validate_trigger_provider_configs(spec: Any) -> List[str]:
 
         if validation_errors:
             trigger_id = _get_attr_or_key(trigger, "id", trigger_key)
+            schema_props = list(definition.schemas.config.get("properties", {}).keys()) if isinstance(definition.schemas.config, dict) else []
             for err in validation_errors:
+                hint = f" Expected fields: {schema_props}" if schema_props else ""
                 errors.append(
-                    f"Trigger '{trigger_id}' ({trigger_key}): {err.message}"
+                    f"Trigger '{trigger_id}' ({trigger_key}): {err.message}.{hint}"
                 )
 
     return errors
@@ -365,6 +367,25 @@ async def run_full_validation(
             success=False,
             error=ValidationError("schema_validation", error_msg, hint),
         )
+
+    # Step 1.5: Warn about HITL anti-patterns
+    import re as _re  # pylint: disable=import-outside-toplevel  # Reason: Only needed for pattern check
+    for node in spec_dict.get("nodes", []):
+        if node.get("type") != "hitl":
+            continue
+        display = node.get("display") or []
+        desc = node.get("description") or ""
+        if not display and _re.search(r"\$\{", desc):
+            node_id = node.get("id", "?")
+            return ValidationResult(
+                success=False,
+                error=ValidationError(
+                    "hitl_display",
+                    f"HITL node '{node_id}' has ${{...}} expressions in description but empty display array",
+                    "Move dynamic content to the display array as {label, value} pairs. "
+                    "The description field is a static label and does not evaluate expressions.",
+                ),
+            )
 
     # Step 2: Tool and trigger reference validation
     ref_errors = validate_tools_and_triggers(spec_dict)
