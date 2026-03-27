@@ -51,7 +51,11 @@ class DiscordSendChannelMessageTool(DiscordAPIClient):
                     ),
                     "maxLength": 2000,
                     "x-ui-type": "rich_text",
-                    "x-rich-text-platform": "discord",
+                    "x-rich-text-output": "markdown",
+                    "x-rich-text-features": [
+                        "bold", "italic", "underline", "strikethrough",
+                        "bulletList", "orderedList", "blockquote", "code", "codeBlock",
+                    ],
                 },
                 "embed": {
                     "type": "object",
@@ -187,7 +191,11 @@ class DiscordSendDirectMessageTool(DiscordAPIClient):
                     ),
                     "maxLength": 2000,
                     "x-ui-type": "rich_text",
-                    "x-rich-text-platform": "discord",
+                    "x-rich-text-output": "markdown",
+                    "x-rich-text-features": [
+                        "bold", "italic", "underline", "strikethrough",
+                        "bulletList", "orderedList", "blockquote", "code", "codeBlock",
+                    ],
                 },
                 "embed": {
                     "type": "object",

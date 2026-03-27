@@ -46,7 +46,11 @@ class SlackSendChannelMessageTool(SlackAPIClient):
                     "description": "Message text (supports formatting: bold, italic, strikethrough, links, lists, quotes, code)",
                     "maxLength": 40000,
                     "x-ui-type": "rich_text",
-                    "x-rich-text-platform": "slack",
+                    "x-rich-text-output": "markdown",
+                    "x-rich-text-features": [
+                        "bold", "italic", "strikethrough", "link",
+                        "bulletList", "orderedList", "blockquote", "code", "codeBlock",
+                    ],
                 },
                 "thread_ts": {
                     "type": "string",
@@ -165,7 +169,11 @@ class SlackSendDirectMessageTool(SlackAPIClient):
                     "description": "Message text (supports formatting: bold, italic, strikethrough, links, lists, quotes, code)",
                     "maxLength": 40000,
                     "x-ui-type": "rich_text",
-                    "x-rich-text-platform": "slack",
+                    "x-rich-text-output": "markdown",
+                    "x-rich-text-features": [
+                        "bold", "italic", "strikethrough", "link",
+                        "bulletList", "orderedList", "blockquote", "code", "codeBlock",
+                    ],
                 },
             },
             "required": ["workspace_id", "user_id", "text"],
