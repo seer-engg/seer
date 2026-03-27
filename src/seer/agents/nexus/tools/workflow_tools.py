@@ -275,7 +275,7 @@ def _validate_spec_format(workflow_spec: Any) -> tuple[Optional[Dict], Optional[
 
 
 # Per-invocation submission failure counter (ContextVar — survives async, scoped to worker task)
-_MAX_SUBMISSION_ATTEMPTS = 3
+_MAX_SUBMISSION_ATTEMPTS = 2
 
 
 def _check_retry_cap() -> Optional[str]:

@@ -249,6 +249,7 @@ class HITLInputType(str, Enum):
     text = "text"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
     number = "number"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
     boolean = "boolean"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
+    table = "table"  # pylint: disable=invalid-name  # Reason: Enum value matches JSON spec format
 
 
 class HITLInputOption(StrictModel):
@@ -258,10 +259,29 @@ class HITLInputOption(StrictModel):
     requires_text: bool = False  # If true, selecting this option prompts for additional text input
 
 
+class HITLTableColumn(StrictModel):
+    """Column definition for table input type."""
+    id: str = Field(min_length=1)
+    header: str
+    input_type: HITLInputType  # text, single_choice, boolean, number (not nested table)
+    options: Optional[List[HITLInputOption]] = None
+    required: bool = True
+
+
 class HITLDisplayItem(StrictModel):
     """Display item shown to user during HITL interrupt."""
     label: str = ""
     value: str = ""  # Expression like ${node.field}
+
+
+def _validate_table_columns(columns: List["HITLTableColumn"]) -> None:
+    """Validate table column definitions."""
+    for col in columns:
+        if col.input_type == HITLInputType.table:
+            raise ValueError("Table columns cannot have input_type=table (no nesting)")
+        if col.input_type in (HITLInputType.single_choice, HITLInputType.multi_choice):
+            if not col.options or len(col.options) < 2:
+                raise ValueError(f"Table column '{col.id}' with input_type={col.input_type.value} requires at least 2 options")
 
 
 class HITLInputField(StrictModel):
@@ -273,13 +293,22 @@ class HITLInputField(StrictModel):
     required: bool = True
     placeholder: Optional[str] = None
     default_value: Optional[JSONValue] = None
+    columns: Optional[List["HITLTableColumn"]] = None
+    row_data_expression: Optional[str] = None  # e.g. "${fetch_highlights.body.results}"
+    row_display_fields: Optional[List["HITLDisplayItem"]] = None
 
     @model_validator(mode="after")
     def _validate_options(self) -> "HITLInputField":
-        """Validate that choice types have options defined."""
+        """Validate that choice types have options and table types have columns."""
         if self.input_type in (HITLInputType.single_choice, HITLInputType.multi_choice):
             if not self.options or len(self.options) < 2:
                 raise ValueError(f"HITLInputField with input_type={self.input_type.value} requires at least 2 options")
+        elif self.input_type == HITLInputType.table:
+            if not self.columns:
+                raise ValueError("HITLInputField with input_type=table requires columns")
+            if not self.row_data_expression:
+                raise ValueError("HITLInputField with input_type=table requires row_data_expression")
+            _validate_table_columns(self.columns)  # type: ignore[arg-type]  # guarded by `if not self.columns` above
         elif self.options:
             raise ValueError(f"HITLInputField with input_type={self.input_type.value} should not have options")
         return self
