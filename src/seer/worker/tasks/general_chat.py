@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from seer.config import config
@@ -37,7 +37,7 @@ async def general_chat_task(  # pylint: disable=too-many-positional-arguments,to
     generate_image: bool = False,
     image_model: Optional[str] = None,
     image_size: str = "1024x1024",
-    timezone: Optional[str] = None,
+    user_timezone: Optional[str] = None,
 ) -> None:
     """Execute general chat completion in background."""
     logger.info(
@@ -63,7 +63,7 @@ async def general_chat_task(  # pylint: disable=too-many-positional-arguments,to
             .all()
         )
         lc_messages = [
-            SystemMessage(content=get_datetime_context(user_timezone=timezone))
+            SystemMessage(content=get_datetime_context(user_timezone=user_timezone))
         ] + _build_langchain_messages(history)
 
         # Simple chat completion (no agent/tools)

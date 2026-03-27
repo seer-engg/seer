@@ -152,7 +152,7 @@ async def send_message(
         generate_image=body.generate_image,
         image_model=body.image_model,
         image_size=body.image_size or "1024x1024",
-        timezone=body.timezone,
+        user_timezone=body.timezone,
     )
 
     session.current_execution_task_id = (

@@ -178,6 +178,10 @@ class TestOverageDetection:
 
         pro_limits = await get_effective_limits(test_user, org)
 
-        # PRO should be >= FREE in all dimensions
-        assert pro_limits.workflows >= free_limits.workflows
-        assert pro_limits.runs_monthly >= free_limits.runs_monthly
+        # PRO should be >= FREE in all dimensions.
+        # Convention: -1 means unlimited, which is semantically > any positive limit.
+        def _effective(val):
+            return float("inf") if val == -1 else val
+
+        assert _effective(pro_limits.workflows) >= _effective(free_limits.workflows)
+        assert _effective(pro_limits.runs_monthly) >= _effective(free_limits.runs_monthly)
