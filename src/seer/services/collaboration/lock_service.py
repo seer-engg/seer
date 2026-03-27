@@ -85,6 +85,12 @@ class WorkflowLockService:
 
         existing = await self.get_lock(organization_id, workflow_id)
         if existing is not None:
+            # Same user, different tab → force-release stale lock and re-acquire
+            if self._is_same_user(existing, user) and existing.tab_id != tab_id:
+                await redis.delete(key)
+                acquired = await redis.set(key, lock.model_dump_json(), ex=LOCK_TTL_SECONDS, nx=True)
+                if acquired:
+                    return True, lock
             return False, existing
 
         # Retry once in case the key disappeared between SET NX and GET.
@@ -218,6 +224,10 @@ class WorkflowLockService:
                 exc,
             )
             return None
+
+    @staticmethod
+    def _is_same_user(lock: WorkflowLockMetadata, user: User) -> bool:
+        return lock.holder_db_user_id == user.id or lock.holder_clerk_user_id == user.user_id
 
     @staticmethod
     def _is_holder(lock: WorkflowLockMetadata, *, user: User, tab_id: str | None = None) -> bool:

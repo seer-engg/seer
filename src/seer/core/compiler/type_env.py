@@ -49,6 +49,7 @@ def build_type_environment(
 
     # Register vars namespace for global variables (permissive — any key allowed)
     env.register("vars", {"type": "object", "additionalProperties": {"type": "string"}})
+    env.register("variables", {"type": "object", "additionalProperties": {"type": "string"}})  # alias — LLMs often use this
 
     # Process all nodes (sync path — skips MCP validation)
     for node in spec.nodes:
@@ -80,6 +81,7 @@ async def build_type_environment_async(
 
     # Register vars namespace for global variables (permissive — any key allowed)
     env.register("vars", {"type": "object", "additionalProperties": {"type": "string"}})
+    env.register("variables", {"type": "object", "additionalProperties": {"type": "string"}})  # alias — LLMs often use this
 
     # Process all nodes (async path — includes MCP validation)
     for node in spec.nodes:

@@ -8,7 +8,7 @@ user responses before continuing.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from seer.core.nodes.base import BaseNodeType, NodeExecutionContext, TypeRegistrationContext, get_trace_key
 from seer.core.nodes.registry import register_node_type
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from seer.core.expr.evaluator import EvaluationContext
     from seer.core.expr.typecheck import TypeEnvironment
     from seer.core.runtime.nodes import RuntimeServices
-    from seer.core.schema.models import HITLInputField, NodeBase
+    from seer.core.schema.models import HITLDisplayItem, HITLInputField, HITLTableColumn, NodeBase
 
 
 # =============================================================================
@@ -80,54 +80,65 @@ def _evaluate_input_fields(eval_ctx: "EvaluationContext", inputs: List["HITLInpu
     return [_evaluate_single_field(eval_ctx, field) for field in inputs]
 
 
-def _build_hitl_output_schema(node: HITLNode) -> Dict:
-    """
-    Build output schema dynamically from HITL input field definitions.
+def _evaluate_table_rows(eval_ctx: "EvaluationContext", input_field: "HITLInputField") -> List[Dict]:
+    """Evaluate row_data_expression and row_display_fields for a table input."""
+    from seer.core.expr.evaluator import evaluate_value  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
+    row_data = _safe_evaluate(eval_ctx, input_field.row_data_expression)
+    if not isinstance(row_data, list):
+        row_data = []
+    rows = []
+    for row_idx, row in enumerate(row_data):
+        row_display = {}
+        if input_field.row_display_fields:
+            row_ctx = eval_ctx.with_locals({"row": row, "row_index": row_idx})
+            for item in input_field.row_display_fields:
+                try:
+                    row_display[item.label] = evaluate_value(row_ctx, item.value)
+                except Exception:  # pylint: disable=broad-exception-caught  # Reason: Show error in display instead of failing
+                    row_display[item.label] = f"<error evaluating {item.value}>"
+        rows.append({"display": row_display, "row_index": row_idx, "row_data": row})
+    return rows
 
-    Each input field becomes a property in the output schema with the appropriate type.
-    """
+
+def _input_type_to_schema(input_type: HITLInputType, options: Optional[List] = None) -> Dict:
+    """Map a single HITLInputType (with optional options) to a JSON Schema fragment."""
+    type_map = {
+        HITLInputType.text: {"type": "string"},
+        HITLInputType.number: {"type": "number"},
+        HITLInputType.boolean: {"type": "boolean"},
+    }
+    if input_type in type_map:
+        return type_map[input_type]
+    enum_vals = [opt.value for opt in options] if options else None
+    if input_type == HITLInputType.single_choice:
+        return {"type": "string", "enum": enum_vals} if enum_vals else {"type": "string"}
+    if input_type == HITLInputType.multi_choice:
+        items = {"type": "string", "enum": enum_vals} if enum_vals else {"type": "string"}
+        return {"type": "array", "items": items}
+    return {"type": "string"}
+
+
+def _build_hitl_output_schema(node: HITLNode) -> Dict:
+    """Build output schema dynamically from HITL input field definitions."""
     properties: Dict = {}
     required: List[str] = []
 
-    for input_field in node.inputs:
-        field_schema: Dict = {}
+    for field in node.inputs:
+        if field.input_type == HITLInputType.table:
+            col_props: Dict = {}
+            col_req: List[str] = []
+            for col in field.columns or []:
+                col_props[col.id] = _input_type_to_schema(col.input_type, col.options)
+                if col.required:
+                    col_req.append(col.id)
+            schema = {"type": "array", "items": {"type": "object", "properties": col_props, "required": col_req}}
+        else:
+            schema = _input_type_to_schema(field.input_type, field.options)
+        properties[field.id] = schema
+        if field.required:
+            required.append(field.id)
 
-        if input_field.input_type == HITLInputType.text:
-            field_schema = {"type": "string"}
-        elif input_field.input_type == HITLInputType.number:
-            field_schema = {"type": "number"}
-        elif input_field.input_type == HITLInputType.boolean:
-            field_schema = {"type": "boolean"}
-        elif input_field.input_type == HITLInputType.single_choice:
-            if input_field.options:
-                field_schema = {
-                    "type": "string",
-                    "enum": [opt.value for opt in input_field.options],
-                }
-            else:
-                field_schema = {"type": "string"}
-        elif input_field.input_type == HITLInputType.multi_choice:
-            if input_field.options:
-                field_schema = {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": [opt.value for opt in input_field.options],
-                    },
-                }
-            else:
-                field_schema = {"type": "array", "items": {"type": "string"}}
-
-        properties[input_field.id] = field_schema
-        if input_field.required:
-            required.append(input_field.id)
-
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": False,
-    }
+    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
 # =============================================================================
@@ -163,9 +174,8 @@ class HITLNodeType(BaseNodeType):
         from seer.core.runtime.state import INTERNAL_STATE_PREFIX
 
         # Build eval context
-        visible_state = {k: v for k, v in ctx.state.items() if not k.startswith(INTERNAL_STATE_PREFIX)}
         eval_ctx = EvaluationContext(
-            state=visible_state,
+            state={k: v for k, v in ctx.state.items() if not k.startswith(INTERNAL_STATE_PREFIX)},
             locals=ctx.locals_ctx or {},
             config=ctx.config,
             trigger=ctx.trigger,
@@ -187,12 +197,17 @@ class HITLNodeType(BaseNodeType):
         # Evaluate input field expressions (question, placeholder, default_value, option labels)
         evaluated_inputs = _evaluate_input_fields(eval_ctx, node.inputs)
 
+        # Evaluate table input rows
+        for i, input_field in enumerate(node.inputs):
+            if input_field.input_type == HITLInputType.table and input_field.row_data_expression:
+                evaluated_inputs[i]["rows"] = _evaluate_table_rows(eval_ctx, input_field)
+
         # Build interrupt payload
         interrupt_payload = {
             "type": "hitl",
             "node_id": node.id,
-            "title": node.title,
-            "description": node.description,
+            "title": evaluate_value(eval_ctx, node.title) if node.title else node.title,
+            "description": evaluate_value(eval_ctx, node.description) if node.description else node.description,
             "display": display_data,
             "inputs": evaluated_inputs,
             "timeout_seconds": node.timeout_seconds,
