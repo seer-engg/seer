@@ -69,16 +69,16 @@ os.environ["CLERK_ISSUER"] = "https://test.clerk.accounts.dev"
 # =============================================================================
 import pytest
 
-# Container fixtures (Postgres, Redis) - these don't import seer modules
-from tests.e2e.fixtures.containers import (
+# Shared container fixtures (Postgres, Redis) - these don't import seer modules
+from tests.fixtures.containers import (  # noqa: F401
     postgres_container,
     redis_container,
     database_url,
     redis_url,
 )
 
-# Database fixtures - these use lazy imports internally
-from tests.e2e.fixtures.database import (
+# Shared database fixtures - these use lazy imports internally
+from tests.fixtures.database import (  # noqa: F401
     db_initialized,
     db_session,
     clean_db_session,

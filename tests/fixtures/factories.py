@@ -83,7 +83,7 @@ class WorkflowFactory:
         workflow_id: Optional[str] = None,
         name: Optional[str] = None,
         spec: Optional[Dict[str, Any]] = None,
-        status: WorkflowVersionStatus = WorkflowVersionStatus.PUBLISHED,
+        status: WorkflowVersionStatus = WorkflowVersionStatus.RELEASED,
         **kwargs,
     ) -> Workflow:
         """
@@ -94,7 +94,7 @@ class WorkflowFactory:
             workflow_id: Workflow ID (auto-generated if not provided)
             name: Workflow name (auto-generated if not provided)
             spec: Workflow spec (minimal spec if not provided)
-            status: Workflow status (default: PUBLISHED)
+            status: Workflow status (default: RELEASED)
             **kwargs: Additional Workflow fields
 
         Returns:
@@ -153,7 +153,7 @@ class WorkflowRunFactory:
         cls,
         workflow: Workflow,
         run_id: Optional[str] = None,
-        status: WorkflowRunStatus = WorkflowRunStatus.PENDING,
+        status: WorkflowRunStatus = WorkflowRunStatus.QUEUED,
         source: WorkflowRunSource = WorkflowRunSource.MANUAL,
         initial_state: Optional[Dict[str, Any]] = None,
         final_state: Optional[Dict[str, Any]] = None,
