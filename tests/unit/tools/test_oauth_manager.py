@@ -7,7 +7,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from seer.tools.oauth_manager import refresh_oauth_token
+from seer.tools.oauth_manager import get_oauth_token, refresh_oauth_token
 
 
 def _make_connection(provider: str = "oura", refresh_token: str = "rt_test") -> MagicMock:
@@ -78,3 +78,40 @@ class TestRefreshOAuthTokenOura:
 
         with pytest.raises(HTTPException, match="Token refresh not supported for provider"):
             await refresh_oauth_token(conn)
+
+
+@pytest.mark.unit
+class TestGetOAuthTokenConnectionIdTypes:
+    """Regression: connection_id from workflow runtime is int, not str."""
+
+    @pytest.mark.asyncio
+    async def test_int_connection_id_does_not_raise_type_error(self):
+        """get_oauth_token must accept int connection_id without TypeError."""
+        mock_user = MagicMock()
+        mock_conn = _make_connection(provider="notion")
+        mock_conn.access_token_enc = "token_abc"
+        mock_conn.expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+
+        with patch("seer.tools.oauth_manager.OAuthConnection") as MockOAuth:
+            MockOAuth.filter.return_value.first = AsyncMock(return_value=mock_conn)
+            connection, token = await get_oauth_token(mock_user, connection_id=22)
+
+        assert connection == mock_conn
+        assert token == "token_abc"
+
+    @pytest.mark.asyncio
+    async def test_str_connection_id_with_colon_prefix(self):
+        """get_oauth_token parses 'provider:id' string connection_id."""
+        mock_user = MagicMock()
+        mock_conn = _make_connection(provider="notion")
+        mock_conn.access_token_enc = "token_abc"
+        mock_conn.expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+
+        with patch("seer.tools.oauth_manager.OAuthConnection") as MockOAuth:
+            MockOAuth.filter.return_value.first = AsyncMock(return_value=mock_conn)
+            connection, token = await get_oauth_token(mock_user, connection_id="notion:22")
+
+        assert connection == mock_conn
+        # Verify the filter was called with id=22 (parsed from "notion:22")
+        call_args = MockOAuth.filter.call_args
+        assert call_args is not None
