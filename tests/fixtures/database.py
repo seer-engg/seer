@@ -80,23 +80,16 @@ def db_initialized(database_url: str) -> str:
     """
     Initialize database schema once per session.
 
-    In CI, migrations are already applied by the workflow — we just verify
-    connectivity. Locally (Testcontainers), runs aerich migrations or falls
-    back to generate_schemas.
+    Runs aerich migrations against the Testcontainers PostgreSQL instance.
+    Falls back to generate_schemas if migrations fail.
 
     Args:
-        database_url: PostgreSQL connection URL
+        database_url: PostgreSQL connection URL from Testcontainers
 
     Returns:
         str: The database URL (for downstream fixtures)
     """
     import os
-
-    # In CI, the workflow already runs `aerich upgrade` before tests.
-    # Skip re-running migrations to avoid conflicts.
-    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
-        return database_url
-
     import subprocess
     from pathlib import Path
 

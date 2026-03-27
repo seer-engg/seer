@@ -58,6 +58,16 @@ async def refresh_oauth_token(connection: OAuthConnection) -> OAuthConnection:
             "refresh_token": connection.refresh_token_enc,
             "grant_type": "refresh_token",
         }
+    elif connection.provider == "oura":
+        if not config.oura_client_id or not config.oura_client_secret:
+            raise HTTPException(status_code=500, detail="Oura OAuth client credentials not configured")
+        refresh_url = "https://api.ouraring.com/oauth/token"
+        refresh_data = {
+            "client_id": config.oura_client_id,
+            "client_secret": config.oura_client_secret,
+            "refresh_token": connection.refresh_token_enc,
+            "grant_type": "refresh_token",
+        }
     else:
         raise HTTPException(status_code=400, detail=f"Token refresh not supported for provider: {connection.provider}")
 
