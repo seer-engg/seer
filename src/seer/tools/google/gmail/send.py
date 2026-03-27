@@ -66,7 +66,11 @@ class GmailSendEmailTool(GoogleAPIClient):
                         " links, lists, quotes, code, headings). Automatically converted to HTML."
                     ),
                     "x-ui-type": "rich_text",
-                    "x-rich-text-platform": "email",
+                    "x-rich-text-output": "html",
+                    "x-rich-text-features": [
+                        "bold", "italic", "underline", "strikethrough", "link",
+                        "bulletList", "orderedList", "blockquote", "code", "codeBlock", "heading",
+                    ],
                 },
                 "body_html": {
                     "type": "string",
