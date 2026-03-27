@@ -14,6 +14,7 @@ def _make_credentials(
     account_sid: str = "AC_test_sid",
     auth_token: str = "test_auth_token",
     from_number: str = "+15551234567",
+    whatsapp_from_number: str | None = "+15551234567",
 ) -> ResolvedCredentials:
     creds = MagicMock(spec=ResolvedCredentials)
     creds.access_token = None
@@ -22,6 +23,8 @@ def _make_credentials(
         "twilio_auth_token": auth_token,
         "twilio_from_number": from_number,
     }
+    if whatsapp_from_number:
+        creds.secrets["twilio_whatsapp_from_number"] = whatsapp_from_number
     return creds
 
 
@@ -127,6 +130,7 @@ class TestTwilioSendWhatsAppTool:
         mock_config.twilio_account_sid = "AC_platform_sid"
         mock_config.twilio_auth_token = "platform_token"
         mock_config.twilio_from_number = "+15559999999"
+        mock_config.twilio_whatsapp_from_number = "+15559999999"
 
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 201
@@ -182,6 +186,23 @@ class TestTwilioSendWhatsAppTool:
         assert result["sid"] == "SM789"
         call_kwargs = mock_client.request.call_args
         assert call_kwargs.kwargs["auth"] == ("AC_user", "user_token")
+
+    @pytest.mark.asyncio
+    async def test_execute_raises_when_no_whatsapp_from_number(self):
+        """Falls back to clear error when no WhatsApp from-number is configured anywhere."""
+        tool = TwilioSendWhatsAppTool()
+        creds = _make_credentials(whatsapp_from_number=None)
+
+        mock_cfg = MagicMock()
+        mock_cfg.twilio_whatsapp_from_number = None
+
+        with patch("seer.config.config", mock_cfg):
+            with pytest.raises(HTTPException, match="No WhatsApp from-number configured"):
+                await tool.execute(
+                    None,
+                    {"to": "+14155551234", "message": "should fail"},
+                    credentials=creds,
+                )
 
     @pytest.mark.asyncio
     async def test_execute_missing_to(self):
