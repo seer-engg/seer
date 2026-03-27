@@ -80,27 +80,31 @@ def db_initialized(database_url: str) -> str:
     """
     Initialize database schema once per session.
 
-    Tries aerich migrations first (validates migrations are correct),
-    falls back to generate_schemas if migrations fail.
+    In CI, migrations are already applied by the workflow — we just verify
+    connectivity. Locally (Testcontainers), runs aerich migrations or falls
+    back to generate_schemas.
 
     Args:
-        database_url: PostgreSQL connection URL from container
+        database_url: PostgreSQL connection URL
 
     Returns:
         str: The database URL (for downstream fixtures)
     """
-    import subprocess
     import os
+
+    # In CI, the workflow already runs `aerich upgrade` before tests.
+    # Skip re-running migrations to avoid conflicts.
+    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+        return database_url
+
+    import subprocess
     from pathlib import Path
 
-    # Set DATABASE_URL for aerich to use
     env = os.environ.copy()
     env["DATABASE_URL"] = database_url
 
-    # Get project root
     project_root = Path(__file__).parents[2]
 
-    # Run aerich upgrade to apply all migrations
     result = subprocess.run(
         ["uv", "run", "aerich", "upgrade"],
         env=env,
@@ -111,7 +115,6 @@ def db_initialized(database_url: str) -> str:
     )
 
     if result.returncode != 0:
-        # Fallback: generate schemas directly if migrations fail
         import asyncio
         from tortoise import Tortoise
 

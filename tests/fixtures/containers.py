@@ -5,10 +5,28 @@ Shared Testcontainers fixtures for PostgreSQL and Redis.
 
 Provides session-scoped containers used by both integration and E2E tests.
 Containers start once per pytest session, significantly reducing overhead.
-"""
-from typing import Generator
 
-import pytest
+In CI (GitHub Actions), PostgreSQL/Redis are provided as service containers
+and DATABASE_URL/REDIS_URL are already set — Testcontainers is skipped.
+"""
+import os
+from typing import Generator, Optional
+
+import pytest  # noqa: F401
+
+
+def _ci_database_url() -> Optional[str]:
+    """
+    Return DATABASE_URL if running in CI with a pre-provisioned PostgreSQL.
+
+    CI environments (GitHub Actions) provide PostgreSQL as a service container.
+    We detect this via the CI/GITHUB_ACTIONS env vars, NOT by probing
+    localhost — to avoid accidentally using a developer's local PostgreSQL.
+    """
+    is_ci = os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")
+    if not is_ci:
+        return None
+    return os.environ.get("DATABASE_URL")
 
 
 @pytest.fixture(scope="session")
@@ -16,15 +34,19 @@ def postgres_container() -> Generator:
     """
     Session-scoped PostgreSQL container with pgvector extension.
 
-    Uses the pgvector/pgvector:pg17 image to match production environment.
-    The container is started once for all tests and cleaned up at session end.
+    In CI, where PostgreSQL is a service container, this yields None
+    and database_url uses DATABASE_URL directly.
 
-    Yields:
-        PostgresContainer: Running PostgreSQL container instance
+    Locally, starts a Testcontainers PostgreSQL instance.
     """
+    ci_url = _ci_database_url()
+    if ci_url is not None:
+        # CI: PostgreSQL is already running as a service container
+        yield None
+        return
+
     from testcontainers.postgres import PostgresContainer
 
-    # Use pgvector image to match production with vector support
     container = PostgresContainer(
         image="pgvector/pgvector:pg17",
         username="test",
@@ -33,12 +55,11 @@ def postgres_container() -> Generator:
     )
 
     with container as pg:
-        # Enable pgvector extension after container starts
         import psycopg2
         conn = psycopg2.connect(
             host=pg.get_container_host_ip(),
             port=pg.get_exposed_port(5432),
-            user="test",  # psycopg2 uses 'user', not 'username'
+            user="test",
             password="test",
             database="seer_test",
         )
@@ -58,14 +79,9 @@ def redis_container() -> Generator:
     Session-scoped Redis/Valkey container.
 
     Uses valkey/valkey:7-alpine to match production Valkey deployment.
-    Valkey is a Redis-compatible fork maintained by Linux Foundation.
-
-    Yields:
-        RedisContainer: Running Redis-compatible container instance
     """
     from testcontainers.redis import RedisContainer
 
-    # Use Valkey image to match production
     container = RedisContainer(image="valkey/valkey:7-alpine")
 
     with container as redis:
@@ -75,14 +91,15 @@ def redis_container() -> Generator:
 @pytest.fixture(scope="session")
 def database_url(postgres_container) -> str:
     """
-    PostgreSQL connection URL from the running container.
+    PostgreSQL connection URL.
 
-    Args:
-        postgres_container: Running PostgreSQL container
-
-    Returns:
-        str: Database URL in postgresql:// format
+    Uses CI's DATABASE_URL when available, otherwise builds URL from
+    the Testcontainers instance.
     """
+    ci_url = _ci_database_url()
+    if ci_url is not None:
+        return ci_url
+
     host = postgres_container.get_container_host_ip()
     port = postgres_container.get_exposed_port(5432)
     return f"postgresql://test:test@{host}:{port}/seer_test"
@@ -92,12 +109,6 @@ def database_url(postgres_container) -> str:
 def redis_url(redis_container) -> str:
     """
     Redis connection URL from the running container.
-
-    Args:
-        redis_container: Running Redis container
-
-    Returns:
-        str: Redis URL in redis:// format
     """
     host = redis_container.get_container_host_ip()
     port = redis_container.get_exposed_port(6379)
