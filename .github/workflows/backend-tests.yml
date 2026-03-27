@@ -6,6 +6,18 @@ on:
       - dev
       - main
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/**'
+      - '.pre-commit-config.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -34,6 +46,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --group dev
 
+      - name: Run pre-commit hooks
+        run: uv run pre-commit run --all-files
+        env:
+          SKIP: no-commit-to-branch
+          DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
+
       - name: Lint migrations
         run: uv run python scripts/lint-migrations.py
 
@@ -43,31 +61,7 @@ jobs:
           TESTCONTAINERS_RYUK_DISABLED: "false"
           DOCKER_HOST: "unix:///var/run/docker.sock"
 
-  e2e-tests:
-    runs-on: ubuntu-latest
-    # Run e2e tests after unit/integration tests pass
-    needs: tests
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Set up Python and uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          python-version: "3.12"
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --frozen --group dev
-
-      - name: Run E2E tests with Testcontainers
+      - name: Run E2E tests
         run: uv run pytest tests/e2e -v --tb=short -x
         env:
           TESTCONTAINERS_RYUK_DISABLED: "false"
