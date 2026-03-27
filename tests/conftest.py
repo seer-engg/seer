@@ -1,12 +1,13 @@
-# pylint: disable=import-outside-toplevel,redefined-outer-name,reimported
-# Reason: Test fixtures commonly use lazy imports and pytest fixture pattern requires name reuse
+# pylint: disable=import-outside-toplevel,redefined-outer-name,reimported,unused-import
+# Reason: Test fixtures commonly use lazy imports and pytest fixture pattern requires name reuse;
+# unused imports are pytest fixtures discovered via import
 """
 Global test fixtures for Seer test suite.
 
 Provides core fixtures for:
 - Async testing with anyio backend (FastAPI recommendation)
-- Database setup with SQLite in-memory for fast tests
-- Transaction rollback for test isolation
+- Database setup with PostgreSQL via Testcontainers (production-identical)
+- Truncation-based test isolation (handles IntegrityError-based dedup correctly)
 - Test user creation
 - FastAPI test client
 - Sample workflow specifications
@@ -33,9 +34,19 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from tortoise import Tortoise
 
-from seer.database.config import TORTOISE_ORM
+# =============================================================================
+# Shared Testcontainers + Database Fixtures (PostgreSQL)
+# These are imported so pytest discovers them as available fixtures.
+# =============================================================================
+from tests.fixtures.containers import (  # noqa: F401
+    postgres_container,
+    database_url,
+)
+from tests.fixtures.database import (  # noqa: F401
+    db_initialized,
+    db_engine,
+)
 
 
 # =============================================================================
@@ -68,44 +79,8 @@ def anyio_backend():
     return "asyncio"
 
 
-# =============================================================================
-# Database Fixtures
-# =============================================================================
-
-
-@pytest.fixture(scope="function")
-async def db_engine():
-    """
-    Initialize test database (SQLite in-memory) for each test.
-
-    Uses SQLite for fast tests (~100x faster than PostgreSQL).
-    All models are created in memory for perfect isolation.
-    """
-    # Create test configuration with SQLite in-memory
-    test_config = {
-        "connections": {
-            "default": {
-                "engine": "tortoise.backends.sqlite",
-                "credentials": {"file_path": ":memory:"},
-            }
-        },
-        "apps": TORTOISE_ORM["apps"],
-        "use_tz": True,
-        "timezone": "UTC",
-    }
-
-    # Initialize Tortoise ORM
-    await Tortoise.init(config=test_config)
-    await Tortoise.generate_schemas()
-
-    yield
-
-    # Cleanup
-    await Tortoise.close_connections()
-
-
-# Note: db_engine fixture is NOT autouse - tests that need database
-# should explicitly request it via parameters
+# Note: db_engine fixture is imported from tests.fixtures.database (PostgreSQL via Testcontainers).
+# It is NOT autouse - tests that need database should explicitly request it via parameters.
 
 
 @pytest.fixture(autouse=True)

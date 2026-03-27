@@ -86,8 +86,11 @@ async def test_credential_resolver_no_scopes(db_engine, test_user):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_credential_resolver_with_oauth(db_engine, test_user):
-    """Test credential resolver with OAuth connection."""
-    # Create OAuth connection
+    """Test credential resolver with real OAuth connection lookup.
+
+    Token is not expired, so get_oauth_token should return it from DB
+    without any HTTP refresh calls.
+    """
     expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     connection = await OAuthConnection.create(
         user=test_user,
@@ -101,28 +104,27 @@ async def test_credential_resolver_with_oauth(db_engine, test_user):
 
     tool = MockTool()
 
-    # Mock get_oauth_token to return our connection
-    with patch("seer.tools.credential_resolver.get_oauth_token") as mock_oauth:
-        mock_oauth.return_value = (connection, "test_token_123")
+    # No mock needed — token is valid, get_oauth_token does a real DB lookup
+    resolver = CredentialResolver(
+        user=test_user,
+        tool=tool,
+        connection_id=str(connection.id),
+    )
 
-        resolver = CredentialResolver(
-            user=test_user,
-            tool=tool,
-            connection_id=str(connection.id),
-        )
+    resolved = await resolver.resolve({})
 
-        resolved = await resolver.resolve({})
-
-        assert resolved.connection is not None
-        assert resolved.connection.id == connection.id
-        assert resolved.access_token == "test_token_123"
+    assert resolved.connection is not None
+    assert resolved.connection.id == connection.id
+    assert resolved.access_token == "test_token_123"
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_credential_resolver_missing_scopes(db_engine, test_user):
-    """Test credential resolver fails when connection missing required scopes."""
-    # Create OAuth connection with insufficient scopes
+    """Test credential resolver fails when connection missing required scopes.
+
+    Real DB lookup finds the connection, real scope check rejects it.
+    """
     expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     connection = await OAuthConnection.create(
         user=test_user,
@@ -136,21 +138,18 @@ async def test_credential_resolver_missing_scopes(db_engine, test_user):
 
     tool = MockTool()
 
-    with patch("seer.tools.credential_resolver.get_oauth_token") as mock_oauth:
-        mock_oauth.return_value = (connection, "test_token_123")
+    # No mock needed — token is valid, scope check is the real test
+    resolver = CredentialResolver(
+        user=test_user,
+        tool=tool,
+        connection_id=str(connection.id),
+    )
 
-        resolver = CredentialResolver(
-            user=test_user,
-            tool=tool,
-            connection_id=str(connection.id),
-        )
+    with pytest.raises(HTTPException) as exc_info:
+        await resolver.resolve({})
 
-        # Should raise exception for missing scope
-        with pytest.raises(HTTPException) as exc_info:
-            await resolver.resolve({})
-
-        assert exc_info.value.status_code == 403
-        assert "missing required scope" in str(exc_info.value.detail).lower()
+    assert exc_info.value.status_code == 403
+    assert "missing required scope" in str(exc_info.value.detail).lower()
 
 
 @pytest.mark.integration
@@ -204,8 +203,11 @@ async def test_execute_tool_no_auth(db_engine, test_user):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_execute_tool_with_oauth(db_engine, test_user):
-    """Test executing tool with OAuth credentials."""
-    # Create OAuth connection
+    """Test executing tool with real OAuth credential resolution.
+
+    Token is valid (not expired), so the real get_oauth_token does a DB lookup
+    and returns the token without HTTP calls.
+    """
     expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     connection = await OAuthConnection.create(
         user=test_user,
@@ -217,11 +219,9 @@ async def test_execute_tool_with_oauth(db_engine, test_user):
         scopes="test.scope",
     )
 
-    with patch("seer.tools.executor.get_tool") as mock_get_tool, \
-         patch("seer.tools.credential_resolver.get_oauth_token") as mock_oauth:
-
+    # Only mock get_tool (tool registry) — credential resolution is real
+    with patch("seer.tools.executor.get_tool") as mock_get_tool:
         mock_get_tool.return_value = MockTool()
-        mock_oauth.return_value = (connection, "test_token_123")
 
         result = await execute_tool(
             tool_name="mock_tool",

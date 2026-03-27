@@ -1,461 +1,214 @@
 """
 Integration tests for clarification question flow.
 
-Tests the full flow: chat -> interrupt -> resume with clarification questions.
+Tests session state validation, answer validation, and interrupt handling
+with REAL database records. Only external infrastructure (Redis, task queue,
+Postgres checkpointer) is mocked — no business logic mocking.
 
-NOTE: These tests use async_mode=True (the default) and mock taskiq tasks.
-The tests simulate background task execution by calling task functions directly
-after the API enqueues them.
+Replaces mock-heavy test that had 120 mock sites testing against air.
 """
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
+
+from seer.database.workflow_models import (
+    ChatExecutionStatus,
+    WorkflowChatSession,
+)
+
+
+# =============================================================================
+# Shared interrupt payloads
+# =============================================================================
+
+SINGLE_CHOICE_INTERRUPT = {
+    "type": "clarification_questions",
+    "questions": [
+        {
+            "question_id": "q_email",
+            "question": "Which email provider should we use?",
+            "question_type": "single_choice",
+            "options": [
+                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+                {"value": "other", "label": "Other", "is_wildcard": True},
+            ],
+            "min_selections": 1,
+            "max_selections": None,
+            "reasoning": "Found multiple email providers",
+        }
+    ],
+}
+
+MULTI_CHOICE_INTERRUPT = {
+    "type": "clarification_questions",
+    "questions": [
+        {
+            "question_id": "q_multi",
+            "question": "Which integrations to enable?",
+            "question_type": "multi_choice",
+            "options": [
+                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                {"value": "slack", "label": "Slack", "is_wildcard": False},
+                {"value": "github", "label": "GitHub", "is_wildcard": False},
+            ],
+            "min_selections": 1,
+            "max_selections": 3,
+            "reasoning": "User wants multiple integrations",
+        }
+    ],
+}
+
+BATCH_INTERRUPT = {
+    "type": "clarification_questions",
+    "questions": [
+        {
+            "question_id": "q_email",
+            "question": "Which email provider?",
+            "question_type": "single_choice",
+            "options": [
+                {"value": "gmail", "label": "Gmail", "is_wildcard": False},
+                {"value": "outlook", "label": "Outlook", "is_wildcard": False},
+            ],
+            "min_selections": 1,
+            "max_selections": None,
+            "reasoning": "Need email config",
+        },
+        {
+            "question_id": "q_notify",
+            "question": "Which notification channels?",
+            "question_type": "multi_choice",
+            "options": [
+                {"value": "slack", "label": "Slack", "is_wildcard": False},
+                {"value": "email", "label": "Email", "is_wildcard": False},
+            ],
+            "min_selections": 1,
+            "max_selections": 2,
+            "reasoning": "Need notification config",
+        },
+    ],
+}
+
+
+def _mock_checkpointer_with_interrupt(interrupt_data):
+    """Return a mock checkpointer whose aget_tuple returns the given interrupt."""
+    checkpointer = AsyncMock()
+    checkpointer.aget_tuple.return_value = MagicMock(
+        checkpoint={
+            "channel_values": {
+                "__interrupt__": [interrupt_data]
+            }
+        }
+    )
+    return checkpointer
 
 
 async def _empty_sse(*args, **kwargs):
-    """Async generator stub that yields nothing — replaces stream_events_sse in tests."""
+    """Stub async generator for SSE — yields nothing."""
     return
     yield  # noqa: unreachable — makes this an async generator
 
 
-async def _empty_astream_events(*args, **kwargs):
-    """Async generator stub that yields nothing — replaces agent.astream_events in tests."""
-    return
-    yield  # noqa: unreachable — makes this an async generator
-
-
-def _make_interrupt_state(interrupt_data: dict):
-    """Build a mock LangGraph StateSnapshot with the given interrupt value."""
-    mock_state = MagicMock()
-    mock_state.values = {"messages": []}
-    mock_interrupt = MagicMock()
-    mock_interrupt.value = interrupt_data
-    mock_state.interrupts = (mock_interrupt,)
-    return mock_state
-
-
-def _make_completed_state():
-    """Build a mock LangGraph StateSnapshot with no interrupts (completed run)."""
-    mock_state = MagicMock()
-    mock_state.values = {"messages": [MagicMock(content="Done.")]}
-    mock_state.interrupts = ()
-    return mock_state
+# =============================================================================
+# Session State Guards (Real DB)
+# =============================================================================
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-class TestClarificationFlow:
-    """Integration tests for clarification question flow."""
+class TestClarificationSessionGuards:
+    """Router rejects invalid state transitions with real DB sessions.
+
+    Only external infrastructure is mocked (task queue, Redis streaming).
+    Session state validation uses real DB records.
+    """
 
     @pytest.fixture
-    async def workflow_client(self, mock_app: FastAPI, db_engine, test_user, test_workflow):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
+    async def client(self, mock_app: FastAPI, db_engine, test_user, test_workflow):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
         """Create authenticated API client with workflow router."""
-        from seer.api.agents.workflow import router  # pylint: disable=import-outside-toplevel  # Dynamic import for test fixture
+        from seer.api.agents.workflow import router  # pylint: disable=import-outside-toplevel
 
-        # Add router to test app
         mock_app.include_router(router)
 
-        # Mock authentication to inject test_user
-        from fastapi import Request  # pylint: disable=import-outside-toplevel  # Dynamic import for test fixture
-        async def mock_auth_middleware(request: Request, call_next):
+        async def auth_middleware(request: Request, call_next):
             request.state.db_user = test_user
-            response = await call_next(request)
-            return response
+            return await call_next(request)
 
-        mock_app.middleware("http")(mock_auth_middleware)
+        mock_app.middleware("http")(auth_middleware)
 
         transport = ASGITransport(app=mock_app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            yield client, test_workflow
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c, test_workflow
 
-    @pytest.fixture
-    def mock_task_result(self):
-        """Create a mock taskiq task result."""
-        result = MagicMock()
-        result.task_id = "mock-task-id-123"
-        return result
-
-    async def test_interrupt_triggered_by_clarification_tool(
-        self,
-        workflow_client,
-        mock_task_result
-    ):
-        """Test that clarification questions trigger interrupt via async task."""
-        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel
-
-        client, workflow = workflow_client
-
-        # Use batch format (clarification_questions) instead of single question
-        interrupt_data = {
-            "type": "clarification_questions",
-            "questions": [
-                {
-                    "question_id": "q_test123",
-                    "question": "Which email provider should we use?",
-                    "question_type": "single_choice",
-                    "options": [
-                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
-                        {"value": "other", "label": "Other", "is_wildcard": True},
-                    ],
-                    "min_selections": 1,
-                    "max_selections": None,
-                    "reasoning": "Found multiple email providers"
-                }
-            ]
-        }
-
-        # Mock agent to return interrupt (used by the task)
-        mock_agent = AsyncMock()
-        mock_agent.ainvoke.return_value = {
-            "messages": [
-                MagicMock(content="I need to know which email provider to use.")
-            ],
-            "__interrupt__": [interrupt_data]
-        }
-
-        # Capture task arguments when .kiq() is called
-        captured_task_args = {}
-
-        async def capture_kiq(**kwargs):
-            captured_task_args.update(kwargs)
-            return mock_task_result
-
-        with patch('seer.api.agents.workflow.router.get_checkpointer') as mock_get_checkpointer, \
-             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task, \
-             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
-             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
-             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
-
-            mock_publisher_cls.return_value = AsyncMock()
-            mock_get_checkpointer.return_value = AsyncMock()
-            mock_chat_task.kiq = AsyncMock(side_effect=capture_kiq)
-
-            # Send chat message (async_mode=True by default)
-            response = await client.post(
-                f"/nexus/{workflow.workflow_id}/chat",
-                json={
-                    "message": "Set up email integration"
-                }
-            )
-
-            assert response.status_code == 200
-            # session_id comes from captured kiq args — response is SSE, not JSON
-            session_id = captured_task_args["session_id"]
-
-        # Verify task was enqueued with correct args
-        assert "session_id" in captured_task_args
-        assert captured_task_args["message"] == "Set up email integration"
-
-        # Now simulate the background task execution by patching what it uses
-        # and directly updating the session state (simulating task completion)
-        mock_agent.astream_events = _empty_astream_events
-        mock_agent.aget_state = AsyncMock(return_value=_make_interrupt_state(interrupt_data))
-
-        with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer') as mock_task_checkpointer, \
-             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
-             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
-
-            mock_task_checkpointer.return_value = AsyncMock()
-            mock_task_publisher.return_value = AsyncMock()
-
-            # Import and run the task directly to simulate background execution
-            from seer.worker.tasks.chat import chat_execution_task
-            await chat_execution_task(
-                session_id=session_id,
-                user_id=workflow.user_id,
-                message="Set up email integration",
-                workflow_id=workflow.id,
-            )
-
-        # Now check the session state - should have interrupt
-        session = await WorkflowChatSession.get(id=session_id)
-        assert session.current_execution_status == ChatExecutionStatus.INTERRUPTED
-        assert session.pending_interrupt_type == "clarification_questions"
-        assert session.pending_interrupt_data is not None
-
-        # Verify structured questions in interrupt_data
-        questions = session.pending_interrupt_data.get("questions", [])
-        assert len(questions) == 1
-        assert questions[0].get("question_id") == "q_test123"
-
-    async def test_resume_with_valid_answer(
-        self,
-        workflow_client,
-        mock_task_result
-    ):
-        """Test resuming with valid clarification answers via async task."""
-        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
-
-        client, workflow = workflow_client
-
-        # Create chat session in database for the thread
-        thread_id = "test-thread-123"
-        interrupt_payload = {
-            "type": "clarification_questions",
-            "questions": [
-                {
-                    "question_id": "q_test123",
-                    "options": [
-                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
-                    ]
-                }
-            ]
-        }
+    async def test_rejects_fresh_chat_for_interrupted_session(self, client):
+        """POST /chat must return 409 when session is already interrupted."""
+        api_client, workflow = client
 
         session = await WorkflowChatSession.create(
             workflow=workflow,
             user=workflow.user,
-            thread_id=thread_id,
-            title="Test Session",
-            current_execution_status=ChatExecutionStatus.INTERRUPTED,
-            pending_interrupt_type="clarification_questions",
-            pending_interrupt_data=interrupt_payload,
-        )
-
-        # Mock checkpointer to return stored interrupt (used for validation)
-        mock_checkpointer = AsyncMock()
-        mock_checkpointer.aget_tuple.return_value = MagicMock(
-            checkpoint={
-                "channel_values": {
-                    "__interrupt__": [
-                        interrupt_payload
-                    ]
-                }
-            }
-        )
-
-        # Mock agent to return continued response (used by the task)
-        mock_agent = AsyncMock()
-        mock_agent.ainvoke.return_value = {
-            "messages": [
-                MagicMock(content="Great! I'll set up Gmail integration.")
-            ]
-        }
-
-        # Capture task arguments
-        captured_task_args = {}
-
-        async def capture_kiq(**kwargs):
-            captured_task_args.update(kwargs)
-            return mock_task_result
-
-        with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=mock_checkpointer), \
-             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task, \
-             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
-             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
-             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
-
-            mock_publisher_cls.return_value = AsyncMock()
-            mock_resume_task.kiq = AsyncMock(side_effect=capture_kiq)
-
-            # Resume with answers (batch format)
-            response = await client.post(
-                f"/nexus/{workflow.workflow_id}/chat/resume",
-                json={
-                    "thread_id": thread_id,
-                    "answers": {
-                        "answers": [
-                            {
-                                "question_id": "q_test123",
-                                "selected_values": ["gmail"],
-                                "custom_input": None
-                            }
-                        ]
-                    }
-                }
-            )
-
-            assert response.status_code == 200
-
-        # Verify task was enqueued
-        assert "session_id" in captured_task_args
-        assert captured_task_args["thread_id"] == thread_id
-
-        # Simulate background task execution
-        mock_agent.astream_events = _empty_astream_events
-        mock_agent.aget_state = AsyncMock(return_value=_make_completed_state())
-
-        with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer', return_value=mock_checkpointer), \
-             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
-             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
-
-            mock_task_publisher.return_value = AsyncMock()
-
-            from seer.worker.tasks.chat import chat_resume_task
-            await chat_resume_task(
-                session_id=session.id,
-                user_id=workflow.user_id,
-                thread_id=thread_id,
-                resume_command_data=captured_task_args["resume_command_data"],
-                workflow_id=workflow.id,
-            )
-
-        # Verify session completed (no interrupt)
-        await session.refresh_from_db()
-        assert session.current_execution_status == ChatExecutionStatus.COMPLETED
-
-    async def test_resume_with_free_text_message(
-        self,
-        workflow_client,
-        mock_task_result,
-    ):
-        """Free-text replies during an interrupt must resume the same thread."""
-        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
-
-        client, workflow = workflow_client
-
-        thread_id = "test-thread-free-text"
-        session = await WorkflowChatSession.create(
-            workflow=workflow,
-            user=workflow.user,
-            thread_id=thread_id,
-            title="Free Text Session",
-            current_execution_status=ChatExecutionStatus.INTERRUPTED,
-            pending_interrupt_type="clarification_questions",
-            pending_interrupt_data={
-                "type": "clarification_questions",
-                "questions": [
-                    {
-                        "question_id": "q_test123",
-                        "question": "Which email provider should we use?",
-                        "question_type": "single_choice",
-                        "options": [
-                            {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                            {"value": "other", "label": "Other", "is_wildcard": True},
-                        ],
-                    }
-                ],
-            },
-        )
-
-        captured_task_args = {}
-
-        async def capture_kiq(**kwargs):
-            captured_task_args.update(kwargs)
-            return mock_task_result
-
-        with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=AsyncMock()), \
-             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task, \
-             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
-             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
-             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
-
-            mock_publisher_cls.return_value = AsyncMock()
-            mock_resume_task.kiq = AsyncMock(side_effect=capture_kiq)
-
-            response = await client.post(
-                f"/nexus/{workflow.workflow_id}/chat/resume",
-                json={
-                    "thread_id": thread_id,
-                    "message": "Use Gmail, but only for invoices from finance@example.com.",
-                }
-            )
-
-            assert response.status_code == 200
-
-        assert captured_task_args["thread_id"] == thread_id
-        assert captured_task_args["resume_command_data"] == {
-            "type": "free_text_response",
-            "message": "Use Gmail, but only for invoices from finance@example.com.",
-            "source": "chat_resume_message",
-        }
-
-        await session.refresh_from_db()
-        assert session.current_execution_status == ChatExecutionStatus.QUEUED
-
-    async def test_rejects_fresh_chat_for_interrupted_session(
-        self,
-        workflow_client,
-    ):
-        """Fresh /chat must be rejected when the session is already interrupted."""
-        from seer.database.workflow_models import ChatExecutionStatus, WorkflowChatSession  # pylint: disable=import-outside-toplevel
-
-        client, workflow = workflow_client
-
-        session = await WorkflowChatSession.create(
-            workflow=workflow,
-            user=workflow.user,
-            thread_id="interrupted-thread-409",
+            thread_id="interrupted-thread",
             title="Interrupted Session",
             current_execution_status=ChatExecutionStatus.INTERRUPTED,
             pending_interrupt_type="clarification_questions",
-            pending_interrupt_data={
-                "type": "clarification_questions",
-                "questions": [{"question_id": "q_1", "question": "Pick one", "question_type": "single_choice", "options": []}],
-            },
+            pending_interrupt_data=SINGLE_CHOICE_INTERRUPT,
         )
 
-        response = await client.post(
+        response = await api_client.post(
             f"/nexus/{workflow.workflow_id}/chat",
-            json={
-                "message": "Try sending again",
-                "session_id": session.id,
-            },
+            json={"message": "Try again", "session_id": session.id},
         )
 
         assert response.status_code == 409
         assert "/chat/resume" in response.text
 
-    async def test_rejects_resume_without_pending_interrupt(
-        self,
-        workflow_client,
-    ):
-        """Resume must be rejected when the session is not waiting for clarification."""
-        from seer.database.workflow_models import ChatExecutionStatus, WorkflowChatSession  # pylint: disable=import-outside-toplevel
-
-        client, workflow = workflow_client
+    async def test_rejects_resume_without_pending_interrupt(self, client):
+        """POST /chat/resume must return 409 when session is already completed."""
+        api_client, workflow = client
 
         await WorkflowChatSession.create(
             workflow=workflow,
             user=workflow.user,
-            thread_id="completed-thread-409",
+            thread_id="completed-thread",
             title="Completed Session",
             current_execution_status=ChatExecutionStatus.COMPLETED,
             pending_interrupt_type=None,
             pending_interrupt_data=None,
         )
 
-        response = await client.post(
-            f"/nexus/{workflow.workflow_id}/chat/resume",
-            json={
-                "thread_id": "completed-thread-409",
-                "answers": {
-                    "answers": [
-                        {
-                            "question_id": "q_test123",
-                            "selected_values": ["gmail"],
-                        }
-                    ]
+        with patch(
+            "seer.api.agents.workflow.router.get_checkpointer",
+            return_value=AsyncMock(),
+        ):
+            response = await api_client.post(
+                f"/nexus/{workflow.workflow_id}/chat/resume",
+                json={
+                    "thread_id": "completed-thread",
+                    "answers": {
+                        "answers": [
+                            {"question_id": "q_email", "selected_values": ["gmail"]}
+                        ]
+                    },
                 },
-            },
-        )
+            )
 
         assert response.status_code == 409
         assert "Start a new /chat request" in response.text
 
-    async def test_rejects_resume_with_multiple_payload_types(
-        self,
-        workflow_client,
-    ):
+    async def test_rejects_resume_with_multiple_payload_types(self, client):
         """Resume payload must contain exactly one of answers, message, or command."""
-        client, workflow = workflow_client
+        api_client, workflow = client
 
-        response = await client.post(
+        response = await api_client.post(
             f"/nexus/{workflow.workflow_id}/chat/resume",
             json={
-                "thread_id": "completed-thread-409",
+                "thread_id": "any-thread",
                 "message": "Use Gmail",
                 "answers": {
                     "answers": [
-                        {
-                            "question_id": "q_test123",
-                            "selected_values": ["gmail"],
-                        }
+                        {"question_id": "q_email", "selected_values": ["gmail"]}
                     ]
                 },
             },
@@ -464,557 +217,464 @@ class TestClarificationFlow:
         assert response.status_code == 422
         assert "Exactly one of answers, message, or command must be provided" in response.text
 
-    async def test_resume_with_invalid_selection(
-        self,
-        workflow_client
-    ):
-        """Test that invalid selections are rejected (validation happens before async task)."""
-        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
 
-        client, workflow = workflow_client
+# =============================================================================
+# Answer Validation (Real DB + checkpointer mock for question data)
+# =============================================================================
 
-        # Create chat session in database for the thread
-        thread_id = "test-thread-invalid"
-        interrupt_payload = {
-            "type": "clarification_questions",
-            "questions": [
-                {
-                    "question_id": "q_test123",
-                    "options": [
-                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
-                    ]
-                }
-            ]
-        }
 
-        await WorkflowChatSession.create(
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestClarificationAnswerValidation:
+    """Router validates clarification answers against the original question schema.
+
+    Real DB for session state. Checkpointer mock only returns the stored
+    question data so the validation logic can compare answers against it.
+    """
+
+    @pytest.fixture
+    async def client(self, mock_app: FastAPI, db_engine, test_user, test_workflow):  # pylint: disable=unused-argument # Reason: db_engine needed for database initialization
+        """Create authenticated API client with workflow router."""
+        from seer.api.agents.workflow import router  # pylint: disable=import-outside-toplevel
+
+        mock_app.include_router(router)
+
+        async def auth_middleware(request: Request, call_next):
+            request.state.db_user = test_user
+            return await call_next(request)
+
+        mock_app.middleware("http")(auth_middleware)
+
+        transport = ASGITransport(app=mock_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c, test_workflow
+
+    async def _create_interrupted_session(self, workflow, interrupt_data, thread_id="val-thread"):
+        """Helper: create an interrupted session with the given interrupt data."""
+        return await WorkflowChatSession.create(
             workflow=workflow,
             user=workflow.user,
             thread_id=thread_id,
-            title="Test Session",
+            title="Validation Session",
             current_execution_status=ChatExecutionStatus.INTERRUPTED,
             pending_interrupt_type="clarification_questions",
-            pending_interrupt_data=interrupt_payload,
+            pending_interrupt_data=interrupt_data,
         )
 
-        # Mock checkpointer to return stored interrupt (used for validation)
-        mock_checkpointer = AsyncMock()
-        mock_checkpointer.aget_tuple.return_value = MagicMock(
-            checkpoint={
-                "channel_values": {
-                    "__interrupt__": [
-                        interrupt_payload
-                    ]
-                }
-            }
-        )
+    async def test_rejects_invalid_selection(self, client):
+        """Selected value not in available options returns 400."""
+        api_client, workflow = client
+        await self._create_interrupted_session(workflow, SINGLE_CHOICE_INTERRUPT, "invalid-sel-thread")
 
-        # Validation happens before .kiq() is called, so we just need to mock checkpointer
-        with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=mock_checkpointer):
+        checkpointer = _mock_checkpointer_with_interrupt(SINGLE_CHOICE_INTERRUPT)
 
-            # Resume with invalid selection (validation error returned immediately)
-            response = await client.post(
+        with patch(
+            "seer.api.agents.workflow.router.get_checkpointer",
+            return_value=checkpointer,
+        ):
+            response = await api_client.post(
                 f"/nexus/{workflow.workflow_id}/chat/resume",
                 json={
-                    "thread_id": thread_id,
+                    "thread_id": "invalid-sel-thread",
                     "answers": {
                         "answers": [
                             {
-                                "question_id": "q_test123",
+                                "question_id": "q_email",
                                 "selected_values": ["invalid_provider"],
-                                "custom_input": None
+                                "custom_input": None,
                             }
                         ]
-                    }
-                }
+                    },
+                },
             )
 
         assert response.status_code == 400
         data = response.json()
-        # Check title or nested detail for error message
-        assert data.get("title") == "Invalid selections" or "Invalid selections" in str(data.get("detail", {}))
-
-    async def test_wildcard_requires_custom_input(
-        self,
-        workflow_client
-    ):
-        """Test that wildcard selection requires custom input (validation happens before async task)."""
-        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
-
-        client, workflow = workflow_client
-
-        # Create chat session in database for the thread
-        thread_id = "test-thread-wildcard"
-        await WorkflowChatSession.create(
-            workflow=workflow,
-            user=workflow.user,
-            thread_id=thread_id,
-            title="Test Session",
-            current_execution_status=ChatExecutionStatus.INTERRUPTED,
-            pending_interrupt_type="clarification_questions",
-            pending_interrupt_data={
-                "type": "clarification_questions",
-                "questions": [
-                    {
-                        "question_id": "q_test123",
-                        "options": [
-                            {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                            {"value": "other", "label": "Other", "is_wildcard": True},
-                        ],
-                    }
-                ],
-            },
+        assert (
+            data.get("title") == "Invalid selections"
+            or "Invalid selections" in str(data.get("detail", {}))
         )
 
-        # Mock checkpointer to return stored interrupt with wildcard (used for validation)
-        mock_checkpointer = AsyncMock()
-        mock_checkpointer.aget_tuple.return_value = MagicMock(
-            checkpoint={
-                "channel_values": {
-                    "__interrupt__": [
-                        {
-                            "type": "clarification_questions",
-                            "questions": [
-                                {
-                                    "question_id": "q_test123",
-                                    "options": [
-                                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                                        {"value": "other", "label": "Other", "is_wildcard": True},
-                                    ]
-                                }
-                            ]
-                        }
-                    ]
-                }
-            }
-        )
+    async def test_wildcard_requires_custom_input(self, client):
+        """Selecting a wildcard option without custom_input returns 400."""
+        api_client, workflow = client
+        await self._create_interrupted_session(workflow, SINGLE_CHOICE_INTERRUPT, "wildcard-thread")
 
-        # Validation happens before .kiq() is called
-        with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=mock_checkpointer):
+        checkpointer = _mock_checkpointer_with_interrupt(SINGLE_CHOICE_INTERRUPT)
 
-            # Resume with wildcard but no custom input (validation error returned immediately)
-            response = await client.post(
+        with patch(
+            "seer.api.agents.workflow.router.get_checkpointer",
+            return_value=checkpointer,
+        ):
+            response = await api_client.post(
                 f"/nexus/{workflow.workflow_id}/chat/resume",
                 json={
-                    "thread_id": thread_id,
+                    "thread_id": "wildcard-thread",
                     "answers": {
                         "answers": [
                             {
-                                "question_id": "q_test123",
+                                "question_id": "q_email",
                                 "selected_values": ["other"],
-                                "custom_input": None
+                                "custom_input": None,
                             }
                         ]
-                    }
-                }
+                    },
+                },
             )
 
         assert response.status_code == 400
         data = response.json()
-        # Check title or nested detail for error message
-        assert data.get("title") == "Custom input required" or "custom input" in str(data.get("detail", {})).lower()
-
-    async def test_wildcard_with_custom_input_succeeds(
-        self,
-        workflow_client,
-        mock_task_result
-    ):
-        """Test that wildcard with custom input succeeds via async task."""
-        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel  # Dynamic import for test
-
-        client, workflow = workflow_client
-
-        # Create chat session in database for the thread
-        thread_id = "test-thread-wildcard-success"
-        session = await WorkflowChatSession.create(
-            workflow=workflow,
-            user=workflow.user,
-            thread_id=thread_id,
-            title="Test Session",
-            current_execution_status=ChatExecutionStatus.INTERRUPTED,
-            pending_interrupt_type="clarification_questions",
-            pending_interrupt_data={
-                "type": "clarification_questions",
-                "questions": [
-                    {
-                        "question_id": "q_test123",
-                        "options": [
-                            {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                            {"value": "other", "label": "Other", "is_wildcard": True},
-                        ],
-                    }
-                ],
-            },
+        assert (
+            data.get("title") == "Custom input required"
+            or "custom input" in str(data.get("detail", {})).lower()
         )
 
-        # Mock checkpointer (used for validation)
-        mock_checkpointer = AsyncMock()
-        mock_checkpointer.aget_tuple.return_value = MagicMock(
-            checkpoint={
-                "channel_values": {
-                    "__interrupt__": [
-                        {
-                            "type": "clarification_questions",
-                            "questions": [
-                                {
-                                    "question_id": "q_test123",
-                                    "options": [
-                                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                                        {"value": "other", "label": "Other", "is_wildcard": True},
-                                    ]
-                                }
-                            ]
-                        }
-                    ]
-                }
-            }
+    async def test_wildcard_with_custom_input_succeeds(self, client):
+        """Wildcard selection with custom_input passes validation and enqueues resume."""
+        api_client, workflow = client
+        await self._create_interrupted_session(workflow, SINGLE_CHOICE_INTERRUPT, "wildcard-ok-thread")
+
+        checkpointer = _mock_checkpointer_with_interrupt(SINGLE_CHOICE_INTERRUPT)
+        mock_task_result = MagicMock()
+        mock_task_result.task_id = "mock-task-id"
+
+        with (
+            patch("seer.api.agents.workflow.router.get_checkpointer", return_value=checkpointer),
+            patch("seer.worker.tasks.chat.chat_resume_task") as mock_resume_task,
+            patch("seer.api.agents.workflow.router.get_stream_watermark", new_callable=AsyncMock, return_value="0"),
+            patch("seer.agents.nexus.stream_publisher.StreamPublisher") as mock_publisher_cls,
+            patch("seer.api.agents.workflow.router.stream_events_sse", new=_empty_sse),
+        ):
+            mock_publisher_cls.return_value = AsyncMock()
+            mock_resume_task.kiq = AsyncMock(return_value=mock_task_result)
+
+            response = await api_client.post(
+                f"/nexus/{workflow.workflow_id}/chat/resume",
+                json={
+                    "thread_id": "wildcard-ok-thread",
+                    "answers": {
+                        "answers": [
+                            {
+                                "question_id": "q_email",
+                                "selected_values": ["other"],
+                                "custom_input": "ProtonMail",
+                            }
+                        ]
+                    },
+                },
+            )
+
+        assert response.status_code == 200
+
+    async def test_valid_answer_enqueues_resume(self, client):
+        """Valid answer passes validation, enqueues resume task, and updates session to QUEUED."""
+        api_client, workflow = client
+        session = await self._create_interrupted_session(
+            workflow, SINGLE_CHOICE_INTERRUPT, "valid-ans-thread"
         )
 
-        # Mock agent to return completed response (used by the task)
-        mock_agent = AsyncMock()
-        mock_agent.ainvoke.return_value = {
-            "messages": [
-                MagicMock(content="I'll set up ProtonMail integration.")
-            ]
-        }
-
-        # Capture task arguments
-        captured_task_args = {}
+        checkpointer = _mock_checkpointer_with_interrupt(SINGLE_CHOICE_INTERRUPT)
+        mock_task_result = MagicMock()
+        mock_task_result.task_id = "mock-task-id"
+        captured_args = {}
 
         async def capture_kiq(**kwargs):
-            captured_task_args.update(kwargs)
+            captured_args.update(kwargs)
             return mock_task_result
 
-        with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=mock_checkpointer), \
-             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task, \
-             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
-             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
-             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
-
+        with (
+            patch("seer.api.agents.workflow.router.get_checkpointer", return_value=checkpointer),
+            patch("seer.worker.tasks.chat.chat_resume_task") as mock_resume_task,
+            patch("seer.api.agents.workflow.router.get_stream_watermark", new_callable=AsyncMock, return_value="0"),
+            patch("seer.agents.nexus.stream_publisher.StreamPublisher") as mock_publisher_cls,
+            patch("seer.api.agents.workflow.router.stream_events_sse", new=_empty_sse),
+        ):
             mock_publisher_cls.return_value = AsyncMock()
             mock_resume_task.kiq = AsyncMock(side_effect=capture_kiq)
 
-            # Resume with wildcard and custom input (batch format)
-            response = await client.post(
+            response = await api_client.post(
                 f"/nexus/{workflow.workflow_id}/chat/resume",
                 json={
-                    "thread_id": thread_id,
-                    "answers": {
-                        "answers": [
-                            {
-                                "question_id": "q_test123",
-                                "selected_values": ["other"],
-                                "custom_input": "ProtonMail"
-                            }
-                        ]
-                    }
-                }
-            )
-
-            assert response.status_code == 200
-
-        # Simulate background task execution
-        mock_agent.astream_events = _empty_astream_events
-        mock_agent.aget_state = AsyncMock(return_value=_make_completed_state())
-
-        with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer', return_value=mock_checkpointer), \
-             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
-             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
-
-            mock_task_publisher.return_value = AsyncMock()
-
-            from seer.worker.tasks.chat import chat_resume_task
-            await chat_resume_task(
-                session_id=session.id,
-                user_id=workflow.user_id,
-                thread_id=thread_id,
-                resume_command_data=captured_task_args["resume_command_data"],
-                workflow_id=workflow.id,
-            )
-
-        # Verify session completed
-        await session.refresh_from_db()
-        assert session.current_execution_status == ChatExecutionStatus.COMPLETED
-
-    async def test_multi_choice_question(
-        self,
-        workflow_client,
-        mock_task_result
-    ):
-        """Test multi-choice clarification question via async task."""
-        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel
-
-        client, workflow = workflow_client
-
-        # Use batch format with multi-choice question
-        interrupt_data = {
-            "type": "clarification_questions",
-            "questions": [
-                {
-                    "question_id": "q_multi123",
-                    "question": "Which integrations to enable?",
-                    "question_type": "multi_choice",
-                    "options": [
-                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                        {"value": "slack", "label": "Slack", "is_wildcard": False},
-                        {"value": "github", "label": "GitHub", "is_wildcard": False},
-                    ],
-                    "min_selections": 1,
-                    "max_selections": 3,
-                    "reasoning": "User wants multiple integrations"
-                }
-            ]
-        }
-
-        # Mock agent to return multi-choice interrupt (used by the task)
-        mock_agent = AsyncMock()
-        mock_agent.ainvoke.return_value = {
-            "messages": [
-                MagicMock(content="Which integrations?")
-            ],
-            "__interrupt__": [interrupt_data]
-        }
-
-        # Capture task arguments
-        captured_task_args = {}
-
-        async def capture_kiq(**kwargs):
-            captured_task_args.update(kwargs)
-            return mock_task_result
-
-        with patch('seer.api.agents.workflow.router.get_checkpointer') as mock_get_checkpointer, \
-             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task, \
-             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
-             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
-             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
-
-            mock_publisher_cls.return_value = AsyncMock()
-            mock_get_checkpointer.return_value = AsyncMock()
-            mock_chat_task.kiq = AsyncMock(side_effect=capture_kiq)
-
-            # Send chat message (async_mode=True by default)
-            response = await client.post(
-                f"/nexus/{workflow.workflow_id}/chat",
-                json={
-                    "message": "Enable integrations"
-                }
-            )
-
-            assert response.status_code == 200
-            session_id = captured_task_args["session_id"]
-
-        # Simulate background task execution
-        mock_agent.astream_events = _empty_astream_events
-        mock_agent.aget_state = AsyncMock(return_value=_make_interrupt_state(interrupt_data))
-
-        with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer') as mock_task_checkpointer, \
-             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
-             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
-
-            mock_task_checkpointer.return_value = AsyncMock()
-            mock_task_publisher.return_value = AsyncMock()
-
-            from seer.worker.tasks.chat import chat_execution_task
-            await chat_execution_task(
-                session_id=session_id,
-                user_id=workflow.user_id,
-                message="Enable integrations",
-                workflow_id=workflow.id,
-            )
-
-        # Verify session has multi-choice interrupt
-        session = await WorkflowChatSession.get(id=session_id)
-        assert session.current_execution_status == ChatExecutionStatus.INTERRUPTED
-        assert session.pending_interrupt_type == "clarification_questions"
-
-        # Verify multi-choice question in interrupt data
-        stored_interrupt = session.pending_interrupt_data
-        assert stored_interrupt is not None
-        questions = stored_interrupt.get("questions", [])
-        assert len(questions) == 1
-        assert questions[0].get("question_type") == "multi_choice"
-
-    async def test_multiple_questions_at_once(
-        self,
-        workflow_client,
-        mock_task_result
-    ):
-        """Test asking multiple questions at once (batch mode)."""
-        from seer.database.workflow_models import WorkflowChatSession, ChatExecutionStatus  # pylint: disable=import-outside-toplevel
-
-        client, workflow = workflow_client
-
-        # Batch format with multiple questions
-        interrupt_data = {
-            "type": "clarification_questions",
-            "questions": [
-                {
-                    "question_id": "q_email",
-                    "question": "Which email provider?",
-                    "question_type": "single_choice",
-                    "options": [
-                        {"value": "gmail", "label": "Gmail", "is_wildcard": False},
-                        {"value": "outlook", "label": "Outlook", "is_wildcard": False},
-                    ],
-                    "min_selections": 1,
-                    "max_selections": None,
-                    "reasoning": "Need email config"
-                },
-                {
-                    "question_id": "q_notify",
-                    "question": "Which notification channels?",
-                    "question_type": "multi_choice",
-                    "options": [
-                        {"value": "slack", "label": "Slack", "is_wildcard": False},
-                        {"value": "email", "label": "Email", "is_wildcard": False},
-                    ],
-                    "min_selections": 1,
-                    "max_selections": 2,
-                    "reasoning": "Need notification config"
-                }
-            ]
-        }
-
-        # Mock agent to return batch interrupt
-        mock_agent = AsyncMock()
-        mock_agent.ainvoke.return_value = {
-            "messages": [
-                MagicMock(content="I have a couple of questions.")
-            ],
-            "__interrupt__": [interrupt_data]
-        }
-
-        captured_task_args = {}
-
-        async def capture_kiq(**kwargs):
-            captured_task_args.update(kwargs)
-            return mock_task_result
-
-        with patch('seer.api.agents.workflow.router.get_checkpointer') as mock_get_checkpointer, \
-             patch('seer.worker.tasks.chat.chat_execution_task') as mock_chat_task, \
-             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
-             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls, \
-             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
-
-            mock_publisher_cls.return_value = AsyncMock()
-            mock_get_checkpointer.return_value = AsyncMock()
-            mock_chat_task.kiq = AsyncMock(side_effect=capture_kiq)
-
-            response = await client.post(
-                f"/nexus/{workflow.workflow_id}/chat",
-                json={
-                    "message": "Set up email and notifications"
-                }
-            )
-
-            assert response.status_code == 200
-            session_id = captured_task_args["session_id"]
-
-        # Simulate task execution
-        mock_agent.astream_events = _empty_astream_events
-        mock_agent.aget_state = AsyncMock(return_value=_make_interrupt_state(interrupt_data))
-
-        with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer') as mock_task_checkpointer, \
-             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
-             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
-
-            mock_task_checkpointer.return_value = AsyncMock()
-            mock_task_publisher.return_value = AsyncMock()
-
-            from seer.worker.tasks.chat import chat_execution_task
-            await chat_execution_task(
-                session_id=session_id,
-                user_id=workflow.user_id,
-                message="Set up email and notifications",
-                workflow_id=workflow.id,
-            )
-
-        # Verify session has batch questions
-        session = await WorkflowChatSession.get(id=session_id)
-        assert session.current_execution_status == ChatExecutionStatus.INTERRUPTED
-        assert session.pending_interrupt_type == "clarification_questions"
-
-        questions = session.pending_interrupt_data.get("questions", [])
-        assert len(questions) == 2
-        assert questions[0]["question_id"] == "q_email"
-        assert questions[1]["question_id"] == "q_notify"
-
-        # Now test resuming with batch answers
-        mock_checkpointer = AsyncMock()
-        mock_checkpointer.aget_tuple.return_value = MagicMock(
-            checkpoint={
-                "channel_values": {
-                    "__interrupt__": [interrupt_data]
-                }
-            }
-        )
-
-        mock_agent.ainvoke.return_value = {
-            "messages": [
-                MagicMock(content="Great! Setting up Gmail and Slack notifications.")
-            ]
-        }
-
-        async def capture_resume_kiq(**kwargs):
-            captured_task_args.clear()
-            captured_task_args.update(kwargs)
-            return mock_task_result
-
-        with patch('seer.api.agents.workflow.router.get_checkpointer', return_value=mock_checkpointer), \
-             patch('seer.worker.tasks.chat.chat_resume_task') as mock_resume_task, \
-             patch('seer.api.agents.workflow.router.get_stream_watermark', new_callable=AsyncMock, return_value="0"), \
-             patch('seer.agents.nexus.stream_publisher.StreamPublisher') as mock_publisher_cls_resume, \
-             patch('seer.api.agents.workflow.router.stream_events_sse', new=_empty_sse):
-
-            mock_publisher_cls_resume.return_value = AsyncMock()
-            mock_resume_task.kiq = AsyncMock(side_effect=capture_resume_kiq)
-
-            response = await client.post(
-                f"/nexus/{workflow.workflow_id}/chat/resume",
-                json={
-                    "thread_id": session.thread_id,
+                    "thread_id": "valid-ans-thread",
                     "answers": {
                         "answers": [
                             {
                                 "question_id": "q_email",
                                 "selected_values": ["gmail"],
-                                "custom_input": None
-                            },
-                            {
-                                "question_id": "q_notify",
-                                "selected_values": ["slack"],
-                                "custom_input": None
+                                "custom_input": None,
                             }
                         ]
-                    }
-                }
+                    },
+                },
             )
 
-            assert response.status_code == 200
+        assert response.status_code == 200
 
-        # Simulate resume task
-        mock_agent.astream_events = _empty_astream_events
-        mock_agent.aget_state = AsyncMock(return_value=_make_completed_state())
+        # Verify resume task enqueued with correct data
+        assert captured_args["thread_id"] == "valid-ans-thread"
+        assert captured_args["resume_command_data"] == [
+            {"question_id": "q_email", "selected_values": ["gmail"], "custom_input": None}
+        ]
 
-        with patch('seer.worker.tasks.chat.create_nexus_chat_agent', return_value=mock_agent), \
-             patch('seer.worker.tasks.chat.get_checkpointer', return_value=mock_checkpointer), \
-             patch('seer.worker.tasks.chat.StreamPublisher') as mock_task_publisher, \
-             patch('seer.api.agents.checkpointer.get_checkpointer_with_retry', new_callable=AsyncMock, return_value=None):
+        # Session should be QUEUED (ready for task execution)
+        await session.refresh_from_db()
+        assert session.current_execution_status == ChatExecutionStatus.QUEUED
+        assert session.pending_interrupt_type is None
+        assert session.pending_interrupt_data is None
 
-            mock_task_publisher.return_value = AsyncMock()
+    async def test_free_text_resume_builds_correct_command(self, client):
+        """Free-text reply during interrupt builds correct resume command data."""
+        api_client, workflow = client
+        await self._create_interrupted_session(
+            workflow, SINGLE_CHOICE_INTERRUPT, "free-text-thread"
+        )
 
-            from seer.worker.tasks.chat import chat_resume_task
-            await chat_resume_task(
-                session_id=session.id,
-                user_id=workflow.user_id,
-                thread_id=session.thread_id,
-                resume_command_data=captured_task_args["resume_command_data"],
-                workflow_id=workflow.id,
+        mock_task_result = MagicMock()
+        mock_task_result.task_id = "mock-task-id"
+        captured_args = {}
+
+        async def capture_kiq(**kwargs):
+            captured_args.update(kwargs)
+            return mock_task_result
+
+        with (
+            patch("seer.api.agents.workflow.router.get_checkpointer", return_value=AsyncMock()),
+            patch("seer.worker.tasks.chat.chat_resume_task") as mock_resume_task,
+            patch("seer.api.agents.workflow.router.get_stream_watermark", new_callable=AsyncMock, return_value="0"),
+            patch("seer.agents.nexus.stream_publisher.StreamPublisher") as mock_publisher_cls,
+            patch("seer.api.agents.workflow.router.stream_events_sse", new=_empty_sse),
+        ):
+            mock_publisher_cls.return_value = AsyncMock()
+            mock_resume_task.kiq = AsyncMock(side_effect=capture_kiq)
+
+            response = await api_client.post(
+                f"/nexus/{workflow.workflow_id}/chat/resume",
+                json={
+                    "thread_id": "free-text-thread",
+                    "message": "Use Gmail for invoices from finance@example.com.",
+                },
             )
+
+        assert response.status_code == 200
+        assert captured_args["resume_command_data"] == {
+            "type": "free_text_response",
+            "message": "Use Gmail for invoices from finance@example.com.",
+            "source": "chat_resume_message",
+        }
+
+    async def test_batch_answers_all_validated(self, client):
+        """Multiple questions require all answers present and valid."""
+        api_client, workflow = client
+        await self._create_interrupted_session(
+            workflow, BATCH_INTERRUPT, "batch-ans-thread"
+        )
+
+        checkpointer = _mock_checkpointer_with_interrupt(BATCH_INTERRUPT)
+        mock_task_result = MagicMock()
+        mock_task_result.task_id = "mock-task-id"
+        captured_args = {}
+
+        async def capture_kiq(**kwargs):
+            captured_args.update(kwargs)
+            return mock_task_result
+
+        with (
+            patch("seer.api.agents.workflow.router.get_checkpointer", return_value=checkpointer),
+            patch("seer.worker.tasks.chat.chat_resume_task") as mock_resume_task,
+            patch("seer.api.agents.workflow.router.get_stream_watermark", new_callable=AsyncMock, return_value="0"),
+            patch("seer.agents.nexus.stream_publisher.StreamPublisher") as mock_publisher_cls,
+            patch("seer.api.agents.workflow.router.stream_events_sse", new=_empty_sse),
+        ):
+            mock_publisher_cls.return_value = AsyncMock()
+            mock_resume_task.kiq = AsyncMock(side_effect=capture_kiq)
+
+            response = await api_client.post(
+                f"/nexus/{workflow.workflow_id}/chat/resume",
+                json={
+                    "thread_id": "batch-ans-thread",
+                    "answers": {
+                        "answers": [
+                            {"question_id": "q_email", "selected_values": ["gmail"], "custom_input": None},
+                            {"question_id": "q_notify", "selected_values": ["slack"], "custom_input": None},
+                        ]
+                    },
+                },
+            )
+
+        assert response.status_code == 200
+        assert len(captured_args["resume_command_data"]) == 2
+        assert captured_args["resume_command_data"][0]["question_id"] == "q_email"
+        assert captured_args["resume_command_data"][1]["question_id"] == "q_notify"
+
+
+# =============================================================================
+# Interrupt Handling — _handle_agent_result with Real DB
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestClarificationInterruptHandling:
+    """Tests interrupt detection and session state updates with real DB.
+
+    Calls _handle_agent_result directly — this is the function that
+    inspects the agent's return value and updates the session in the database.
+    No router, no HTTP client, no Redis — just real DB and real logic.
+    """
+
+    async def _create_running_session(self, workflow, thread_id="int-thread"):
+        """Create a session in RUNNING state (as it would be during task execution)."""
+        return await WorkflowChatSession.create(
+            workflow=workflow,
+            user=workflow.user,
+            thread_id=thread_id,
+            title="Running Session",
+            current_execution_status=ChatExecutionStatus.RUNNING,
+            current_execution_task_id="task-123",
+        )
+
+    async def test_interrupt_detected_sets_session_interrupted(self, db_engine, test_workflow):
+        """Agent result with __interrupt__ sets session to INTERRUPTED with correct data."""
+        from seer.worker.tasks.chat import _handle_agent_result  # pylint: disable=import-outside-toplevel
+
+        session = await self._create_running_session(test_workflow)
+
+        # Simulate agent result with interrupt — this is what LangGraph returns
+        # when the agent calls interrupt()
+        result = {
+            "messages": [MagicMock(content="I need to know which email provider to use.")],
+            "__interrupt__": [SINGLE_CHOICE_INTERRUPT],
+        }
+
+        await _handle_agent_result(session, result, session.thread_id, session.id)
+
+        # Verify real DB state
+        await session.refresh_from_db()
+        assert session.current_execution_status == ChatExecutionStatus.INTERRUPTED
+        assert session.pending_interrupt_type == "clarification_questions"
+        assert session.pending_interrupt_data is not None
+        assert session.current_execution_task_id is None
+
+        # Verify stored question data matches
+        questions = session.pending_interrupt_data.get("questions", [])
+        assert len(questions) == 1
+        assert questions[0]["question_id"] == "q_email"
+        assert questions[0]["question_type"] == "single_choice"
+        assert len(questions[0]["options"]) == 3
+
+    async def test_multi_choice_interrupt_stored_correctly(self, db_engine, test_workflow):
+        """Multi-choice interrupt stores the correct question type and options."""
+        from seer.worker.tasks.chat import _handle_agent_result  # pylint: disable=import-outside-toplevel
+
+        session = await self._create_running_session(test_workflow, "multi-int-thread")
+
+        result = {
+            "messages": [MagicMock(content="Which integrations?")],
+            "__interrupt__": [MULTI_CHOICE_INTERRUPT],
+        }
+
+        await _handle_agent_result(session, result, session.thread_id, session.id)
+
+        await session.refresh_from_db()
+        assert session.current_execution_status == ChatExecutionStatus.INTERRUPTED
+        questions = session.pending_interrupt_data["questions"]
+        assert questions[0]["question_type"] == "multi_choice"
+        assert len(questions[0]["options"]) == 3
+
+    async def test_batch_interrupt_stores_multiple_questions(self, db_engine, test_workflow):
+        """Batch interrupt with multiple questions stores all of them."""
+        from seer.worker.tasks.chat import _handle_agent_result  # pylint: disable=import-outside-toplevel
+
+        session = await self._create_running_session(test_workflow, "batch-int-thread")
+
+        result = {
+            "messages": [MagicMock(content="I have a couple of questions.")],
+            "__interrupt__": [BATCH_INTERRUPT],
+        }
+
+        await _handle_agent_result(session, result, session.thread_id, session.id)
+
+        await session.refresh_from_db()
+        assert session.current_execution_status == ChatExecutionStatus.INTERRUPTED
+        questions = session.pending_interrupt_data["questions"]
+        assert len(questions) == 2
+        assert questions[0]["question_id"] == "q_email"
+        assert questions[1]["question_id"] == "q_notify"
+
+    async def test_no_interrupt_completes_session(self, db_engine, test_workflow):
+        """Agent result without __interrupt__ sets session to COMPLETED."""
+        from seer.worker.tasks.chat import _handle_agent_result  # pylint: disable=import-outside-toplevel
+
+        session = await self._create_running_session(test_workflow, "complete-thread")
+
+        result = {
+            "messages": [MagicMock(content="Done! I've set up the email integration.")],
+        }
+
+        with patch(
+            "seer.worker.tasks.chat.extract_session_memories",
+            new=MagicMock(kiq=AsyncMock()),
+        ):
+            await _handle_agent_result(session, result, session.thread_id, session.id)
 
         await session.refresh_from_db()
         assert session.current_execution_status == ChatExecutionStatus.COMPLETED
+        assert session.pending_interrupt_type is None
+        assert session.pending_interrupt_data is None
+        assert session.current_execution_task_id is None
+
+
+# =============================================================================
+# InterruptHandler Unit Logic (Pure — No DB, No Mocks)
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestInterruptHandlerExtraction:
+    """Tests InterruptHandler.extract_interrupt_from_result — pure logic."""
+
+    def _extract(self, result):
+        from seer.api.agents.workflow.chat_services import InterruptHandler  # pylint: disable=import-outside-toplevel
+        return InterruptHandler.extract_interrupt_from_result(result)
+
+    def test_dict_interrupt_detected(self):
+        """__interrupt__ with dict list is detected correctly."""
+        result = {"messages": [], "__interrupt__": [SINGLE_CHOICE_INTERRUPT]}
+        found, data = self._extract(result)
+        assert found is True
+        assert data["type"] == "clarification_questions"
+
+    def test_no_interrupt_returns_false(self):
+        """Result without __interrupt__ returns (False, None)."""
+        result = {"messages": [MagicMock(content="done")]}
+        found, data = self._extract(result)
+        assert found is False
+        assert data is None
+
+    def test_empty_interrupt_list_still_detected(self):
+        """Empty __interrupt__ list is still treated as truthy by the handler.
+
+        This is the actual behavior — the handler stringifies the empty list.
+        A production fix could make this return (False, None) instead.
+        """
+        result = {"messages": [], "__interrupt__": []}
+        found, data = self._extract(result)
+        # Current behavior: empty list still triggers interrupt detection
+        # because the code falls through to the `else` branch
+        assert found is True
+        assert data == {"value": "[]"}
+
+    def test_interrupt_with_value_attribute(self):
+        """LangGraph Interrupt objects with .value attribute are unwrapped."""
+        mock_interrupt = MagicMock()
+        mock_interrupt.value = SINGLE_CHOICE_INTERRUPT
+        result = {"messages": [], "__interrupt__": [mock_interrupt]}
+        found, data = self._extract(result)
+        assert found is True
+        assert data["type"] == "clarification_questions"
+
+    def test_non_dict_result_returns_false(self):
+        """Non-dict result returns (False, None)."""
+        found, data = self._extract("not a dict")
+        assert found is False
+        assert data is None
