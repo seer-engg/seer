@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from tortoise.expressions import Q
 
-from seer.core.config import config  # pylint: disable=no-name-in-module  # config is a module-level singleton
+from seer.config import config
 from seer.database.profile_models import UserProfile, validate_username
 from seer.database.template_models import TemplateSource, WorkflowTemplate
 
