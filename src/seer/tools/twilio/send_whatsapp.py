@@ -82,6 +82,12 @@ class TwilioSendWhatsAppTool(TwilioAPIClient):
             wa_from = _cfg.twilio_whatsapp_from_number
         if wa_from:
             from_number = wa_from
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="twilio_send_whatsapp: No WhatsApp from-number configured. "
+                       "Set twilio_whatsapp_from_number in your Twilio integration or app config.",
+            )
 
         # Strip whatsapp: prefix if caller already included it
         to_clean = to_number.removeprefix("whatsapp:")
