@@ -239,7 +239,7 @@ async def generate_template_description(user: User, workflow_id: str) -> Generat
     )
 
     try:
-        llm = get_llm(model="moonshotai/kimi-k2.5", temperature=0.3)
+        llm = get_llm(model="qwen/qwen3-30b-a3b", temperature=0.3)
         response = await llm.ainvoke([
             SystemMessage(content=_TEMPLATE_GEN_SYSTEM_PROMPT),
             HumanMessage(content=user_prompt),

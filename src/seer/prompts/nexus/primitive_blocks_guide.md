@@ -355,6 +355,7 @@ ForEach nodes use two edge types:
 | `text` | Free-form text input | No |
 | `number` | Numeric input | No |
 | `boolean` | Yes/No toggle | No |
+| `table` | Batch review with per-row inputs | No (uses `columns`) |
 
 **Input Field Schema:**
 ```json
@@ -371,6 +372,42 @@ ForEach nodes use two edge types:
   "default_value": "yes"
 }
 ```
+
+**Table Input Field Schema:**
+```json
+{
+  "id": "review_items",
+  "question": "Review each item below:",
+  "input_type": "table",
+  "row_data_expression": "${fetch_items.body.results}",
+  "row_display_fields": [
+    {"label": "Title", "value": "${row.title}"},
+    {"label": "Author", "value": "${row.author}"}
+  ],
+  "columns": [
+    {
+      "id": "rating",
+      "header": "Rating",
+      "input_type": "single_choice",
+      "options": [
+        {"value": "good", "label": "Good"},
+        {"value": "bad", "label": "Bad"}
+      ]
+    },
+    {
+      "id": "notes",
+      "header": "Notes",
+      "input_type": "text",
+      "required": false
+    }
+  ],
+  "required": true
+}
+```
+- `row_data_expression`: Expression resolving to an array from workflow state (e.g., HTTP response body)
+- `row_display_fields`: Read-only columns shown per row, evaluated with `${row.*}` context
+- `columns`: Editable input columns per row (same types as regular inputs, except no nested `table`)
+- Response shape: `{"review_items": [{"rating": "good", "notes": "..."}, ...]}` — one object per row
 
 **Delivery Channels:**
 - `platform`: Default web-based form (user polls `/runs/{id}/interrupt`)
@@ -429,11 +466,51 @@ ForEach nodes use two edge types:
 }
 ```
 
+**Example - Batch Review from API:**
+```json
+{
+  "id": "review_highlights",
+  "type": "hitl",
+  "title": "Review Readwise Highlights",
+  "description": "Rate each highlight and add notes",
+  "inputs": [
+    {
+      "id": "reviews",
+      "question": "Review each highlight:",
+      "input_type": "table",
+      "row_data_expression": "${fetch_highlights.body.results}",
+      "row_display_fields": [
+        {"label": "Text", "value": "${row.text}"},
+        {"label": "Book", "value": "${row.book_title}"}
+      ],
+      "columns": [
+        {
+          "id": "action",
+          "header": "Action",
+          "input_type": "single_choice",
+          "options": [
+            {"value": "keep", "label": "Keep"},
+            {"value": "discard", "label": "Discard"}
+          ]
+        },
+        {
+          "id": "tags",
+          "header": "Tags",
+          "input_type": "text",
+          "required": false
+        }
+      ]
+    }
+  ]
+}
+```
+
 **Common Use Cases:**
 - Approval workflows (expense, content, access requests)
 - Data verification/correction
 - Manual decision points
 - Quality assurance checkpoints
+- Batch review of items from API responses (e.g., highlights, tickets, records)
 
 ---
 

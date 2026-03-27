@@ -201,9 +201,10 @@ def test_build_type_environment_minimal():
     env = build_type_environment(spec, schema_registry=schema_registry, tool_registry=tool_registry)
 
     assert isinstance(env, TypeEnvironment)
-    # 'vars' is always registered for global variable support
-    assert len(env.as_dict()) == 1
+    # 'vars' and 'variables' (alias) are always registered for global variable support
+    assert len(env.as_dict()) == 2
     assert "vars" in env.as_dict()
+    assert "variables" in env.as_dict()
 
 
 def test_build_type_environment_with_trigger():

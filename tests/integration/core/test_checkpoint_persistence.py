@@ -7,8 +7,9 @@ Tests:
 - Thread ID consistency for checkpoint retrieval
 - Checkpointer lifecycle management
 
-Note: These tests mock the PostgreSQL checkpointer since integration tests
-use SQLite. Full PostgreSQL checkpointing is tested in e2e tests.
+Note: These tests mock the PostgreSQL checkpointer since the LangGraph
+AsyncPostgresSaver requires its own connection pool separate from Tortoise.
+Full PostgreSQL checkpointing is tested in e2e tests.
 """
 import hashlib
 import json

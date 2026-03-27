@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from tortoise.expressions import Q
 
+from seer.config import config
 from seer.database.profile_models import UserProfile, validate_username
 from seer.database.template_models import TemplateSource, WorkflowTemplate
 
@@ -130,12 +131,23 @@ async def _template_count_for_profile(profile: UserProfile) -> int:
     ).count()
 
 
+async def _resolve_public_avatar(profile: UserProfile) -> str | None:
+    """Resolve avatar_file_id to a presigned URL, falling back to avatar_url."""
+    if profile.avatar_file_id and config.is_workflow_file_system_configured:
+        from seer.api.users.profile import _resolve_avatar_url  # pylint: disable=import-outside-toplevel  # Avoid circular imports
+
+        resolved = await _resolve_avatar_url(profile.avatar_file_id)
+        if resolved:
+            return resolved
+    return profile.avatar_url
+
+
 async def _creator_summary(profile: UserProfile) -> PublicCreatorSummary:
     return PublicCreatorSummary(
         username=profile.username,
         display_name=profile.display_name,
         bio=profile.bio,
-        avatar_url=profile.avatar_url,
+        avatar_url=await _resolve_public_avatar(profile),
         tags=profile.tags or [],
         template_count=await _template_count_for_profile(profile),
     )
@@ -220,7 +232,7 @@ async def get_creator(username: str) -> PublicCreatorDetail:
         username=profile.username,
         display_name=profile.display_name,
         bio=profile.bio,
-        avatar_url=profile.avatar_url,
+        avatar_url=await _resolve_public_avatar(profile),
         tags=profile.tags or [],
         template_count=len(template_summaries),
         social_links=profile.social_links or {},

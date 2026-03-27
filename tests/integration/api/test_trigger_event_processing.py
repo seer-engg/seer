@@ -461,8 +461,8 @@ async def test_event_deduplication_by_provider_id(db_engine, test_workflow):
     """
     Test event deduplication logic using provider_event_id.
 
-    Note: SQLite in-memory may not enforce unique_together constraints.
-    This test verifies the deduplication pattern used in the application layer.
+    Verifies that the unique_together constraint on TriggerEvent prevents
+    duplicate events with the same provider_event_id from being persisted.
     """
     subscription = await TriggerSubscription.create(
         user=test_workflow.user,
