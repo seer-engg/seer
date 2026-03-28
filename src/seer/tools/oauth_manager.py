@@ -115,10 +115,11 @@ async def get_oauth_token(
     from tortoise.expressions import Q  # pylint: disable=import-outside-toplevel  # Reason: avoid import overhead when not needed
 
     if connection_id:
-        if ":" in connection_id:
-            _, db_id = connection_id.split(":", 1)
+        connection_id_str = str(connection_id)
+        if ":" in connection_id_str:
+            _, db_id = connection_id_str.split(":", 1)
         else:
-            db_id = connection_id
+            db_id = connection_id_str
 
         # Build query for user's connection OR organization-shared connection
         query = Q(id=int(db_id), status="active")
