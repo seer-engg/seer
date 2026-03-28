@@ -5,6 +5,12 @@ on:
     branches:
       - main
       - dev
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'migrations/**'
 
   workflow_dispatch:
     inputs:
@@ -15,6 +21,10 @@ on:
         options:
           - dev
           - main
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -30,7 +40,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       # ----------------------------------------------------------------
       # LOGIC STEP: Determine which environment we are deploying to
@@ -51,21 +61,17 @@ jobs:
           fi
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@v3
         with:
-          python-version: '3.12'
-
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          python-version: "3.12"
+          enable-cache: true
 
       - name: Run database migrations
         env:
@@ -103,14 +109,3 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER }} \
             --service ${{ env.ECS_WORKER_SERVICE }} \
             --force-new-deployment
-
-
-      # - name: Wait for ECS services to be stable
-      #   run: |
-      #     aws ecs wait services-stable \
-      #       --cluster ${{ env.ECS_CLUSTER }} \
-      #       --services ${{ env.ECS_API_SERVICE }}
-
-      #     aws ecs wait services-stable \
-      #       --cluster ${{ env.ECS_CLUSTER }} \
-      #       --services ${{ env.ECS_WORKER_SERVICE }}
