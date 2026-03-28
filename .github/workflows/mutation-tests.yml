@@ -22,6 +22,10 @@ on:
           - 'type_env'
           - 'validate_refs'
 
+concurrency:
+  group: mutation-tests
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
