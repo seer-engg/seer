@@ -69,7 +69,7 @@ class WorkflowRuntimeResources:
 
 
 @dataclass
-class WorkflowRuntimeContext:  # pylint: disable=too-many-instance-attributes  # Reason: each attribute is a distinct runtime concern (user, run id, thread, org, memory, mcp, budget, resources)
+class WorkflowRuntimeContext:  # pylint: disable=too-many-instance-attributes  # Reason: each attribute is a distinct runtime concern (user, run id, thread, org, memory, mcp, budget, resources, byok)
     """
     Carries runtime-scoped data that needs to be accessible to LangGraph
     nodes and tool handlers. Extend this as new fields are required.
@@ -93,6 +93,8 @@ class WorkflowRuntimeContext:  # pylint: disable=too-many-instance-attributes  #
 
     # Private field for lazy-loaded runtime resources
     _resources: WorkflowRuntimeResources = field(default_factory=WorkflowRuntimeResources, repr=False)
+    byok_api_key: str | None = None
+    byok_base_url: str | None = None
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments  # Reason: preserve existing constructor contract while storing budget internally
         self,
@@ -104,6 +106,8 @@ class WorkflowRuntimeContext:  # pylint: disable=too-many-instance-attributes  #
         organization_id: int | None = None,
         memory_access: WorkflowMemoryAccess | None = None,
         mcp_config_resolver: McpServerConfigResolver | None = None,
+        byok_api_key: str | None = None,
+        byok_base_url: str | None = None,
     ) -> None:
         self.user = user
         self.workflow_run_id = workflow_run_id
@@ -111,6 +115,8 @@ class WorkflowRuntimeContext:  # pylint: disable=too-many-instance-attributes  #
         self.organization_id = organization_id
         self.memory_access = memory_access
         self.mcp_config_resolver = mcp_config_resolver
+        self.byok_api_key = byok_api_key
+        self.byok_base_url = byok_base_url
         self.budget = WorkflowRunBudget(
             per_run_cost_cap_usd=per_run_cost_cap_usd,
             accumulated_cost_usd=accumulated_cost_usd,

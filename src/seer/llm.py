@@ -89,6 +89,23 @@ def get_llm(
     raise ValueError(f"Unsupported provider for model: {model}")
 
 
+def get_llm_for_byok(
+    model: str,
+    temperature: float,
+    api_key: str,
+    base_url: str = "https://openrouter.ai/api/v1",
+) -> BaseChatModel:
+    """Create an LLM using user-provided BYOK credentials."""
+    logger.info("🔑 BYOK LLM | Model: %s | Base URL: %s", model, base_url)
+    return ChatOpenAI(
+        model=model,
+        temperature=temperature,
+        api_key=api_key,
+        base_url=base_url,
+        use_responses_api=False,
+    )
+
+
 async def get_agent_final_respone(result: dict) -> str:
     """
     Get the final response from the agent. response is in the format of the responses API
