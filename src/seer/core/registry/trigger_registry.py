@@ -546,6 +546,7 @@ def _google_calendar_event_changed_payload_schema() -> JsonSchema:
                 "properties": {
                     "datetime": {"type": ["string", "null"], "description": "Start time (RFC3339 or date)"},
                     "timezone": {"type": ["string", "null"], "description": "IANA timezone"},
+                    "time_12h": {"type": ["string", "null"], "description": "Start time in 12-hour format (e.g. '7:30 PM')"},
                 },
             },
             "end": {
@@ -554,6 +555,7 @@ def _google_calendar_event_changed_payload_schema() -> JsonSchema:
                 "properties": {
                     "datetime": {"type": ["string", "null"], "description": "End time (RFC3339 or date)"},
                     "timezone": {"type": ["string", "null"], "description": "IANA timezone"},
+                    "time_12h": {"type": ["string", "null"], "description": "End time in 12-hour format (e.g. '7:30 PM')"},
                 },
             },
             "organizer": {
@@ -627,8 +629,8 @@ def _google_calendar_event_changed_sample_event() -> Dict[str, Any]:
         "location": "Conference Room A",
         "status": "confirmed",
         "html_link": "https://www.google.com/calendar/event?eid=abc123",
-        "start": {"datetime": "2026-01-15T10:00:00-05:00", "timezone": "America/New_York"},
-        "end": {"datetime": "2026-01-15T11:00:00-05:00", "timezone": "America/New_York"},
+        "start": {"datetime": "2026-01-15T10:00:00-05:00", "timezone": "America/New_York", "time_12h": "10:00 AM"},
+        "end": {"datetime": "2026-01-15T11:00:00-05:00", "timezone": "America/New_York", "time_12h": "11:00 AM"},
         "organizer": {"email": "organizer@example.com", "display_name": "Jane Doe", "self": False},
         "attendees": [
             {"email": "attendee@example.com", "display_name": "John Smith", "response_status": "accepted", "optional": False, "self": True},
@@ -679,6 +681,7 @@ def _google_calendar_event_start_payload_schema() -> JsonSchema:
                 "properties": {
                     "datetime": {"type": ["string", "null"], "description": "Start time (RFC3339 or date)"},
                     "timezone": {"type": ["string", "null"], "description": "IANA timezone"},
+                    "time_12h": {"type": ["string", "null"], "description": "Start time in 12-hour format (e.g. '7:30 PM')"},
                 },
             },
             "end": {
@@ -687,6 +690,7 @@ def _google_calendar_event_start_payload_schema() -> JsonSchema:
                 "properties": {
                     "datetime": {"type": ["string", "null"], "description": "End time (RFC3339 or date)"},
                     "timezone": {"type": ["string", "null"], "description": "IANA timezone"},
+                    "time_12h": {"type": ["string", "null"], "description": "End time in 12-hour format (e.g. '7:30 PM')"},
                 },
             },
             "organizer": {
@@ -776,8 +780,8 @@ def _google_calendar_event_start_sample_event() -> Dict[str, Any]:
         "location": "Conference Room A",
         "status": "confirmed",
         "html_link": "https://www.google.com/calendar/event?eid=abc123",
-        "start": {"datetime": "2026-01-15T10:00:00-05:00", "timezone": "America/New_York"},
-        "end": {"datetime": "2026-01-15T11:00:00-05:00", "timezone": "America/New_York"},
+        "start": {"datetime": "2026-01-15T10:00:00-05:00", "timezone": "America/New_York", "time_12h": "10:00 AM"},
+        "end": {"datetime": "2026-01-15T11:00:00-05:00", "timezone": "America/New_York", "time_12h": "11:00 AM"},
         "organizer": {"email": "organizer@example.com", "display_name": "Jane Doe", "self": False},
         "attendees": [
             {"email": "attendee@example.com", "display_name": "John Smith", "response_status": "accepted", "optional": False, "self": True},
