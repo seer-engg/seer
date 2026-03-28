@@ -362,6 +362,10 @@ class HITLInterruptInputField(BaseModel):
     required: bool = True
     placeholder: Optional[str] = None
     default_value: Optional[Any] = None
+    columns: Optional[List[Dict[str, Any]]] = None
+    rows: Optional[List[Dict[str, Any]]] = None
+    row_data_expression: Optional[str] = None
+    row_display_fields: Optional[List[Dict[str, Any]]] = None
 
 
 class HITLInterruptResponse(BaseModel):
