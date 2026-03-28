@@ -1,6 +1,10 @@
 # Seer Backend Server Dockerfile
 # Multi-stage build: builder installs deps, runtime copies only what's needed
 
+# Global ARG — must be before any FROM to be usable in FROM instructions
+# Defaults to local base image; CI overrides with ECR URI
+ARG BASE_IMAGE=seer-base:latest
+
 # ── Stage 1: Builder ──────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
@@ -33,28 +37,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────
-FROM python:3.12-slim
+# Uses prebuilt seer-base image (apt deps + Playwright + uv already installed)
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
-# Runtime-only system deps (no git, no curl)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    libpq-dev \
-    postgresql-client \
-    # WeasyPrint system dependencies (HTML → PDF conversion)
-    libpango-1.0-0 \
-    libpangoft2-1.0-0 \
-    libharfbuzz0b \
-    libfontconfig1 \
-    libcairo2 \
-    libgdk-pixbuf-2.0-0 \
-    shared-mime-info && \
-    rm -rf /var/lib/apt/lists/*
-
-# Copy uv and virtual environment from builder
-COPY --from=builder /root/.local/bin/uv /root/.local/bin/uv
-COPY --from=builder /root/.local/bin/uvx /root/.local/bin/uvx
+# uv is already in the base image
 ENV PATH="/root/.local/bin:$PATH"
 
 # Copy app with installed deps
@@ -63,11 +51,6 @@ COPY --from=builder /app /app
 # Set version env vars for runtime
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_SEER=0.1.4
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.1.4
-
-# Install Playwright browser for browser automation node
-RUN --mount=type=cache,target=/root/.cache/ms-playwright \
-    uv run playwright install-deps chromium && \
-    uv run playwright install chromium
 
 EXPOSE 8000
 
