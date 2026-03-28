@@ -25,7 +25,7 @@ class KeyVault:
     def decrypt(self, ciphertext: str) -> Optional[str]:
         try:
             return self._fernet.decrypt(ciphertext.encode("utf-8")).decode("utf-8")
-        except (InvalidToken, Exception) as e:  # pylint: disable=broad-exception-caught
+        except (InvalidToken, Exception) as e:  # pylint: disable=broad-exception-caught  # Reason: Fernet may raise undocumented errors on malformed input
             logger.warning("BYOK key decryption failed: %s", type(e).__name__)
             return None
 
@@ -46,7 +46,7 @@ _VAULT: KeyVault | None = None
 
 
 def get_key_vault() -> KeyVault:
-    global _VAULT  # noqa: PLW0603  # pylint: disable=global-statement
+    global _VAULT  # noqa: PLW0603  # pylint: disable=global-statement  # Reason: Module-level singleton pattern
     if _VAULT is None:
         _VAULT = KeyVault()
     return _VAULT

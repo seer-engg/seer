@@ -41,6 +41,7 @@ class SubscriptionTier(str, Enum):
     FREE = "free"
     PRO = "pro"
     PRO_PLUS = "pro_plus"
+    BYOK = "byok"
 
 
 class SubscriptionStatus(str, Enum):
