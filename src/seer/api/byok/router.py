@@ -10,6 +10,7 @@ from seer.api.core.errors import AUTH_PROBLEM, raise_problem
 from seer.database.models import User
 from seer.database.byok_models import LLMApiKey
 from seer.database.organization_models import Organization
+from seer.database.subscription_models import BillingSubscription, SubscriptionTier
 from seer.logger import get_logger
 from seer.services.byok.key_vault import get_key_vault
 
@@ -95,6 +96,16 @@ async def add_key(request: Request, body: AddKeyRequest):
     """Add a new LLM API key. Deactivates any existing active key."""
     user = _require_user(request)
     org = await _get_org(user)
+
+    org_sub = await BillingSubscription.get_or_none(organization_id=org.id)
+    if not org_sub or org_sub.tier != SubscriptionTier.BYOK:
+        raise_problem(
+            type_uri=AUTH_PROBLEM,
+            title="BYOK plan required",
+            detail="Upgrade to the BYOK plan to manage API keys",
+            status=403,
+        )
+
     vault = get_key_vault()
 
     # Deactivate existing active keys for this org
@@ -125,7 +136,7 @@ async def delete_key(request: Request, key_id: int):
 
 
 @router.post("/keys/test", response_model=TestConnectionResponse)
-async def test_connection(request: Request, body: TestConnectionRequest):
+async def test_connection(request: Request, body: TestConnectionRequest):  # pylint: disable=too-many-return-statements  # Reason: Multiple validation + error branches are clear and necessary
     """Test an LLM API key by listing models from the provider."""
     import httpx  # pylint: disable=import-outside-toplevel  # Reason: Only needed for this endpoint
 
@@ -146,6 +157,17 @@ async def test_connection(request: Request, body: TestConnectionRequest):
             return TestConnectionResponse(success=False, error="Failed to decrypt stored key")
 
     base_url = base_url or "https://openrouter.ai/api/v1"
+
+    # Validate base_url to prevent SSRF
+    from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel  # Reason: Only needed for this endpoint
+    parsed = urlparse(base_url)
+    if parsed.scheme != "https":
+        return TestConnectionResponse(success=False, error="Only HTTPS URLs are allowed")
+    if parsed.hostname and any(
+        parsed.hostname.startswith(prefix)
+        for prefix in ("127.", "10.", "172.16.", "192.168.", "169.254.", "0.", "localhost")
+    ):
+        return TestConnectionResponse(success=False, error="Internal URLs are not allowed")
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

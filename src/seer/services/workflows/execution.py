@@ -23,6 +23,30 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+async def _resolve_byok_credentials(runtime_context: WorkflowRuntimeContext) -> None:
+    """Populate BYOK credentials on runtime_context if org is on BYOK plan."""
+    if not runtime_context.organization_id:
+        return
+    from seer.database.byok_models import LLMApiKey  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+    from seer.database.subscription_models import BillingSubscription, SubscriptionTier  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+    from seer.services.byok.key_vault import get_key_vault  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+    org_sub = await BillingSubscription.get_or_none(organization_id=runtime_context.organization_id)
+    if not org_sub or org_sub.tier != SubscriptionTier.BYOK:
+        return
+    active_key = await LLMApiKey.get_or_none(
+        organization_id=runtime_context.organization_id, is_active=True, status="active",
+    )
+    if not active_key:
+        return
+    vault = get_key_vault()
+    decrypted = vault.decrypt(active_key.key_enc)
+    if decrypted:
+        runtime_context.byok_api_key = decrypted
+        runtime_context.byok_base_url = active_key.base_url
+        logger.info("BYOK key resolved for org %s", runtime_context.organization_id)
+
+
 def _extract_hitl_interrupt(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Extract HITL interrupt payload from LangGraph result, or None."""
     interrupts = result.get("__interrupt__")
@@ -183,26 +207,7 @@ async def _execute_run(  # pylint: disable=too-many-locals,too-many-statements,t
             mcp_config_resolver=McpServerConfigResolverImpl(user=user),
         )
 
-        # Resolve BYOK key if org is on BYOK plan
-        if runtime_context.organization_id:
-            from seer.database.byok_models import LLMApiKey  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-            from seer.database.subscription_models import BillingSubscription, SubscriptionTier  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-            from seer.services.byok.key_vault import get_key_vault  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-
-            org_sub = await BillingSubscription.get_or_none(organization_id=runtime_context.organization_id)
-            if org_sub and org_sub.tier == SubscriptionTier.BYOK:
-                active_key = await LLMApiKey.get_or_none(
-                    organization_id=runtime_context.organization_id,
-                    is_active=True,
-                    status="active",
-                )
-                if active_key:
-                    vault = get_key_vault()
-                    decrypted = vault.decrypt(active_key.key_enc)
-                    if decrypted:
-                        runtime_context.byok_api_key = decrypted
-                        runtime_context.byok_base_url = active_key.base_url
-                        logger.info("BYOK key resolved for org %s", runtime_context.organization_id)
+        await _resolve_byok_credentials(runtime_context)
 
         result = await compiled.ainvoke(
             config=effective_config,
@@ -429,26 +434,7 @@ async def _execute_resume(  # pylint: disable=too-many-locals  # Reason: Resume 
         mcp_config_resolver=McpServerConfigResolverImpl(user=user),
     )
 
-    # Resolve BYOK key if org is on BYOK plan
-    if runtime_context.organization_id:
-        from seer.database.byok_models import LLMApiKey  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-        from seer.database.subscription_models import BillingSubscription, SubscriptionTier  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-        from seer.services.byok.key_vault import get_key_vault  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-
-        org_sub = await BillingSubscription.get_or_none(organization_id=runtime_context.organization_id)
-        if org_sub and org_sub.tier == SubscriptionTier.BYOK:
-            active_key = await LLMApiKey.get_or_none(
-                organization_id=runtime_context.organization_id,
-                is_active=True,
-                status="active",
-            )
-            if active_key:
-                vault = get_key_vault()
-                decrypted = vault.decrypt(active_key.key_enc)
-                if decrypted:
-                    runtime_context.byok_api_key = decrypted
-                    runtime_context.byok_base_url = active_key.base_url
-                    logger.info("BYOK key resolved for org %s", runtime_context.organization_id)
+    await _resolve_byok_credentials(runtime_context)
 
     # Resume with user responses using LangGraph's Command
     resume_command = Command(resume=responses)
