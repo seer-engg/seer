@@ -106,9 +106,10 @@ class SchemaMetadataGenerateResponse(BaseModel):
 
 
 class McpToolsRequest(BaseModel):
-    server: str
+    server: str = ""
     server_type: str = "http"
     auth: Optional[Dict[str, Any]] = None
+    mcp_server_config_id: Optional[int] = None
 
 
 class McpToolDescriptor(BaseModel):

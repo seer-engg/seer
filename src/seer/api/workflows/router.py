@@ -197,8 +197,8 @@ async def get_browser_model_registry(request: Request):
 
 @router.post("/mcp/tools", response_model=api_models.McpToolsResponse)
 async def list_mcp_tools(request: Request, payload: api_models.McpToolsRequest):
-    _require_user(request)
-    return await services.list_mcp_tools(payload)
+    user = _require_user(request)
+    return await services.list_mcp_tools(payload, user=user)
 
 
 @router.post(
