@@ -169,13 +169,19 @@ class MCPNode(NodeBase):
 
     Supports both HTTP and stdio MCP servers with optional authentication.
     Auth expressions like ${secrets.api_key} are resolved at runtime.
+
+    Server can be specified inline (server field) or via a saved config
+    (mcp_server_config_id). At least one must be provided.
     """
     type: Literal["mcp"] = "mcp"
-    server: str = Field()
+    server: str = Field(default="")
     server_type: Literal["http", "stdio"] = "http"
     auth: Optional[Dict[str, Any]] = None
     tool: str = Field()
     inputs: Dict[str, JSONValue] = Field(default_factory=dict)
+
+    # Reference to a saved MCP server config (IntegrationResource ID)
+    mcp_server_config_id: Optional[int] = None
 
     # Optional: declare expected output contract for validation
     expect_outputs: Optional[OutputContract] = None
