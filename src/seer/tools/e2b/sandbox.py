@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from seer.config import config
 from seer.logger import get_logger
-from seer.tools.e2b.base import E2BToolBase
+from seer.tools.e2b.base import E2BToolBase, serialize_e2b_result
 
 if TYPE_CHECKING:
     from seer.core.runtime.context import WorkflowRuntimeContext
@@ -137,12 +137,7 @@ class E2BRunInSandboxTool(E2BToolBase):
         try:
             execution = await sandbox.run_code(code)
 
-            results = []
-            for result in execution.results:
-                results.append({
-                    "type": getattr(result, "type", "unknown"),
-                    "data": getattr(result, "data", str(result)),
-                })
+            results = [serialize_e2b_result(r) for r in execution.results]
 
             # Extract logs - E2B returns stdout/stderr as lists of strings
             stdout = ""

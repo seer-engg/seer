@@ -57,7 +57,7 @@ class WorkflowRuntimeResources:
 
 
 @dataclass
-class WorkflowRuntimeContext:
+class WorkflowRuntimeContext:  # pylint: disable=too-many-instance-attributes  # Reason: attributes are already grouped into sub-dataclasses; splitting further would hurt readability
     """
     Carries runtime-scoped data that needs to be accessible to LangGraph
     nodes and tool handlers. Extend this as new fields are required.
@@ -76,6 +76,7 @@ class WorkflowRuntimeContext:
     organization_id: int | None = None  # For shared OAuth connection resolution
     memory_access: WorkflowMemoryAccess | None = None
     budget: WorkflowRunBudget = field(default_factory=WorkflowRunBudget)
+    tool_bindings: Dict[str, Dict[str, Any]] | None = None  # Per-tool credential bindings from workflow spec
 
     # Private field for lazy-loaded runtime resources
     _resources: WorkflowRuntimeResources = field(default_factory=WorkflowRuntimeResources, repr=False)
@@ -99,6 +100,7 @@ class WorkflowRuntimeContext:
             per_run_cost_cap_usd=per_run_cost_cap_usd,
             accumulated_cost_usd=accumulated_cost_usd,
         )
+        self.tool_bindings = None
         self._resources = WorkflowRuntimeResources()
 
     @property

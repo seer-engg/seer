@@ -106,7 +106,9 @@ def make_create_artifact_tool(ctx: "NodeExecutionContext", node_id: str) -> Stru
         description=(
             "Convert content to a file artifact (PDF or DOCX) and store it. "
             "Supports both HTML and Markdown input (set content_type='markdown' for Markdown). "
-            "Call this when you need to produce a downloadable document."
+            "Call this when you need to produce a downloadable document.\n\n"
+            "For images generated in a sandbox, use codebox_download_file first to get a "
+            "data_uri, then embed with <img src=\"{data_uri}\"> in the HTML content."
         ),
         args_schema=_CreateArtifactInput,
     )
