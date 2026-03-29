@@ -444,8 +444,17 @@ async def _bind_tools_for_agent(
     bound_tools: List[StructuredTool] = []
     worker_map: Dict[str, ToolWorker] = {}
 
+    # Collect per-tool credential bindings from workflow spec so meta-tools
+    # (e.g. fetch_to_scratch) can apply the same overrides as direct tool calls.
+    tool_bindings: Dict[str, Dict[str, Any]] = {}
+
     for spec in tool_specs:
         tool_name, connection_id, resource_id = _parse_tool_spec(spec)
+        if connection_id is not None or resource_id is not None:
+            tool_bindings[tool_name] = {
+                "connection_id": connection_id,
+                "integration_resource_id": resource_id,
+            }
 
         base_tool = get_tool(tool_name)
         if base_tool is None:
@@ -482,6 +491,10 @@ async def _bind_tools_for_agent(
             worker_map[tool_id] = worker
 
         bound_tools.append(structured_tool)
+
+    # Expose bindings to the runtime context so meta-tools can resolve credentials
+    if ctx.runtime_context and tool_bindings:
+        ctx.runtime_context.tool_bindings = tool_bindings
 
     return bound_tools, worker_map
 
@@ -1030,8 +1043,15 @@ async def _build_prompt_bundle(
 
 
 def _build_recursion_limit(max_iterations: Any) -> int:
-    """Compute the LangGraph recursion limit from max_iterations."""
-    return max_iterations * 3 if isinstance(max_iterations, int) else 30
+    """Compute the LangGraph recursion limit from max_iterations.
+
+    Each agent iteration can produce up to 5 LangGraph steps (AIMessage,
+    multiple ToolMessages, potential retries). Use 5x multiplier with
+    a floor of 50 to avoid premature GraphRecursionError.
+    """
+    if isinstance(max_iterations, int):
+        return max(max_iterations * 5, 50)
+    return 50
 
 
 def _collect_tool_worker_failures(

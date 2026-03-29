@@ -117,7 +117,7 @@ class TestE2BRunCodeToolExecution:
         """Test successful code execution with mocked sandbox."""
         # Set up mock execution result
         mock_sandbox.run_code.return_value = MockExecution(
-            results=[MockResult(result_type="text", data="2", is_main_result=True)],
+            results=[MockResult(result_type="text", data="2", is_main_result=True, text="2")],
             logs=MockLogs(stdout="2\n", stderr=""),
             error=None,
         )

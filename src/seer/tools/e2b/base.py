@@ -128,4 +128,34 @@ class E2BToolBase(BaseTool, ABC):
             ) from e
 
 
-__all__ = ["E2BToolBase"]
+# Ordered by preference: text first, then structured, then binary
+_E2B_RESULT_ATTRS = [
+    ("text", "text/plain"),
+    ("json", "application/json"),
+    ("html", "text/html"),
+    ("markdown", "text/markdown"),
+    ("latex", "text/latex"),
+    ("png", "image/png"),
+    ("jpeg", "image/jpeg"),
+    ("svg", "image/svg+xml"),
+    ("pdf", "application/pdf"),
+    ("javascript", "application/javascript"),
+]
+
+
+def serialize_e2b_result(result: object) -> dict[str, object]:
+    """Extract the best representation from an E2B Result object.
+
+    E2B SDK Result objects expose data via named attributes (.text, .json,
+    .png, etc.) rather than a single .type field. This inspects known
+    attributes and returns the first non-None representation with a
+    proper MIME type.
+    """
+    for attr, mime_type in _E2B_RESULT_ATTRS:
+        value = getattr(result, attr, None)
+        if value is not None:
+            return {"type": mime_type, "data": value}
+    return {"type": "text/plain", "data": str(result)}
+
+
+__all__ = ["E2BToolBase", "serialize_e2b_result"]

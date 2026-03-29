@@ -25,9 +25,11 @@ class E2BLoadDataTool(E2BToolBase):
     name = "codebox_load_data"
     description = (
         "Load data into sandbox filesystem for analysis. "
-        "Use with data handles returned by tools that produce large datasets "
-        "(e.g., oura_get_sleep, google_sheets_get_values). "
-        "The data is written to a file in the sandbox that you can read with Python."
+        "Use with data handles returned by fetch_to_scratch. "
+        "Pair with fetch_to_scratch to move large query results directly into "
+        "the sandbox without passing through the conversation.\n\n"
+        "Example flow: fetch_to_scratch(tool_name='postgres_execute_sql', ...) → "
+        "codebox_load_data(sandbox_id=..., handle=<returned handle>)"
     )
 
     def get_parameters_schema(self) -> Dict[str, Any]:
@@ -105,13 +107,14 @@ class E2BLoadDataTool(E2BToolBase):
 
             data = await scratch.retrieve(handle, user_id, run_id)
 
-            # Determine filename
+            # Determine filename from data content heuristics
             if not filename:
-                # Use handle as base, detect extension from data
-                if data.startswith(b"{") or data.startswith(b"["):
+                if isinstance(data, bytes) and (data.startswith(b"{") or data.startswith(b"[")):
                     filename = f"{handle}.json"
+                elif isinstance(data, bytes) and (b"," in data[:1024] and b"\n" in data[:1024]):
+                    filename = f"{handle}.csv"
                 else:
-                    filename = f"{handle}.json"  # Default to JSON
+                    filename = f"{handle}.dat"
 
             # Connect to sandbox and upload file
             sandbox = await self._connect_sandbox(sandbox_id)

@@ -389,3 +389,139 @@ class TestFetchToScratchTool:
         assert tool.integration_type == "scratch"
         assert tool.provider is None
         assert tool.required_scopes == []
+
+    async def test_tool_bindings_override_resource_id(
+        self,
+        tool: FetchToScratchTool,
+        mock_context: MagicMock,
+        mock_scratch_ref: ScratchDataRef,
+    ) -> None:
+        """Test that tool_bindings from workflow spec override LLM-provided resource IDs."""
+        mock_target_tool = MagicMock()
+        mock_target_tool.name = "postgres_execute_sql"
+        mock_target_tool.required_scopes = []
+        mock_target_tool.requires_oauth = False
+        mock_target_tool.required_secrets = ["postgres_connection_string"]
+        mock_target_tool.execute = AsyncMock(return_value={"rows": [], "row_count": 0})
+
+        mock_credentials = MagicMock()
+        mock_credentials.access_token = None
+
+        mock_context.scratch_store.store = AsyncMock(return_value=mock_scratch_ref)
+        # Simulate workflow-spec binding: postgres tool is bound to resource 7
+        mock_context.tool_bindings = {
+            "postgres_execute_sql": {"connection_id": None, "integration_resource_id": 7},
+        }
+
+        with (
+            patch("seer.tools.scratch.fetch_to_scratch.get_tool", return_value=mock_target_tool),
+            patch(
+                "seer.tools.credential_resolver.CredentialResolver"
+            ) as mock_resolver_class,
+        ):
+            mock_resolver = MagicMock()
+            mock_resolver.resolve = AsyncMock(return_value=mock_credentials)
+            mock_resolver_class.return_value = mock_resolver
+
+            await tool.execute(
+                access_token=None,
+                arguments={
+                    "tool_name": "postgres_execute_sql",
+                    # LLM provides resource_id=1 (wrong user), but binding should override to 7
+                    "arguments": {"integration_resource_id": 1, "sql": "SELECT 1"},
+                },
+                context=mock_context,
+            )
+
+        # The tool args passed to execute should have resource_id=7 (from binding), not 1
+        execute_call = mock_target_tool.execute.call_args
+        assert execute_call.args[1]["integration_resource_id"] == 7
+
+    async def test_no_tool_bindings_passes_args_unchanged(
+        self,
+        tool: FetchToScratchTool,
+        mock_context: MagicMock,
+        mock_scratch_ref: ScratchDataRef,
+    ) -> None:
+        """Test that args pass through unchanged when no tool_bindings are set."""
+        mock_target_tool = MagicMock()
+        mock_target_tool.name = "postgres_execute_sql"
+        mock_target_tool.required_scopes = []
+        mock_target_tool.requires_oauth = False
+        mock_target_tool.required_secrets = ["postgres_connection_string"]
+        mock_target_tool.execute = AsyncMock(return_value={"rows": [], "row_count": 0})
+
+        mock_credentials = MagicMock()
+        mock_credentials.access_token = None
+
+        mock_context.scratch_store.store = AsyncMock(return_value=mock_scratch_ref)
+        mock_context.tool_bindings = None  # No bindings configured
+
+        with (
+            patch("seer.tools.scratch.fetch_to_scratch.get_tool", return_value=mock_target_tool),
+            patch(
+                "seer.tools.credential_resolver.CredentialResolver"
+            ) as mock_resolver_class,
+        ):
+            mock_resolver = MagicMock()
+            mock_resolver.resolve = AsyncMock(return_value=mock_credentials)
+            mock_resolver_class.return_value = mock_resolver
+
+            await tool.execute(
+                access_token=None,
+                arguments={
+                    "tool_name": "postgres_execute_sql",
+                    "arguments": {"integration_resource_id": 1, "sql": "SELECT 1"},
+                },
+                context=mock_context,
+            )
+
+        # Resource ID should remain as the LLM provided it (1)
+        execute_call = mock_target_tool.execute.call_args
+        assert execute_call.args[1]["integration_resource_id"] == 1
+
+    async def test_tool_bindings_for_unbound_tool_passes_unchanged(
+        self,
+        tool: FetchToScratchTool,
+        mock_context: MagicMock,
+        mock_scratch_ref: ScratchDataRef,
+    ) -> None:
+        """Test that args pass through when tool_bindings exist but not for this tool."""
+        mock_target_tool = MagicMock()
+        mock_target_tool.name = "oura_get_sleep"
+        mock_target_tool.required_scopes = []
+        mock_target_tool.requires_oauth = False
+        mock_target_tool.required_secrets = []
+        mock_target_tool.execute = AsyncMock(return_value=[{"score": 85}])
+
+        mock_credentials = MagicMock()
+        mock_credentials.access_token = None
+
+        mock_context.scratch_store.store = AsyncMock(return_value=mock_scratch_ref)
+        # Bindings exist for postgres, but not for oura
+        mock_context.tool_bindings = {
+            "postgres_execute_sql": {"connection_id": None, "integration_resource_id": 7},
+        }
+
+        with (
+            patch("seer.tools.scratch.fetch_to_scratch.get_tool", return_value=mock_target_tool),
+            patch(
+                "seer.tools.credential_resolver.CredentialResolver"
+            ) as mock_resolver_class,
+        ):
+            mock_resolver = MagicMock()
+            mock_resolver.resolve = AsyncMock(return_value=mock_credentials)
+            mock_resolver_class.return_value = mock_resolver
+
+            result = await tool.execute(
+                access_token=None,
+                arguments={
+                    "tool_name": "oura_get_sleep",
+                    "arguments": {"start_date": "2026-03-25"},
+                },
+                context=mock_context,
+            )
+
+        # Should succeed without modification
+        assert "_type" in result
+        assert result["_type"] == "scratch_data_ref"

@@ -200,6 +200,99 @@ class TestE2BLoadDataTool:
 
 
 @pytest.mark.unit
+class TestE2BLoadDataFilenameDetection:
+    """Test filename detection heuristics in data loader."""
+
+    @pytest.fixture
+    def tool(self):
+        return E2BLoadDataTool()
+
+    @pytest.mark.asyncio
+    async def test_json_array_detection(
+        self, tool, mock_context, mock_sandbox, mock_async_sandbox_class
+    ):
+        """JSON array data should get .json extension."""
+        mock_context.scratch_store.retrieve = AsyncMock(return_value=b'[{"id": 1}]')
+
+        with patch("seer.tools.e2b.base.config") as mock_config:
+            mock_config.e2b_api_key = "test-api-key"
+            with patch.dict("sys.modules", {"e2b_code_interpreter": MagicMock()}):
+                import sys
+                sys.modules["e2b_code_interpreter"].AsyncSandbox = mock_async_sandbox_class
+
+                result = await tool.execute(
+                    access_token=None,
+                    arguments={"sandbox_id": "sbx_test123", "handle": "test_handle"},
+                    context=mock_context,
+                )
+                assert result["success"] is True
+                assert result["sandbox_path"].endswith(".json")
+
+    @pytest.mark.asyncio
+    async def test_json_object_detection(
+        self, tool, mock_context, mock_sandbox, mock_async_sandbox_class
+    ):
+        """JSON object data should get .json extension."""
+        mock_context.scratch_store.retrieve = AsyncMock(return_value=b'{"key": "val"}')
+
+        with patch("seer.tools.e2b.base.config") as mock_config:
+            mock_config.e2b_api_key = "test-api-key"
+            with patch.dict("sys.modules", {"e2b_code_interpreter": MagicMock()}):
+                import sys
+                sys.modules["e2b_code_interpreter"].AsyncSandbox = mock_async_sandbox_class
+
+                result = await tool.execute(
+                    access_token=None,
+                    arguments={"sandbox_id": "sbx_test123", "handle": "test_handle"},
+                    context=mock_context,
+                )
+                assert result["success"] is True
+                assert result["sandbox_path"].endswith(".json")
+
+    @pytest.mark.asyncio
+    async def test_csv_detection(
+        self, tool, mock_context, mock_sandbox, mock_async_sandbox_class
+    ):
+        """CSV data (commas + newlines) should get .csv extension."""
+        mock_context.scratch_store.retrieve = AsyncMock(return_value=b"id,name,score\n1,alice,85\n2,bob,90")
+
+        with patch("seer.tools.e2b.base.config") as mock_config:
+            mock_config.e2b_api_key = "test-api-key"
+            with patch.dict("sys.modules", {"e2b_code_interpreter": MagicMock()}):
+                import sys
+                sys.modules["e2b_code_interpreter"].AsyncSandbox = mock_async_sandbox_class
+
+                result = await tool.execute(
+                    access_token=None,
+                    arguments={"sandbox_id": "sbx_test123", "handle": "test_handle"},
+                    context=mock_context,
+                )
+                assert result["success"] is True
+                assert result["sandbox_path"].endswith(".csv")
+
+    @pytest.mark.asyncio
+    async def test_unknown_format_detection(
+        self, tool, mock_context, mock_sandbox, mock_async_sandbox_class
+    ):
+        """Unknown binary data should get .dat extension."""
+        mock_context.scratch_store.retrieve = AsyncMock(return_value=b"\x00\x01\x02\x03binary")
+
+        with patch("seer.tools.e2b.base.config") as mock_config:
+            mock_config.e2b_api_key = "test-api-key"
+            with patch.dict("sys.modules", {"e2b_code_interpreter": MagicMock()}):
+                import sys
+                sys.modules["e2b_code_interpreter"].AsyncSandbox = mock_async_sandbox_class
+
+                result = await tool.execute(
+                    access_token=None,
+                    arguments={"sandbox_id": "sbx_test123", "handle": "test_handle"},
+                    context=mock_context,
+                )
+                assert result["success"] is True
+                assert result["sandbox_path"].endswith(".dat")
+
+
+@pytest.mark.unit
 class TestE2BLoadDataToolRegistration:
     """Test that E2B load data tool is registered."""
 
