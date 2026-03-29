@@ -466,7 +466,7 @@ async def get_trigger_accounts_impl(
     Get available OAuth accounts for a trigger.
 
     Call this BEFORE building workflow specs with OAuth-based triggers
-    (poll.gmail.email_received, poll.googlesheets.row_added, etc.) to check
+    (poll.gmail.email_received, poll.slack.message_received, etc.) to check
     if the user has connected accounts and if account selection is required.
 
     Args:
@@ -501,7 +501,7 @@ async def get_trigger_accounts_impl(
         if not user:
             return json.dumps(make_error_response("trigger_key", trigger_key, "User context not available"))
 
-        definition = trigger_registry.get(trigger_key)
+        definition = trigger_registry.maybe_get(trigger_key)
         if definition is None:
             return json.dumps(make_error_response("trigger_key", trigger_key, f"Trigger '{trigger_key}' not found in registry"))
 
