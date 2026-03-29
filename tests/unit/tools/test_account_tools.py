@@ -211,7 +211,7 @@ class TestGetTriggerAccounts:
              patch("seer.services.integrations.auth.helpers.has_required_scopes") as mock_has_scopes:
 
             mock_get_user.return_value = mock_user
-            mock_registry.get.return_value = mock_trigger_definition()
+            mock_registry.maybe_get.return_value = mock_trigger_definition()
             mock_get_provider.return_value = "google"
             mock_conn_model.filter.return_value.all = AsyncMock(return_value=[conn])
             mock_display.return_value = "alice@gmail.com"
@@ -243,7 +243,7 @@ class TestGetTriggerAccounts:
              patch("seer.services.integrations.auth.helpers.has_required_scopes") as mock_has_scopes:
 
             mock_get_user.return_value = mock_user
-            mock_registry.get.return_value = mock_trigger_definition()
+            mock_registry.maybe_get.return_value = mock_trigger_definition()
             mock_get_provider.return_value = "google"
             mock_conn_model.filter.return_value.all = AsyncMock(return_value=[conn1, conn2])
             mock_display.side_effect = ["alice@gmail.com", "bob@gmail.com"]
@@ -264,7 +264,7 @@ class TestGetTriggerAccounts:
              patch("seer.core.registry.trigger_registry.trigger_registry") as mock_registry:
 
             mock_get_user.return_value = mock_user
-            mock_registry.get.return_value = None
+            mock_registry.maybe_get.return_value = None
 
             result = await get_trigger_accounts_impl("nonexistent.trigger")
 
@@ -283,7 +283,7 @@ class TestGetTriggerAccounts:
              patch("seer.core.registry.trigger_registry.trigger_registry") as mock_registry:
 
             mock_get_user.return_value = mock_user
-            mock_registry.get.return_value = trigger
+            mock_registry.maybe_get.return_value = trigger
 
             result = await get_trigger_accounts_impl("webhook.generic")
 

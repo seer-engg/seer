@@ -299,7 +299,7 @@ def generate_trigger_reference() -> str:
     lines.append("- Provider-specific config goes in `provider_config` object")
     lines.append("")
     lines.append("**OAuth Account Selection:**")
-    lines.append("- For OAuth-based triggers (gmail, googlesheets, slack, etc.), use `get_trigger_accounts(trigger_key)` first")
+    lines.append("- For OAuth-based triggers (gmail, slack, google_calendar, etc.), use `get_trigger_accounts(trigger_key)` first")
     lines.append("- If user has multiple accounts, use `ask_clarification_questions` to let them choose")
     lines.append("- Include `provider_connection_id` in trigger spec when user selected:")
     lines.append("```json")
