@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 from pydantic import BaseModel, Field
 
@@ -53,6 +53,25 @@ class PostgresBindRequest(BaseModel):
         default="restricted",
         description="Access mode: 'restricted' (read-only) or 'unrestricted' (read-write)",
     )
+
+
+class McpServerBindRequest(BaseModel):
+    """Request to save an MCP server configuration."""
+    name: str = Field(..., min_length=1, max_length=100, description="Friendly server display name")
+    server_url: str = Field(..., min_length=1, description="MCP server URL (HTTP) or command (stdio)")
+    server_type: Literal["http", "stdio"] = Field(default="http", description="Transport protocol: 'http' or 'stdio'")
+    auth: Optional[dict] = Field(
+        default=None,
+        description='Optional auth config, e.g. {"headers": {"Authorization": "Bearer ..."}} or {"env": {"KEY": "val"}}',
+    )
+
+
+class McpServerUpdateRequest(BaseModel):
+    """Request to update a saved MCP server configuration (partial)."""
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    server_url: Optional[str] = Field(default=None, min_length=1)
+    server_type: Optional[str] = Field(default=None)
+    auth: Optional[dict] = Field(default=None)
 
 
 class PostgresTestRequest(BaseModel):

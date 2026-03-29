@@ -52,6 +52,7 @@ from seer.api.agents.workflow.services import (
 )
 from seer.config import config
 from seer.core.runtime.context import WorkflowRuntimeContext
+from seer.services.workflows.mcp_config_adapter import McpServerConfigResolverImpl
 from seer.database import User
 from seer.database.models import UserSettings
 from seer.database.workflow_models import (
@@ -528,6 +529,7 @@ async def _get_user_settings_and_context(
         thread_id=thread_id,
         per_run_cost_cap_usd=per_run_cost_cap_usd,
         accumulated_cost_usd=0.0,
+        mcp_config_resolver=McpServerConfigResolverImpl(user=user),
     )
 
     return max_agent_steps, runtime_context

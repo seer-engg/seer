@@ -11,7 +11,7 @@ from seer.database import WorkflowRun, User, WorkflowRunStatus
 from seer.database.models import UserSettings
 from seer.core.runtime.context import WorkflowRuntimeContext
 from seer.services.memory.runtime_adapter import WorkflowMemoryRuntimeAdapter
-
+from seer.services.workflows.mcp_config_adapter import McpServerConfigResolverImpl
 from seer.analytics.workflow_tracking import capture_workflow_run_event
 from seer.core.runtime.global_compiler import WorkflowCompilerSingleton
 
@@ -179,6 +179,7 @@ async def _execute_run(
             accumulated_cost_usd=0.0,
             organization_id=organization_id,
             memory_access=WorkflowMemoryRuntimeAdapter(user=user, organization_id=organization_id),
+            mcp_config_resolver=McpServerConfigResolverImpl(user=user),
         )
         result = await compiled.ainvoke(
             config=effective_config,
@@ -385,6 +386,7 @@ async def _execute_resume(
         accumulated_cost_usd=0.0,
         organization_id=organization_id,
         memory_access=WorkflowMemoryRuntimeAdapter(user=user, organization_id=organization_id),
+        mcp_config_resolver=McpServerConfigResolverImpl(user=user),
     )
 
     # Resume with user responses using LangGraph's Command

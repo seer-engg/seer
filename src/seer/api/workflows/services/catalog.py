@@ -239,13 +239,47 @@ async def list_browser_models() -> api_models.ModelRegistryResponse:
     return api_models.ModelRegistryResponse(models=list(DEFAULT_BROWSER_MODEL_REGISTRY))
 
 
-async def list_mcp_tools(payload: api_models.McpToolsRequest) -> api_models.McpToolsResponse:
-    """Fetch available tools from an MCP server for the config panel UI."""
+async def list_mcp_tools(
+    payload: api_models.McpToolsRequest,
+    *,
+    user: User | None = None,
+) -> api_models.McpToolsResponse:
+    """Fetch available tools from an MCP server for the config panel UI.
+
+    Supports both inline server config and saved config via mcp_server_config_id.
+    """
     try:
+        server = payload.server
+        server_type = payload.server_type
+        auth = payload.auth
+
+        # Resolve saved config if mcp_server_config_id is provided
+        if payload.mcp_server_config_id and not server:
+            if user is None:
+                raise_problem(
+                    type_uri=VALIDATION_PROBLEM,
+                    title="User context required",
+                    detail="User context is required when using mcp_server_config_id",
+                    status=400,
+                )
+            from seer.api.integrations.services import resolve_mcp_server_config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+            resolved = await resolve_mcp_server_config(user, payload.mcp_server_config_id)
+            server = resolved["server"]
+            server_type = resolved.get("server_type", "http")
+            auth = resolved.get("auth")
+
+        if not server:
+            raise_problem(
+                type_uri=VALIDATION_PROBLEM,
+                title="No server specified",
+                detail="Either 'server' or 'mcp_server_config_id' must be provided",
+                status=400,
+            )
+
         server_config = MCPServerConfig(
-            server=payload.server,
-            server_type=payload.server_type,
-            auth=payload.auth,
+            server=server,
+            server_type=server_type,
+            auth=auth,
         )
         tools = await COMPILER.mcp_client_registry.list_tools(server_config)
         return api_models.McpToolsResponse(
