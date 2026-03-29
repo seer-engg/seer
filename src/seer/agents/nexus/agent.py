@@ -7,7 +7,6 @@ from seer.agents.nexus.tool_call_sanitizer import ToolCallSanitizationMiddleware
 
 from seer.config import config
 from seer.logger import get_logger
-from seer.llm import get_llm
 from seer.agents.nexus.utils import get_workflow_tools
 from seer.utilities.ml_flow import _ensure_mlflow_autologging
 
@@ -51,6 +50,7 @@ async def create_nexus_chat_agent(  # pylint: disable=too-many-positional-argume
     current_query: Optional[str] = None,
     workflow_id: Optional[str] = None,
     timezone: Optional[str] = None,
+    organization_id: Optional[int] = None,
 ) -> Any:
     """
     Create a LangGraph agent for Nexus chat assistance using create_agent.
@@ -69,7 +69,8 @@ async def create_nexus_chat_agent(  # pylint: disable=too-many-positional-argume
         LangGraph agent compiled with tools and middleware
     """
 
-    llm = get_llm(model=model, temperature=0)
+    from seer.services.byok.llm_resolver import resolve_llm  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+    llm = await resolve_llm(model=model, temperature=0, organization_id=organization_id)
 
     # Load base system prompt (modular - detailed guides available via get_workflow_guide())
     from seer.mcp.tools.guides import get_started_impl  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
@@ -96,9 +97,10 @@ async def create_nexus_chat_agent(  # pylint: disable=too-many-positional-argume
     tools = get_workflow_tools(workflow_id=workflow_id)
 
     # Create summarization model (use same model with lower max tokens)
-    summarization_model = get_llm(
+    summarization_model = await resolve_llm(
         model=model,
         temperature=0,
+        organization_id=organization_id,
     )
 
     # Build middleware list

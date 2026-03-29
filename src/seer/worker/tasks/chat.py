@@ -645,6 +645,7 @@ async def _prepare_chat_execution(
         current_query=request.message,
         workflow_id=workflow.workflow_id,  # Public workflow ID for pre-bound tools
         timezone=request.timezone,
+        organization_id=user.active_organization_id,
     )
     max_agent_steps, runtime_context = await _get_user_settings_and_context(
         user, thread_id
@@ -704,6 +705,7 @@ async def _prepare_chat_resume_execution(
         checkpointer=checkpointer,
         user_id=user.user_id,
         workflow_id=workflow.workflow_id,  # Public workflow ID for pre-bound tools
+        organization_id=user.active_organization_id,
     )
     max_agent_steps, runtime_context = await _get_user_settings_and_context(
         user, thread_id

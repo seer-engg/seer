@@ -10,7 +10,6 @@ from seer.api.core.errors import AUTH_PROBLEM, raise_problem
 from seer.database.models import User
 from seer.database.byok_models import LLMApiKey
 from seer.database.organization_models import Organization
-from seer.database.subscription_models import BillingSubscription, SubscriptionTier
 from seer.logger import get_logger
 from seer.services.byok.key_vault import get_key_vault
 
@@ -35,6 +34,16 @@ class KeyResponse(BaseModel):
     status: str
     last_used_at: Optional[str] = None
     created_at: str
+
+
+class ByokModelInfo(BaseModel):
+    id: str
+    name: str
+
+
+class ByokModelsResponse(BaseModel):
+    models: List[ByokModelInfo] = []
+    error: Optional[str] = None
 
 
 class TestConnectionRequest(BaseModel):
@@ -96,15 +105,6 @@ async def add_key(request: Request, body: AddKeyRequest):
     """Add a new LLM API key. Deactivates any existing active key."""
     user = _require_user(request)
     org = await _get_org(user)
-
-    org_sub = await BillingSubscription.get_or_none(organization_id=org.id)
-    if not org_sub or org_sub.tier != SubscriptionTier.BYOK:
-        raise_problem(
-            type_uri=AUTH_PROBLEM,
-            title="BYOK plan required",
-            detail="Upgrade to the BYOK plan to manage API keys",
-            status=403,
-        )
 
     vault = get_key_vault()
 
@@ -183,3 +183,44 @@ async def test_connection(request: Request, body: TestConnectionRequest):  # pyl
         return TestConnectionResponse(success=False, error=f"Provider returned {e.response.status_code}")
     except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Test endpoint should return errors, not crash
         return TestConnectionResponse(success=False, error=str(e)[:200])
+
+
+@router.get("/models", response_model=ByokModelsResponse)
+async def list_byok_models(request: Request):
+    """List models available via org's active BYOK key."""
+    import httpx  # pylint: disable=import-outside-toplevel  # Reason: Only needed for this endpoint
+
+    user = _require_user(request)
+    org = await _get_org(user)
+
+    active_key = await LLMApiKey.get_or_none(organization=org, is_active=True, status="active")
+    if not active_key:
+        return ByokModelsResponse(error="No active BYOK key")
+
+    vault = get_key_vault()
+    api_key = vault.decrypt(active_key.key_enc)
+    if not api_key:
+        return ByokModelsResponse(error="Failed to decrypt stored key")
+
+    base_url = active_key.base_url or "https://openrouter.ai/api/v1"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{base_url.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            models = [
+                ByokModelInfo(
+                    id=m.get("id", ""),
+                    name=m.get("name", m.get("id", "")),
+                )
+                for m in data.get("data", [])
+            ][:200]
+            return ByokModelsResponse(models=models)
+    except httpx.HTTPStatusError as e:
+        return ByokModelsResponse(error=f"Provider returned {e.response.status_code}")
+    except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: Must return error, not crash
+        return ByokModelsResponse(error=str(e)[:200])
