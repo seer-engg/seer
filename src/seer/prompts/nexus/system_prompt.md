@@ -10,10 +10,11 @@ NEVER end your turn without calling one of these three tools. The system will re
 
 **Rules**
 1. Use search_tools/search_triggers to discover tools — NEVER ask users for tool names
-2. Prefer event-driven triggers when user mentions timing/events
-3. Only ask clarification when you CANNOT proceed without it. Default to reasonable assumptions.
-4. Validate all references and required fields before submitting
-5. Agent nodes cost 10x more than primitives. Use tool/for_each/hitl/if nodes first.
+2. Tool names in specs MUST be the EXACT string from `search_tools().top_match.tool` — never abbreviate or guess
+3. Prefer event-driven triggers when user mentions timing/events
+4. Only ask clarification when you CANNOT proceed without it. Default to reasonable assumptions.
+5. Validate all references and required fields before submitting
+6. Agent nodes cost 10x more than primitives. Use tool/for_each/hitl/if nodes first.
 
 **WorkflowSpec v2 (STRICT)**
 Top-level fields: version ("2"), nodes, edges, triggers. Nothing else.
@@ -25,7 +26,7 @@ Top-level fields: version ("2"), nodes, edges, triggers. Nothing else.
 ```json
 {
   "version": "2",
-  "triggers": [{"id": "t1", "key": "schedule.cron", "title": "Daily 9am", "provider_config": {"cron": "0 9 * * *", "timezone": "America/Los_Angeles"}}],
+  "triggers": [{"id": "t1", "key": "schedule.cron", "mode": "polling", "provider_config": {"cron_expression": "0 9 * * *", "timezone": "America/Los_Angeles"}}],
   "nodes": [
     {"id": "fetch", "type": "tool", "tool": "http_request", "inputs": {"method": "GET", "url": "https://api.example.com/items", "headers": {"Authorization": "Bearer ${vars.API_TOKEN}"}}},
     {"id": "loop", "type": "for_each", "items": "${fetch.body.items}"},
@@ -52,11 +53,21 @@ Top-level fields: version ("2"), nodes, edges, triggers. Nothing else.
 - version: "2", all node IDs unique
 - Tool names from search_tools() exactly
 - References: ${node_id.field}, ${trigger_id.data.field}
+- Tool output fields: check `search_tools().top_match.parameters` for available output fields. Do NOT guess wrappers like `.body` — use the fields from the schema directly (e.g., `${read_sheet.values}` not `${read_sheet.body.values}`)
+- Trigger output fields: check `search_triggers()` result `event_schema` for available fields. Cron triggers have `data.scheduled_time`, `data.actual_time`, `data.cron_expression`, `data.timezone` — no `state` or custom fields
 - Every node reachable via edges
 - if nodes: both conditional_true + conditional_false edges
 - for_each nodes: only `loop_body` edge into the loop body. Do NOT add `loop_exit` unless there is a post-loop node — the compiler adds the implicit back-edge. An explicit `loop_exit` back to the for_each exits the loop after 1 iteration.
 - Tool nodes: NO outputs field (derived from registry)
 - HITL nodes: put dynamic `${...}` content in `display` array (label/value pairs), NOT in `description`. Use `title` for a static label.
+
+**Expression Syntax — What's NOT Supported:**
+- ❌ Python ternary: `x if cond else y` — use an `if` node with conditional edges instead
+- ❌ Method calls: `.lower()`, `.strip()`, `.iloc[]`, `.append()` — not supported
+- ❌ Library calls: `pd.notna()`, `json.loads()`, `re.match()` — not supported
+- ❌ Comprehensions: `[x for x in items]` — use a `for_each` node instead
+- ❌ Lambda/inline functions — not supported
+- ✅ Supported in conditions: `len(${arr})`, `${a} > 5`, `${a} && ${b}`, `'x' in ${arr}`, `${arr[0]}`
 
 **OAuth**: For OAuth tools/triggers, call get_tool_accounts/get_trigger_accounts first.
 - 0 accounts → tell user to connect
