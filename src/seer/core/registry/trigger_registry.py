@@ -70,6 +70,7 @@ POLLING_TRIGGERS = [
     "poll.slack.message_received",
     "poll.google_calendar.event_changed",
     "poll.google_calendar.event_start",
+    "poll.google_sheets.row_added",
     "schedule.cron",
 ]
 
@@ -204,6 +205,99 @@ def _airtable_new_record_in_view_sample_event() -> Dict[str, Any]:
     }
 
 
+def _google_sheets_row_added_payload_schema() -> JsonSchema:
+    """Payload schema for Google Sheets row added trigger."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "row_number": {"type": "integer", "description": "1-based row number in the sheet"},
+            "spreadsheet_id": {"type": "string", "description": "Google Sheets spreadsheet ID"},
+            "sheet_name": {"type": "string", "description": "Name of the sheet/tab"},
+            "fields": {
+                "type": ["object", "null"],
+                "additionalProperties": True,
+                "description": "Row data mapped by header names (when has_header_row is true)",
+            },
+            "row_values": {
+                "type": ["array", "null"],
+                "items": {
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "number"},
+                        {"type": "boolean"},
+                        {"type": "null"},
+                    ]
+                },
+                "description": "Raw row values as array (when has_header_row is false)",
+            },
+        },
+        "required": ["row_number", "spreadsheet_id", "sheet_name"],
+    }
+
+
+def _google_sheets_row_added_config_schema() -> JsonSchema:
+    """Config schema for Google Sheets row added trigger."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "spreadsheet_id": {
+                "type": "string",
+                "description": "Google Sheets spreadsheet ID",
+                "x-resource-picker": {
+                    "provider": "google",
+                    "resource_type": "google_spreadsheet",
+                    "display_field": "name",
+                    "value_field": "id",
+                    "search_enabled": True,
+                },
+            },
+            "sheet_name": {
+                "type": "string",
+                "default": "Sheet1",
+                "description": "Name of the sheet/tab to monitor for new rows.",
+            },
+            "has_header_row": {
+                "type": "boolean",
+                "default": True,
+                "description": (
+                    "If true, the first row is treated as column headers and used "
+                    "as field keys in event payloads."
+                ),
+            },
+            **_oauth_connection_property(),
+        },
+        "required": ["spreadsheet_id"],
+    }
+
+
+def _google_sheets_row_added_sample_event() -> Dict[str, Any]:
+    """Sample event for Google Sheets row added trigger."""
+    payload = {
+        "row_number": 5,
+        "spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms",
+        "sheet_name": "Sheet1",
+        "fields": {
+            "Name": "Jane Smith",
+            "Email": "jane@example.com",
+            "Status": "Active",
+            "Date Added": "2026-03-15",
+        },
+        "row_values": None,
+    }
+    return {
+        "id": "evt_sample_poll_google_sheets_row_added",
+        "trigger_key": "poll.google_sheets.row_added",
+        "provider": "google",
+        "account_id": None,
+        "occurred_at": "2026-03-15T10:00:00Z",
+        "received_at": "2026-03-15T10:00:05Z",
+        "data": payload,
+        "raw": {"values": [["Jane Smith", "jane@example.com", "Active", "2026-03-15"]]},
+    }
+
+
 def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
@@ -290,6 +384,24 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
                 sample_event=_google_calendar_event_start_sample_event(),
                 requires_connection=True,
                 required_scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+            ),
+        )
+    )
+    registry.register(
+        TriggerDefinition(
+            key="poll.google_sheets.row_added",
+            title="Google Sheets",
+            provider="google",
+            mode="polling",
+            description="Poll a Google Sheet for newly added rows at the bottom of a sheet.",
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_google_sheets_row_added_payload_schema()),
+                config=_google_sheets_row_added_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_google_sheets_row_added_sample_event(),
+                requires_connection=True,
+                required_scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
             ),
         )
     )

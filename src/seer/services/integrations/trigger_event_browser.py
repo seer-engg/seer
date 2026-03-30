@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from seer.core.triggers.polling.adapters.gmail_email_received import GmailEmailReceivedAdapter
 from seer.core.triggers.polling.adapters.google_calendar_event_changed import GoogleCalendarEventChangedAdapter
 from seer.core.triggers.polling.adapters.google_calendar_event_start import GoogleCalendarEventStartAdapter
+from seer.core.triggers.polling.adapters.google_sheets_row_added import GoogleSheetsRowAddedAdapter
 from seer.core.triggers.polling.adapters.slack_message_received import SlackMessageReceivedAdapter
 from seer.database import User, TriggerEvent, TriggerSubscription
 from seer.logger import get_logger
@@ -24,6 +25,7 @@ from seer.services.integrations.trigger_event_polling import (
     list_gmail_events,
     list_google_calendar_event_start_events,
     list_google_calendar_events,
+    list_google_sheets_events,
     list_slack_events,
 )
 
@@ -70,6 +72,7 @@ TRIGGER_BROWSING_CONFIG: Dict[str, TriggerBrowsingConfig] = {
     "poll.slack.message_received": TriggerBrowsingConfig("slack", "polling", False),
     "poll.google_calendar.event_changed": TriggerBrowsingConfig("google", "polling", True),
     "poll.google_calendar.event_start": TriggerBrowsingConfig("google", "polling", True),
+    "poll.google_sheets.row_added": TriggerBrowsingConfig("google", "polling", False),
     # Persisted triggers - query from TriggerEvent database table
     "webhook.generic": TriggerBrowsingConfig("generic", "persisted", False),
     "webhook.supabase.db_changes": TriggerBrowsingConfig("supabase", "persisted", False),
@@ -107,6 +110,7 @@ class TriggerEventBrowser:
         self._slack_adapter = SlackMessageReceivedAdapter()
         self._gcal_adapter = GoogleCalendarEventChangedAdapter()
         self._gcal_start_adapter = GoogleCalendarEventStartAdapter()
+        self._gsheets_adapter = GoogleSheetsRowAddedAdapter()
 
     @staticmethod
     def get_supported_trigger_keys() -> List[str]:
@@ -179,6 +183,8 @@ class TriggerEventBrowser:
             return await list_google_calendar_events(self.user, provider_connection_id, options, self._gcal_adapter)
         if trigger_key == "poll.google_calendar.event_start":
             return await list_google_calendar_event_start_events(self.user, provider_connection_id, options, self._gcal_start_adapter)
+        if trigger_key == "poll.google_sheets.row_added":
+            return await list_google_sheets_events(self.user, provider_connection_id, options, self._gsheets_adapter)
         raise ValueError(f"Polling trigger '{trigger_key}' is not yet implemented")
 
     # =========================================================================
