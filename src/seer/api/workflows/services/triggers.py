@@ -583,6 +583,11 @@ def _apply_subscription_updates(
         _validate_provider_config(new_provider_config, definition)
         subscription.provider_config = new_provider_config
     if payload.enabled is not None:
+        # Reset polling cursor when re-enabling a previously disabled subscription
+        # to prevent catchup storms from stale cursor positions
+        if payload.enabled and not subscription.enabled and subscription.is_polling:
+            subscription.poll_cursor_json = None
+            subscription.next_poll_at = None
         subscription.enabled = payload.enabled
     if _should_emit_webhook_url(subscription.trigger_key) and not subscription.webhook_slug:
         subscription.webhook_slug = _generate_webhook_slug()
@@ -798,6 +803,55 @@ async def _reconcile_existing_subscriptions(
     return existing
 
 
+async def _update_existing_subscription(
+    subscription: "TriggerSubscription",
+    trigger_spec,
+    definition,
+    *,
+    webhook_slug: Optional[str],
+    adjusted_interval: int,
+    skip_validation: bool,
+) -> None:
+    """Apply spec changes to an existing TriggerSubscription and persist."""
+    previous_slug = subscription.webhook_slug
+    filters = dict(trigger_spec.filters or {})
+    provider_config = dict(trigger_spec.provider_config or {})
+    form_suffix, form_fields, form_config = _extract_form_config_from_spec(trigger_spec)
+
+    subscription.trigger_key = trigger_spec.key
+    subscription.title = definition.title
+    new_connection_id = trigger_spec.provider_config.get("provider_connection_id")
+    if new_connection_id is not None or not subscription.provider_connection_id:
+        subscription.provider_connection_id = new_connection_id
+    # Reset polling cursor when re-enabling a previously disabled subscription
+    # to prevent catchup storms from stale cursor positions
+    if not subscription.enabled and subscription.is_polling:
+        subscription.poll_cursor_json = None
+        subscription.next_poll_at = None
+    subscription.enabled = True
+    subscription.filters = filters
+    subscription.provider_config = provider_config
+    subscription.webhook_slug = webhook_slug
+    subscription.poll_interval_seconds = adjusted_interval
+    # Sync form data for form triggers — preserve auto-generated suffix
+    if form_suffix:
+        subscription.form_suffix = form_suffix
+    elif not subscription.form_suffix and _is_form_trigger(trigger_spec.key):
+        subscription.form_suffix = _generate_form_suffix()
+    subscription.form_fields = form_fields
+    subscription.form_config = form_config
+    await subscription.save()
+
+    # If we generated a new slug for Supabase, ensure webhook is created.
+    if (
+        not skip_validation
+        and trigger_spec.key == "webhook.supabase.db_changes"
+        and webhook_slug
+        and not previous_slug
+    ):
+        await _create_supabase_webhook(subscription)
+
+
 async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-locals,too-many-branches  # Reason: Comprehensive trigger sync requires extensive state reconciliation
     user: User,
     workflow: Workflow,
@@ -882,33 +936,14 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
             webhook_slug = _generate_webhook_slug()
 
         if existing_subscription:
-            existing_subscription.trigger_key = trigger_spec.key  # Update type reference
-            existing_subscription.title = definition.title  # Update title for reference resolution from registry
-            new_connection_id = trigger_spec.provider_config.get("provider_connection_id")
-            if new_connection_id is not None or not existing_subscription.provider_connection_id:
-                existing_subscription.provider_connection_id = new_connection_id
-            existing_subscription.enabled = True  # Always enabled when in spec
-            existing_subscription.filters = filters
-            existing_subscription.provider_config = provider_config
-            existing_subscription.webhook_slug = webhook_slug
-            existing_subscription.poll_interval_seconds = adjusted_interval
-            # Sync form data for form triggers — preserve auto-generated suffix
-            if form_suffix:
-                existing_subscription.form_suffix = form_suffix
-            elif not existing_subscription.form_suffix and _is_form_trigger(trigger_spec.key):
-                existing_subscription.form_suffix = _generate_form_suffix()
-            existing_subscription.form_fields = form_fields
-            existing_subscription.form_config = form_config
-            await existing_subscription.save()
-
-            # If we generated a new slug for Supabase, ensure webhook is created.
-            if (
-                not skip_validation
-                and trigger_spec.key == "webhook.supabase.db_changes"
-                and webhook_slug
-                and not previous_slug
-            ):
-                await _create_supabase_webhook(existing_subscription)
+            await _update_existing_subscription(
+                existing_subscription,
+                trigger_spec,
+                definition,
+                webhook_slug=webhook_slug,
+                adjusted_interval=adjusted_interval,
+                skip_validation=skip_validation,
+            )
         else:
             is_polling = trigger_spec.key in POLLING_TRIGGERS
             # Auto-generate form suffix if not provided and this is a form trigger

@@ -144,6 +144,18 @@ class TestCoerceInteger:
         with pytest.raises(ValueError):
             _coerce_integer("not a number", "field", {})
 
+    def test_empty_string_raises(self):
+        with pytest.raises(ValueError, match="empty string"):
+            _coerce_integer("", "field", {})
+
+    def test_quoted_empty_string_raises(self):
+        with pytest.raises(ValueError, match="empty string"):
+            _coerce_integer("''", "field", {})
+
+    def test_whitespace_only_string_raises(self):
+        with pytest.raises(ValueError, match="empty string"):
+            _coerce_integer("   ", "field", {})
+
 
 @pytest.mark.unit
 class TestCoerceNumber:
@@ -170,6 +182,18 @@ class TestCoerceNumber:
     def test_invalid_string_raises(self):
         with pytest.raises(ValueError):
             _coerce_number("not a number", "field", {})
+
+    def test_empty_string_raises(self):
+        with pytest.raises(ValueError, match="empty string"):
+            _coerce_number("", "field", {})
+
+    def test_quoted_empty_string_raises(self):
+        with pytest.raises(ValueError, match="empty string"):
+            _coerce_number("''", "field", {})
+
+    def test_whitespace_only_string_raises(self):
+        with pytest.raises(ValueError, match="empty string"):
+            _coerce_number("   ", "field", {})
 
 
 @pytest.mark.unit
@@ -420,8 +444,8 @@ class TestCoerceArguments:
         # Unknown field has no type, so passed as-is
         assert result["unknown"] == "'other'"
 
-    def test_coercion_failure_passes_through(self):
-        """If coercion fails, original value should be preserved."""
+    def test_coercion_failure_passes_through_without_default(self):
+        """If coercion fails and no schema default, original value should be preserved."""
         schema = {
             "type": "object",
             "properties": {
@@ -431,6 +455,35 @@ class TestCoerceArguments:
         result = coerce_arguments({"count": "not a number"}, schema)
         # Should pass through original value without raising
         assert result["count"] == "not a number"
+
+    def test_coercion_failure_falls_back_to_schema_default(self):
+        """If coercion fails and schema has a default, use the default.
+
+        Reproduces production bug: LLM passes min_score='' for kb_query tool,
+        coercion fails on float(''), and empty string reaches PostgreSQL which
+        rejects it with 'must be real number, not str'.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "min_score": {"type": "number", "default": 0.3, "minimum": 0.0, "maximum": 1.0},
+                "top_k": {"type": "integer", "default": 5, "minimum": 1, "maximum": 20},
+            }
+        }
+        result = coerce_arguments({"min_score": "", "top_k": ""}, schema)
+        assert result["min_score"] == 0.3
+        assert result["top_k"] == 5
+
+    def test_coercion_failure_falls_back_to_schema_default_quoted_empty(self):
+        """Quoted empty strings should also fall back to schema default."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "score": {"type": "number", "default": 0.5}
+            }
+        }
+        result = coerce_arguments({"score": "''"}, schema)
+        assert result["score"] == 0.5
 
     def test_preserves_original_dict(self):
         """Original arguments dict should not be modified."""

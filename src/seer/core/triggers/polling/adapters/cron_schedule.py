@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 import pytz
@@ -19,6 +19,7 @@ from seer.logger import get_logger
 logger = get_logger(__name__)
 
 DEFAULT_TIMEZONE = "America/Chicago"
+MAX_CATCHUP_WINDOW = timedelta(hours=1)
 
 
 class CronScheduleAdapter(PollAdapter):
@@ -132,6 +133,34 @@ class CronScheduleAdapter(PollAdapter):
                 permanent=True,
                 detail={"cron_expression": cron_expr, "error": str(exc)},
             ) from exc
+
+        # Guard against catchup storms: if the next scheduled time is too far in the
+        # past (e.g. subscription was disabled for days), skip to present instead of
+        # backfilling every missed interval one by one.
+        if now_utc - next_exec_utc > MAX_CATCHUP_WINDOW:
+            gap_seconds = int((now_utc - next_exec_utc).total_seconds())
+            logger.warning(
+                "Cron catchup skipping stale intervals: gap=%ds",
+                gap_seconds,
+                extra={
+                    "subscription_id": ctx.subscription.id,
+                    "stale_scheduled_time": next_exec_utc.isoformat(),
+                    "gap_seconds": gap_seconds,
+                },
+            )
+            # Fast-forward cursor to now and compute the next future execution
+            iter_from_now = croniter(cron_expr, now_utc.astimezone(tz))
+            next_future = iter_from_now.get_next(datetime).astimezone(timezone.utc)
+            return PollResult(
+                events=[],
+                cursor={
+                    "last_execution_utc": now_utc.isoformat(),
+                    "cron_expression": cron_expr,
+                    "timezone": tz_name,
+                },
+                has_more=False,
+                rate_limit_hint=max(1, int((next_future - now_utc).total_seconds())),
+            )
 
         # Check if the scheduled time has passed
         if now_utc < next_exec_utc:

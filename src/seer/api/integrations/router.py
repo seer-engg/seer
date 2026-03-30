@@ -546,6 +546,7 @@ async def connect(
     scope: str = Query(...),
     integration_type: str = Query(None),
     force_new_account: bool = Query(False),
+    connection_id: Optional[int] = Query(None),
 ):
     """
     Start OAuth flow for a provider.
@@ -573,7 +574,9 @@ async def connect(
     oauth_provider, provider_impl = _validate_scope_and_get_provider(scope, provider)
     requested_scopes_list = list(parse_scopes(scope))
     user: User = request.state.db_user
-    existing_connection = await get_connection_for_provider(user, oauth_provider)
+    existing_connection = await get_connection_for_provider(
+        user, oauth_provider, connection_id=connection_id
+    )
 
     authorize_context = OAuthAuthorizeContext(
         user=user,

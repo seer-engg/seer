@@ -42,7 +42,7 @@ class MCPNodeType(BaseNodeType):
     def model_class(self) -> type["NodeBase"]:
         return MCPNode
 
-    async def execute_async(  # pylint: disable=too-many-locals  # Reason: MCP execution requires many context variables
+    async def execute_async(  # pylint: disable=too-many-locals  # Reason: MCP execution requires imports, eval ctx, server config, result, trace, and output vars
         self,
         node: MCPNode,  # type: ignore[override]
         ctx: NodeExecutionContext,
@@ -51,7 +51,6 @@ class MCPNodeType(BaseNodeType):
         """Execute MCP node with runtime auth resolution."""
         # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
         from seer.core.expr.evaluator import EvaluationContext
-        from seer.core.registry.mcp_client_registry import MCPServerConfig
         from seer.core.runtime.state import INTERNAL_STATE_PREFIX
         from seer.core.runtime.validate_output import validate_against_schema
 
@@ -61,7 +60,6 @@ class MCPNodeType(BaseNodeType):
                 "Ensure the compiler is initialized with MCP support."
             )
 
-        # Build eval context
         visible_state = {k: v for k, v in ctx.state.items() if not k.startswith(INTERNAL_STATE_PREFIX)}
         eval_ctx = EvaluationContext(
             state=visible_state,
@@ -71,19 +69,10 @@ class MCPNodeType(BaseNodeType):
             vars=ctx.vars,
         )
 
-        # Capture inputs
         inputs = self._evaluate_inputs(node, eval_ctx)
+        server_url, server_type, saved_auth = await self._resolve_server_config(node, ctx)
+        server_config, resolved_auth = self._build_server_config(server_url, server_type, saved_auth, node, eval_ctx)
 
-        # Resolve auth
-        resolved_auth = self._resolve_auth(node, eval_ctx)
-
-        server_config = MCPServerConfig(
-            server=node.server,
-            server_type=node.server_type,
-            auth=resolved_auth,
-        )
-
-        # Invoke MCP tool
         try:
             result = await self._invoke_tool(services, server_config, node, inputs)
         except Exception as exc:
@@ -101,18 +90,68 @@ class MCPNodeType(BaseNodeType):
             ctx.state.update(error_trace)  # type: ignore[arg-type]
             raise ExecutionError(f"MCP tool '{node.tool}' failed: {exc}", trace_data=error_trace) from exc
 
-        # Validate output
         if node.expect_outputs:
             type_schemas = services.type_env.as_dict()
             schema = type_schemas.get(node.id)
             if schema:
                 validate_against_schema(schema, result, schema_id=node.id)
 
-        # Prepare output
         output = {node.id: result}
         self._attach_trace(output, node, ctx, inputs, result, resolved_auth)
-
         return output
+
+    async def _resolve_server_config(
+        self,
+        node: MCPNode,
+        ctx: NodeExecutionContext,
+    ) -> tuple[str, str, Optional[Dict[str, Any]]]:
+        """Resolve server URL, type, and saved auth from node config or saved MCP server config."""
+        server_url: str = node.server
+        server_type: str = node.server_type
+        saved_auth: Optional[Dict[str, Any]] = None
+
+        if node.mcp_server_config_id and not node.server:
+            if ctx.runtime_context is None or ctx.runtime_context.mcp_config_resolver is None:
+                raise ExecutionError(
+                    "MCP server config resolver is required when using mcp_server_config_id. "
+                    "Ensure the runtime context is initialized with MCP config support."
+                )
+            saved_config = await ctx.runtime_context.mcp_config_resolver.resolve(node.mcp_server_config_id)
+            server_url = saved_config["server"]
+            server_type = saved_config.get("server_type", "http")
+            saved_auth = saved_config.get("auth")
+
+        if not server_url:
+            raise ExecutionError("MCP node has no server URL configured (neither inline nor via saved config)")
+
+        return server_url, server_type, saved_auth
+
+    def _build_server_config(  # pylint: disable=too-many-positional-arguments  # Reason: server config requires URL, type, saved auth, node, and eval context — no natural grouping
+        self,
+        server_url: str,
+        server_type: str,
+        saved_auth: Optional[Dict[str, Any]],
+        node: MCPNode,
+        eval_ctx: Any,
+    ) -> tuple[Any, Optional[Dict[str, Any]]]:
+        """Build MCPServerConfig with resolved and merged auth. Returns (config, resolved_auth)."""
+        from seer.core.registry.mcp_client_registry import MCPServerConfig  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+        resolved_auth = self._resolve_auth(node, eval_ctx)
+        if saved_auth and not resolved_auth:
+            resolved_auth = saved_auth
+        elif saved_auth and resolved_auth:
+            for section in ("headers", "env"):
+                if section in saved_auth and section not in resolved_auth:
+                    resolved_auth[section] = saved_auth[section]
+
+        valid_server_type = server_type if server_type in ("http", "stdio") else "http"
+        server_config = MCPServerConfig(
+            server=server_url,
+            server_type=valid_server_type,  # type: ignore[arg-type]
+            auth=resolved_auth,
+        )
+        return server_config, resolved_auth
 
     def _evaluate_inputs(self, node: MCPNode, ctx: Any) -> Dict[str, Any]:
         """Evaluate input expressions."""
@@ -241,6 +280,12 @@ class MCPNodeType(BaseNodeType):
 
         if ctx.mcp_client_registry is None:
             # Fall back to sync path if no MCP registry available
+            self.register_type_sync(node, env, ctx)
+            return
+
+        # When using a saved config, server URL isn't known at compile time
+        # Skip server validation and fall back to generic schema
+        if node.mcp_server_config_id and not node.server:
             self.register_type_sync(node, env, ctx)
             return
 

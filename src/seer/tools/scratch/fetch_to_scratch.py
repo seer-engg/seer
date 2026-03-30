@@ -44,8 +44,11 @@ class FetchToScratchTool(BaseTool):
         "Python code in a sandbox - it keeps large datasets out of the conversation.\n\n"
         "Returns a scratch reference with a data preview. Use codebox_load_data "
         "to load the full data into a sandbox for analysis.\n\n"
-        "Example: fetch_to_scratch(tool_name='oura_get_sleep', "
-        "arguments={'start_date': '2026-02-25', 'end_date': '2026-03-25'})"
+        "Examples:\n"
+        "  fetch_to_scratch(tool_name='oura_get_sleep', "
+        "arguments={'start_date': '2026-02-25', 'end_date': '2026-03-25'})\n"
+        "  fetch_to_scratch(tool_name='postgres_execute_sql', "
+        "arguments={'integration_resource_id': 1, 'sql': 'SELECT * FROM ...'})"
     )
 
     # No OAuth - this tool orchestrates other tools
@@ -172,6 +175,17 @@ class FetchToScratchTool(BaseTool):
         context: "WorkflowRuntimeContext",
     ) -> Dict[str, Any]:
         """Resolve credentials, execute the target tool, and surface any errors."""
+        # Apply workflow-spec credential bindings for the target tool.
+        # The agent node binds tools to specific integration_resource_id / connection_id
+        # values from the workflow spec. Without this override, the LLM-provided
+        # resource ID may reference a resource owned by a different user.
+        if context.tool_bindings and tool_name in context.tool_bindings:
+            bindings = context.tool_bindings[tool_name]
+            if bindings.get("integration_resource_id") is not None:
+                tool_args["integration_resource_id"] = bindings["integration_resource_id"]
+            if bindings.get("connection_id") is not None:
+                tool_args["connection_id"] = bindings["connection_id"]
+
         try:
             resolved = await self._resolve_target_credentials(target_tool, tool_args, context)
         except Exception as e:  # pylint: disable=broad-exception-caught  # Credential resolution can fail in many ways; return structured error

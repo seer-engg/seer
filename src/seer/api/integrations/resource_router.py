@@ -9,17 +9,28 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from seer.api.core.errors import INTEGRATION_PROBLEM, VALIDATION_PROBLEM, raise_problem
-from seer.api.integrations.models import PostgresBindRequest, PostgresTestRequest, SupabaseBindRequest, SupabaseManualBindRequest
+from seer.api.integrations.models import (
+    McpServerBindRequest,
+    McpServerUpdateRequest,
+    PostgresBindRequest,
+    PostgresTestRequest,
+    SupabaseBindRequest,
+    SupabaseManualBindRequest,
+)
 from seer.api.integrations.services import (
+    bind_mcp_server,
     bind_postgres_database_manual,
     bind_supabase_project,
     bind_supabase_project_manual,
     deactivate_integration_resource,
     get_valid_access_token,
+    list_mcp_servers,
     list_postgres_bindings,
     list_resource_secrets,
+    resolve_mcp_server_config,
     serialize_integration_resource,
     serialize_integration_secret,
+    update_mcp_server,
     update_postgres_database,
 )
 from seer.config import config
@@ -282,6 +293,114 @@ async def list_postgres_bindings_route(request: Request):
             }
             for r in resources
         ],
+    }
+
+
+# =============================================================================
+# MCP SERVER CONFIG ROUTES
+# =============================================================================
+
+
+@router.post("/mcp/servers/bind")
+async def bind_mcp_server_route(request: Request, payload: McpServerBindRequest):
+    """Save an MCP server configuration with optional auth credentials."""
+    user: User = request.state.db_user
+
+    resource = await bind_mcp_server(
+        user,
+        name=payload.name,
+        server_url=payload.server_url,
+        server_type=payload.server_type,
+        auth=payload.auth,
+    )
+
+    return {
+        "resource": serialize_integration_resource(resource),
+    }
+
+
+@router.patch("/mcp/servers/{resource_id}")
+async def update_mcp_server_route(request: Request, resource_id: int, payload: McpServerUpdateRequest):
+    """Update an existing MCP server configuration."""
+    user: User = request.state.db_user
+
+    resource = await update_mcp_server(
+        user,
+        resource_id,
+        name=payload.name,
+        server_url=payload.server_url,
+        server_type=payload.server_type,
+        auth=payload.auth,
+    )
+
+    return {
+        "resource": serialize_integration_resource(resource),
+    }
+
+
+@router.get("/mcp/servers")
+async def list_mcp_servers_route(request: Request):
+    """List all saved MCP server configurations for the current user."""
+    user: User = request.state.db_user
+    resources = await list_mcp_servers(user)
+
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "name": r.name or "Unnamed",
+                "server_url": (r.resource_metadata or {}).get("server_url", ""),
+                "server_type": (r.resource_metadata or {}).get("server_type", "http"),
+                "has_auth": (r.resource_metadata or {}).get("has_auth", False),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            }
+            for r in resources
+        ],
+    }
+
+
+@router.post("/mcp/servers/test")
+async def test_mcp_server_route(request: Request, payload: McpServerBindRequest):
+    """Test connectivity to an MCP server by listing its tools."""
+    from seer.core.runtime.global_compiler import WorkflowCompilerSingleton  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+    from seer.core.registry.mcp_client_registry import MCPServerConfig  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular import
+
+    _ = request  # User validation via middleware
+
+    server_config = MCPServerConfig(
+        server=payload.server_url,
+        server_type=payload.server_type,
+        auth=payload.auth,
+    )
+
+    try:
+        compiler = WorkflowCompilerSingleton.instance()
+        tools = await compiler.mcp_client_registry.list_tools(server_config)
+        return {
+            "status": "ok",
+            "connected": True,
+            "tool_count": len(tools),
+            "tools": [{"name": t.name, "description": getattr(t, "description", "")} for t in tools],
+        }
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # Reason: Graceful error reporting for connectivity test
+        logger.exception("MCP server connectivity test failed")
+        return {
+            "status": "error",
+            "connected": False,
+            "error": str(exc),
+        }
+
+
+@router.get("/mcp/servers/{resource_id}")
+async def get_mcp_server_route(request: Request, resource_id: int):
+    """Get a single saved MCP server configuration (metadata only, no secrets)."""
+    user: User = request.state.db_user
+    resolved = await resolve_mcp_server_config(user, resource_id)
+    return {
+        "server_url": resolved["server"],
+        "server_type": resolved["server_type"],
+        "has_auth": resolved.get("auth") is not None,
     }
 
 

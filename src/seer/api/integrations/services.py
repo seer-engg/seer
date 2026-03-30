@@ -12,12 +12,16 @@
 # Extracting helpers would split cohesive credential-resolution logic across multiple functions.
 
 import hashlib
+import json
+import uuid
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 from fastapi import HTTPException
 
 from seer.services.integrations.constants import (
+    MCP_RESOURCE_PROVIDER,
+    MCP_RESOURCE_TYPE_SERVER,
     POSTGRES_RESOURCE_PROVIDER,
     POSTGRES_RESOURCE_TYPE_DATABASE,
     SUPABASE_RESOURCE_PROVIDER,
@@ -39,25 +43,38 @@ logger = get_logger("api.integrations.services")
 
 
 
-async def get_connection_for_provider(user: User, provider: str) -> Optional[OAuthConnection]:
+async def get_connection_for_provider(
+    user: User, provider: str, *, connection_id: Optional[int] = None
+) -> Optional[OAuthConnection]:
     """
     Get active OAuth connection for a specific provider.
+
+    When connection_id is provided, returns that specific connection (if it belongs
+    to the user, matches the provider, and is active). When omitted, returns the
+    most recently updated active connection for the provider.
 
     Args:
         user: User model instance
         provider: OAuth provider name (google, github, etc.)
+        connection_id: Optional specific connection ID to look up
 
     Returns:
         OAuthConnection if found, None otherwise
     """
     oauth_provider = get_oauth_provider(provider)
     try:
-        connection = await OAuthConnection.get_or_none(
+        if connection_id is not None:
+            return await OAuthConnection.get_or_none(
+                id=connection_id,
+                user=user,
+                provider=oauth_provider,
+                status="active",
+            )
+        return await OAuthConnection.filter(
             user=user,
             provider=oauth_provider,
-            status="active"
-        )
-        return connection
+            status="active",
+        ).order_by("-updated_at").first()
     except Exception as e:
         logger.error("Error getting connection for provider %s: %s", provider, e)
         return None
@@ -767,3 +784,178 @@ async def update_postgres_database(
         )
 
     return resource
+
+
+# =============================================================================
+# MCP Server Config Helpers
+# =============================================================================
+
+async def bind_mcp_server(
+    user: User,
+    *,
+    name: str,
+    server_url: str,
+    server_type: str = "http",
+    auth: Optional[Dict[str, Any]] = None,
+) -> IntegrationResource:
+    """
+    Save an MCP server configuration.
+
+    Args:
+        user: User model instance
+        name: Friendly server display name
+        server_url: MCP server URL (HTTP) or command (stdio)
+        server_type: Transport protocol ('http' or 'stdio')
+        auth: Optional auth config with 'headers' and/or 'env' dicts
+
+    Returns:
+        Created IntegrationResource
+    """
+    if server_type not in ("http", "stdio"):
+        raise HTTPException(status_code=400, detail="server_type must be 'http' or 'stdio'")
+
+    resource_uuid = str(uuid.uuid4())
+
+    resource = await _upsert_integration_resource(
+        user=user,
+        oauth_connection=None,
+        provider=MCP_RESOURCE_PROVIDER,
+        resource_type=MCP_RESOURCE_TYPE_SERVER,
+        resource_id=resource_uuid,
+        resource_key=None,
+        name=name,
+        metadata={
+            "server_url": server_url,
+            "server_type": server_type,
+            "binding_mode": "manual",
+            "has_auth": auth is not None,
+        },
+    )
+
+    if auth:
+        await _upsert_integration_secret(
+            user=user,
+            provider=MCP_RESOURCE_PROVIDER,
+            name="mcp_auth",
+            secret_type="auth_config",
+            value_enc=json.dumps(auth),
+            resource=resource,
+            metadata={"binding_mode": "manual"},
+        )
+
+    return resource
+
+
+async def update_mcp_server(
+    user: User,
+    resource_id: int,
+    *,
+    name: Optional[str] = None,
+    server_url: Optional[str] = None,
+    server_type: Optional[str] = None,
+    auth: Optional[Dict[str, Any]] = None,
+) -> IntegrationResource:
+    """Update an existing MCP server configuration."""
+    resource = await IntegrationResource.get_or_none(
+        id=resource_id,
+        user=user,
+        provider=MCP_RESOURCE_PROVIDER,
+        resource_type=MCP_RESOURCE_TYPE_SERVER,
+        status="active",
+    )
+    if not resource:
+        raise HTTPException(status_code=404, detail=f"MCP server config {resource_id} not found")
+
+    if server_type is not None and server_type not in ("http", "stdio"):
+        raise HTTPException(status_code=400, detail="server_type must be 'http' or 'stdio'")
+
+    current_metadata = resource.resource_metadata or {}
+    update_fields: List[str] = []
+
+    if name is not None and name != resource.name:
+        resource.name = name
+        update_fields.append("name")
+
+    if server_url is not None:
+        current_metadata["server_url"] = server_url
+    if server_type is not None:
+        current_metadata["server_type"] = server_type
+
+    if auth is not None:
+        current_metadata["has_auth"] = True
+        await _upsert_integration_secret(
+            user=user,
+            provider=MCP_RESOURCE_PROVIDER,
+            name="mcp_auth",
+            secret_type="auth_config",
+            value_enc=json.dumps(auth),
+            resource=resource,
+            metadata={"binding_mode": "manual"},
+        )
+
+    if resource.resource_metadata != current_metadata:
+        resource.resource_metadata = current_metadata
+        update_fields.append("resource_metadata")
+
+    if update_fields:
+        update_fields.append("updated_at")
+        await resource.save(update_fields=update_fields)
+
+    return resource
+
+
+async def list_mcp_servers(user: User) -> List[IntegrationResource]:
+    """List all saved MCP server configurations for a user."""
+    return await list_integration_resources(
+        user,
+        provider=MCP_RESOURCE_PROVIDER,
+        resource_type=MCP_RESOURCE_TYPE_SERVER,
+    )
+
+
+async def resolve_mcp_server_config(user: User, resource_id: int) -> Dict[str, Any]:
+    """
+    Resolve a saved MCP server config for runtime execution.
+
+    Fetches the resource metadata and decrypts the auth secret.
+
+    Args:
+        user: User model instance
+        resource_id: ID of the IntegrationResource
+
+    Returns:
+        Dict with 'server', 'server_type', and optionally 'auth' keys.
+
+    Raises:
+        HTTPException: If resource not found or inactive.
+    """
+    resource = await IntegrationResource.get_or_none(
+        id=resource_id,
+        user=user,
+        provider=MCP_RESOURCE_PROVIDER,
+        resource_type=MCP_RESOURCE_TYPE_SERVER,
+        status="active",
+    )
+    if not resource:
+        raise HTTPException(status_code=404, detail=f"MCP server config {resource_id} not found")
+
+    metadata = resource.resource_metadata or {}
+    result: Dict[str, Any] = {
+        "server": metadata.get("server_url", ""),
+        "server_type": metadata.get("server_type", "http"),
+    }
+
+    # Fetch auth secret if exists
+    auth_secret = await IntegrationSecret.get_or_none(
+        user=user,
+        resource=resource,
+        name="mcp_auth",
+        status="active",
+    )
+    if auth_secret and auth_secret.value_enc:
+        try:
+            result["auth"] = json.loads(auth_secret.value_enc)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Failed to parse MCP auth secret for resource %s", resource_id)
+
+    return result

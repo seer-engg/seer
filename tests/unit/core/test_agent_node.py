@@ -2100,3 +2100,27 @@ class TestCollectToolWorkerFailures:
 
         assert _collect_tool_worker_failures({"t1": worker}) == {}
         assert _collect_tool_worker_failures({}) == {}
+
+
+class TestBuildRecursionLimit:
+    """Test _build_recursion_limit computes safe LangGraph recursion limits."""
+
+    def test_standard_multiplier(self):
+        from seer.core.nodes.agent_node import _build_recursion_limit
+
+        assert _build_recursion_limit(15) == 75  # 15 * 5
+        assert _build_recursion_limit(50) == 250  # 50 * 5
+
+    def test_floor_of_50(self):
+        from seer.core.nodes.agent_node import _build_recursion_limit
+
+        # Small values should be clamped to floor of 50
+        assert _build_recursion_limit(5) == 50
+        assert _build_recursion_limit(10) == 50
+
+    def test_non_int_fallback(self):
+        from seer.core.nodes.agent_node import _build_recursion_limit
+
+        assert _build_recursion_limit("invalid") == 50
+        assert _build_recursion_limit(None) == 50
+        assert _build_recursion_limit(3.5) == 50

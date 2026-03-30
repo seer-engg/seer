@@ -6,12 +6,14 @@ Uses platform-owned API key (E2B_API_KEY) - always available for all customers.
 """
 from seer.tools.base import register_tool
 from seer.tools.e2b.data_loader import E2BLoadDataTool
+from seer.tools.e2b.download_file import E2BDownloadFileTool
 from seer.tools.e2b.run_code import E2BRunCodeTool
 from seer.tools.e2b.sandbox import (
     E2BCreateSandboxTool,
     E2BKillSandboxTool,
     E2BRunInSandboxTool,
 )
+from seer.tools.e2b.write_data import E2BWriteDataTool
 
 
 def register_e2b_tools() -> None:
@@ -21,6 +23,8 @@ def register_e2b_tools() -> None:
     register_tool(E2BRunInSandboxTool())
     register_tool(E2BKillSandboxTool())
     register_tool(E2BLoadDataTool())
+    register_tool(E2BDownloadFileTool())
+    register_tool(E2BWriteDataTool())
 
 
 __all__ = [
@@ -29,5 +33,7 @@ __all__ = [
     "E2BRunInSandboxTool",
     "E2BKillSandboxTool",
     "E2BLoadDataTool",
+    "E2BDownloadFileTool",
+    "E2BWriteDataTool",
     "register_e2b_tools",
 ]

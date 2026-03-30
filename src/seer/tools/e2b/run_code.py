@@ -10,7 +10,7 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from seer.logger import get_logger
-from seer.tools.e2b.base import E2BToolBase
+from seer.tools.e2b.base import E2BToolBase, serialize_e2b_result
 
 if TYPE_CHECKING:
     from seer.core.runtime.context import WorkflowRuntimeContext
@@ -90,14 +90,12 @@ class E2BRunCodeTool(E2BToolBase):
 
             execution_time_ms = int((time.perf_counter() - start_time) * 1000)
 
-            # Format results
+            # Format results using E2B SDK attribute inspection
             results = []
             for result in execution.results:
-                results.append({
-                    "type": getattr(result, "type", "unknown"),
-                    "data": getattr(result, "data", str(result)),
-                    "is_main_result": getattr(result, "is_main_result", False),
-                })
+                serialized = serialize_e2b_result(result)
+                serialized["is_main_result"] = getattr(result, "is_main_result", False)
+                results.append(serialized)
 
             # Extract logs - E2B returns stdout/stderr as lists of strings
             stdout = ""

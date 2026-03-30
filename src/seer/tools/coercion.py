@@ -120,6 +120,8 @@ def _coerce_integer(value: Any, field_name: str, schema: Dict[str, Any]) -> int:
     elif isinstance(value, str):
         # Strip quotes first, then convert
         cleaned = _strip_outer_quotes(value.strip())
+        if not cleaned:
+            raise ValueError("Cannot coerce empty string to integer")
         result = int(cleaned)
     else:
         result = int(value)
@@ -156,6 +158,8 @@ def _coerce_number(value: Any, field_name: str, schema: Dict[str, Any]) -> float
         result = float(value)
     elif isinstance(value, str):
         cleaned = _strip_outer_quotes(value.strip())
+        if not cleaned:
+            raise ValueError("Cannot coerce empty string to number")
         result = float(cleaned)
     else:
         result = float(value)
@@ -390,8 +394,13 @@ def coerce_arguments(
         try:
             result[key] = _coerce_value(value, key, field_schema)
         except (ValueError, TypeError) as e:
-            # Log warning but don't fail - pass original value through
-            logger.warning("Coercion failed for %s: %s (passing through original)", key, e)
-            result[key] = value
+            # Fall back to schema default if available; otherwise pass original value through
+            default = field_schema.get("default")
+            if default is not None:
+                logger.warning("Coercion failed for %s: %s (using schema default: %s)", key, e, default)
+                result[key] = default
+            else:
+                logger.warning("Coercion failed for %s: %s (passing through original)", key, e)
+                result[key] = value
 
     return result

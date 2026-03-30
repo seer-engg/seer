@@ -62,6 +62,7 @@ jobs:
           DOCKER_HOST: "unix:///var/run/docker.sock"
 
       - name: Run E2E tests
+        if: github.base_ref == 'main'
         run: uv run pytest tests/e2e -v --tb=short -x
         env:
           TESTCONTAINERS_RYUK_DISABLED: "false"

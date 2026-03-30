@@ -10,6 +10,18 @@ if TYPE_CHECKING:
     from seer.core.scratch.store import ScratchStore
 
 
+class McpServerConfigResolver(Protocol):
+    """Runtime protocol for resolving saved MCP server configs from the DB."""
+
+    async def resolve(self, resource_id: int) -> Dict[str, Any]:
+        """Resolve a saved MCP server config by IntegrationResource ID.
+
+        Returns:
+            Dict with 'server', 'server_type', and optionally 'auth' keys.
+        """
+        ...  # pylint: disable=unnecessary-ellipsis  # Reason: required for Pyright to accept non-None return type in Protocol body
+
+
 class WorkflowMemoryAccess(Protocol):
     """Runtime protocol implemented by services-side memory adapters."""
 
@@ -57,7 +69,7 @@ class WorkflowRuntimeResources:
 
 
 @dataclass
-class WorkflowRuntimeContext:
+class WorkflowRuntimeContext:  # pylint: disable=too-many-instance-attributes  # Reason: each attribute is a distinct runtime concern (user, run id, thread, org, memory, mcp, budget, resources)
     """
     Carries runtime-scoped data that needs to be accessible to LangGraph
     nodes and tool handlers. Extend this as new fields are required.
@@ -75,7 +87,9 @@ class WorkflowRuntimeContext:
     thread_id: str | None = None  # For chat threads
     organization_id: int | None = None  # For shared OAuth connection resolution
     memory_access: WorkflowMemoryAccess | None = None
+    mcp_config_resolver: McpServerConfigResolver | None = None
     budget: WorkflowRunBudget = field(default_factory=WorkflowRunBudget)
+    tool_bindings: Dict[str, Dict[str, Any]] | None = None  # Per-tool credential bindings from workflow spec
 
     # Private field for lazy-loaded runtime resources
     _resources: WorkflowRuntimeResources = field(default_factory=WorkflowRuntimeResources, repr=False)
@@ -89,16 +103,19 @@ class WorkflowRuntimeContext:
         accumulated_cost_usd: float = 0.0,
         organization_id: int | None = None,
         memory_access: WorkflowMemoryAccess | None = None,
+        mcp_config_resolver: McpServerConfigResolver | None = None,
     ) -> None:
         self.user = user
         self.workflow_run_id = workflow_run_id
         self.thread_id = thread_id
         self.organization_id = organization_id
         self.memory_access = memory_access
+        self.mcp_config_resolver = mcp_config_resolver
         self.budget = WorkflowRunBudget(
             per_run_cost_cap_usd=per_run_cost_cap_usd,
             accumulated_cost_usd=accumulated_cost_usd,
         )
+        self.tool_bindings = None
         self._resources = WorkflowRuntimeResources()
 
     @property

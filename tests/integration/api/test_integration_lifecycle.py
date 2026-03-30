@@ -130,6 +130,49 @@ class TestConnectionLifecycle:
             await delete_connection_by_id(test_user, "99999")
         assert exc_info.value.status_code == 404
 
+    async def test_get_connection_multiple_accounts_no_crash(self, db_engine, test_user):
+        """Multiple active connections for same provider returns most recent, not crash."""
+        conn1 = await _create_oauth_connection(test_user, account_id="acct1@gmail.com")
+        conn2 = await _create_oauth_connection(test_user, account_id="acct2@gmail.com")
+        # Touch conn2 so it has a more recent updated_at
+        conn2.scopes = "openid"
+        await conn2.save()
+
+        result = await get_connection_for_provider(test_user, "google")
+        assert result is not None
+        assert result.id == conn2.id
+
+    async def test_get_connection_with_connection_id(self, db_engine, test_user):
+        """When connection_id is provided, returns that specific connection."""
+        conn1 = await _create_oauth_connection(test_user, account_id="acct1@gmail.com")
+        conn2 = await _create_oauth_connection(test_user, account_id="acct2@gmail.com")
+
+        result = await get_connection_for_provider(
+            test_user, "google", connection_id=conn1.id
+        )
+        assert result is not None
+        assert result.id == conn1.id
+
+    async def test_get_connection_with_invalid_connection_id(self, db_engine, test_user):
+        """Non-existent connection_id returns None."""
+        await _create_oauth_connection(test_user)
+
+        result = await get_connection_for_provider(
+            test_user, "google", connection_id=99999
+        )
+        assert result is None
+
+    async def test_get_connection_with_wrong_provider_connection_id(self, db_engine, test_user):
+        """connection_id for different provider returns None (provider guard)."""
+        github_conn = await _create_oauth_connection(
+            test_user, provider="github", account_id="ghuser"
+        )
+
+        result = await get_connection_for_provider(
+            test_user, "google", connection_id=github_conn.id
+        )
+        assert result is None
+
 
 # =============================================================================
 # Cascade Deletion

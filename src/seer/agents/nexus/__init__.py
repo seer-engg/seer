@@ -3,6 +3,7 @@ from .utils import extract_thinking_from_messages
 from .context import (
     _current_thread_id,
     _submission_attempt_count,
+    _turn_completed_without_proposal,
     get_user_for_thread,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "extract_thinking_from_messages",
     "_current_thread_id",
     "_submission_attempt_count",
+    "_turn_completed_without_proposal",
     "get_user_for_thread",
 ]
