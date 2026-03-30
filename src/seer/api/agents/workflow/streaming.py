@@ -91,6 +91,14 @@ async def save_stream_result(  # pylint: disable=too-many-positional-arguments #
         if proposal:
             await proposal.fetch_related('created_by', 'workflow', 'session')
 
+        if not proposal:
+            from seer.agents.nexus import _turn_completed_without_proposal  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+            if not _turn_completed_without_proposal.get():
+                logger.warning(
+                    "Agent completed without terminal tool (enforcement may have hit max retries)",
+                    extra={"session_id": session_id, "thread_id": thread_id},
+                )
+
         await save_chat_message(
             session_id=session_id, role="assistant", content=full_response, thinking=thinking_text,
             suggested_edits=proposal.spec if proposal else None, proposal=proposal,

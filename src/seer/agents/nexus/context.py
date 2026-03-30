@@ -4,6 +4,7 @@ from contextvars import ContextVar
 
 _current_thread_id: ContextVar[Optional[str]] = ContextVar('_current_thread_id', default=None)
 _submission_attempt_count: ContextVar[int] = ContextVar('_submission_attempt_count', default=0)
+_turn_completed_without_proposal: ContextVar[bool] = ContextVar('_turn_completed_without_proposal', default=False)
 
 if TYPE_CHECKING:
     from seer.api.user.models import User
