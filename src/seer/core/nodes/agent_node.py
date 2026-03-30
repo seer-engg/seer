@@ -863,7 +863,7 @@ def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
 
     max_iterations = node.inputs.get("max_iterations", 10)
     temperature = node.inputs.get("temperature", 0.2)
-    enable_artifacts = bool(node.inputs.get("enable_artifacts", True))
+    enable_artifacts = bool(node.inputs.get("enable_artifacts", False))
     memory_bank_id = node.inputs.get("memory_bank_id")
 
     return {
