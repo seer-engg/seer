@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from seer.agents.nexus.context import (
     _current_thread_id,
     _submission_attempt_count,
+    _turn_completed_without_proposal,
     get_user_for_thread,
 )
 from seer.agents.nexus.tracking import track_nexus_tool
@@ -275,7 +276,7 @@ def _validate_spec_format(workflow_spec: Any) -> tuple[Optional[Dict], Optional[
 
 
 # Per-invocation submission failure counter (ContextVar — survives async, scoped to worker task)
-_MAX_SUBMISSION_ATTEMPTS = 2
+_MAX_SUBMISSION_ATTEMPTS = 3
 
 
 def _check_retry_cap() -> Optional[str]:
@@ -283,8 +284,10 @@ def _check_retry_cap() -> Optional[str]:
     if _submission_attempt_count.get() >= _MAX_SUBMISSION_ATTEMPTS:
         return _error_response(
             "max_retries",
-            f"Workflow submission failed {_MAX_SUBMISSION_ATTEMPTS} times. Stop retrying. "
-            "Ask the user for help or use get_workflow_guide() to review the schema.",
+            f"Workflow submission failed {_MAX_SUBMISSION_ATTEMPTS} times. "
+            "You MUST stop retrying submit_workflow_spec and instead call "
+            "complete_response(response_type='general_help', reasoning='...') "
+            "to explain the validation errors to the user so they can help resolve them.",
         )
     return None
 
@@ -400,3 +403,28 @@ async def _create_proposal(
         response["summary"] = summary
 
     return json.dumps(response, indent=2)
+
+
+@tool
+@track_nexus_tool("complete_response")
+async def complete_response(
+    response_type: str,
+    reasoning: str,
+) -> str:
+    """Signal that this response does not include workflow changes.
+
+    You MUST call either submit_workflow_spec() or complete_response()
+    before finishing your turn. Call this tool when the user's message does
+    NOT require a workflow change — for example, questions about an existing
+    workflow, general guidance, or follow-up clarifications.
+
+    Args:
+        response_type: Category of response: "analysis", "question_answer", or "general_help".
+        reasoning: Brief explanation of why no workflow proposal is needed.
+    """
+    _turn_completed_without_proposal.set(True)
+    logger.info(
+        "Agent signaled completion without proposal: type=%s, reason=%s",
+        response_type, reasoning[:200],
+    )
+    return json.dumps({"status": "ok", "response_type": response_type})

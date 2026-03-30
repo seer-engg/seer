@@ -1083,6 +1083,7 @@ All blocks support `${...}` expressions for dynamic data:
 - `${node_id}` - Full output of a node
 - `${node_id.field}` - Specific field from node output
 - `${node_id.nested.field}` - Nested field access
+- ⚠️ Only `http_request` tool outputs have a `.body` wrapper (e.g., `${fetch.body.items}`). Other tools return data directly — use `${node_id.field}` without `.body` (e.g., `${read_sheet.values}`, `${gmail.subject}`). Check `search_tools()` output schema for exact field names.
 
 **Loop Variables:**
 - `${item}` - Current item in for_each loop (or custom `item_var`)
@@ -1146,15 +1147,24 @@ This will fail because arithmetic is not allowed in template expressions.
 Then use `${compute_row}` in subsequent nodes.
 
 ### Condition Expressions (in `if` node conditions)
-Conditions are evaluated with full Python-like expression support.
+Conditions support a limited expression language — NOT full Python.
 
 **✅ Supported:**
 - Arithmetic: `${count} + 1 > 5`, `${price} * ${quantity} > 1000`
 - Comparisons: `${status} == 'active'`, `${count} >= 10`
 - Boolean logic: `${flag} && ${other}`, `!${disabled}`, `${a} || ${b}`
+- Containment: `'value' in ${array}`, `'key' in ${object}`
 - Functions: `len(${items}) > 0`, `sum(${values}) < 100`, `any(${flags})`
 
-**Available Functions:** `len`, `any`, `all`, `min`, `max`, `sum`, `str`, `int`, `float`
+**Available Functions (whitelist — no others work):** `len`, `any`, `all`, `min`, `max`, `sum`, `str`, `int`, `float`
+
+**❌ NOT Supported in Conditions:**
+- Python ternary: `x if cond else y` — use an `if` node with conditional edges instead
+- Method calls: `.lower()`, `.strip()`, `.iloc[]`, `.append()`, `.split()`
+- Library/module calls: `pd.notna()`, `json.loads()`, `re.match()`, `datetime.now()`
+- Comprehensions: `[x for x in items]` — use a `for_each` node instead
+- Lambda functions
+- Slicing with complex syntax: `[:, 1]` — only simple `[start:end]` on arrays
 
 **Example - CORRECT:**
 ```json
@@ -1175,7 +1185,7 @@ Arithmetic works in `if` conditions!
 {
   "nodes": [
     {"id": "fetch", "type": "tool", "tool": "gmail_get_message", "inputs": {"message_id": "${email_trigger.data.id}"}},
-    {"id": "analyze", "type": "agent", "inputs": {"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Analyze: ${fetch.body}"}, "outputs": {"mode": "json", ...}}
+    {"id": "analyze", "type": "agent", "inputs": {"model": "qwen/qwen3-235b-a22b-2507", "prompt": "Analyze: ${fetch}"}, "outputs": {"mode": "json", ...}}
   ],
   "edges": [
     {"source": "fetch", "target": "analyze"}

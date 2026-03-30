@@ -24,6 +24,7 @@ from tortoise.exceptions import DoesNotExist
 from seer.agents.nexus import (
     _current_thread_id,
     _submission_attempt_count,
+    _turn_completed_without_proposal,
     create_nexus_chat_agent,
     extract_thinking_from_messages,
 )
@@ -582,6 +583,12 @@ async def _handle_agent_result(
             thread_id=thread_id, status=WorkflowProposal.STATUS_PENDING
         ).prefetch_related("created_by", "workflow", "session")
 
+        if not proposal and not _turn_completed_without_proposal.get():
+            logger.warning(
+                "Agent completed without terminal tool (enforcement may have hit max retries)",
+                extra={"session_id": session_id, "thread_id": thread_id},
+            )
+
         await save_chat_message(
             session_id=session_id,
             role="assistant",
@@ -1034,6 +1041,12 @@ async def _finalize_completed_chat_resume(
         status=WorkflowProposal.STATUS_PENDING,
     ).prefetch_related("created_by", "workflow", "session")
 
+    if not proposal and not _turn_completed_without_proposal.get():
+        logger.warning(
+            "Agent completed resume without terminal tool (enforcement may have hit max retries)",
+            extra={"session_id": session_id, "thread_id": session.thread_id},
+        )
+
     await save_chat_message(
         session_id=session_id,
         role="assistant",
@@ -1128,6 +1141,7 @@ async def _run_chat_resume_stream(
     publisher = StreamPublisher(session_id)
     token = _current_thread_id.set(context.thread_id)
     attempt_token = _submission_attempt_count.set(0)
+    completed_token = _turn_completed_without_proposal.set(False)
     stream_started = asyncio.get_running_loop().time()
     try:
         session = await _get_session_if_current_owner(
@@ -1194,6 +1208,7 @@ async def _run_chat_resume_stream(
     finally:
         _current_thread_id.reset(token)
         _submission_attempt_count.reset(attempt_token)
+        _turn_completed_without_proposal.reset(completed_token)
         clear_chat_runtime_context()
         await publisher.close()
 
