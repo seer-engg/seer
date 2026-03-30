@@ -194,12 +194,14 @@ class SlackResourceProvider(ResourceProvider):
                 status=404
             )
 
-        # Get the OAuth connection for this workspace
-        connection = await OAuthConnection.get_or_none(
-            user=user,
-            provider="slack",
-            status="active"
-        )
+        # Get the OAuth connection via the workspace resource's FK
+        await workspace_resource.fetch_related("oauth_connection")
+        connection = workspace_resource.oauth_connection
+        if not connection or connection.status != "active":
+            # Fallback for resources created before FK was populated
+            connection = await OAuthConnection.filter(
+                user=user, provider="slack", status="active"
+            ).order_by("-updated_at").first()
         if not connection or not connection.access_token_enc:
             raise_problem(
                 type_uri=INTEGRATION_PROBLEM,
