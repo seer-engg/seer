@@ -31,6 +31,12 @@ class PgVectorStore:
         Returns:
             List of matching chunks with scores
         """
+        # Validate numeric params at the DB boundary
+        if not isinstance(min_score, (int, float)):
+            min_score = 0.7
+        if not isinstance(top_k, int):
+            top_k = 5
+
         conn = Tortoise.get_connection("default")
 
         # Convert embedding to PostgreSQL array format
