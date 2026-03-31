@@ -373,6 +373,21 @@ class TestNormalizeRow:
 
         assert result["fields"] == {"Name": "Alice", "Email": None, "Status": None}
 
+    def test_normalize_row_with_more_columns_than_headers(self, adapter):
+        """Test normalization when row has more values than headers (overflow columns get generated names)."""
+        row = ["Alice", "alice@example.com", "Active", "extra_value"]
+        config = {"spreadsheet_id": "test123", "sheet_name": "Sheet1"}
+        headers = ["Name", "Email"]
+
+        result = adapter._normalize_row(row, 5, headers, config)
+
+        assert result["fields"] == {
+            "Name": "Alice",
+            "Email": "alice@example.com",
+            "column_3": "Active",
+            "column_4": "extra_value",
+        }
+
     def test_normalize_without_headers(self, adapter):
         """Test normalization without column headers."""
         row = ["Val1", "Val2", "Val3"]
