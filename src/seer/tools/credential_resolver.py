@@ -43,9 +43,9 @@ class CredentialResolver:
         self.connection_id = connection_id
         self.organization_id = organization_id
 
-    async def resolve(self, arguments: Dict[str, Any]) -> ResolvedCredentials:
+    async def resolve(self, arguments: Dict[str, Any], *, force_refresh: bool = False) -> ResolvedCredentials:
         args = arguments or {}
-        connection, access_token = await self._resolve_connection()
+        connection, access_token = await self._resolve_connection(force_refresh=force_refresh)
         resource = await self._resolve_resource(args, connection)
         secrets, secret_records = await self._resolve_secrets(resource, connection)
         return ResolvedCredentials(
@@ -56,7 +56,7 @@ class CredentialResolver:
             secret_records=secret_records,
         )
 
-    async def _resolve_connection(self) -> Tuple[Optional[OAuthConnection], Optional[str]]:
+    async def _resolve_connection(self, *, force_refresh: bool = False) -> Tuple[Optional[OAuthConnection], Optional[str]]:
         if not self.tool.required_scopes and not self.tool.requires_oauth:
             return None, None
 
@@ -78,6 +78,7 @@ class CredentialResolver:
             connection_id=self.connection_id,
             provider=provider,
             organization_id=self.organization_id,
+            force_refresh=force_refresh,
         )
 
         is_valid, missing_scope = validate_scopes(connection, self.tool.required_scopes)

@@ -102,6 +102,8 @@ async def get_oauth_token(
     connection_id: Optional[str] = None,
     provider: Optional[str] = None,
     organization_id: Optional[int] = None,
+    *,
+    force_refresh: bool = False,
 ) -> Tuple[OAuthConnection, str]:
     """
     Resolve an OAuth connection for the user, refreshing tokens if expired.
@@ -148,7 +150,8 @@ async def get_oauth_token(
     else:
         raise HTTPException(status_code=400, detail="Either connection_id or provider must be provided")
 
-    if connection.expires_at and connection.expires_at < datetime.now(timezone.utc):
+    needs_refresh = force_refresh or (connection.expires_at and connection.expires_at < datetime.now(timezone.utc))
+    if needs_refresh:
         if not connection.refresh_token_enc:
             raise HTTPException(
                 status_code=401,

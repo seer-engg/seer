@@ -9,6 +9,9 @@ from fastapi import HTTPException
 
 from seer.logger import get_logger
 from seer.tools.notion.base import NotionAPIClient
+from seer.tools.notion.markdown_blocks import (
+    markdown_to_notion_blocks as _markdown_to_notion_blocks,
+)
 from seer.tools.credential_resolver import ResolvedCredentials
 
 if TYPE_CHECKING:
@@ -34,21 +37,6 @@ def _extract_block_text(block: Dict[str, Any]) -> str:
     rich_text = block_data.get("rich_text", [])
     return "".join(part.get("plain_text", "") for part in rich_text)
 
-
-def _build_paragraph_block(text: str) -> Dict[str, Any]:
-    """Build a Notion paragraph block from plain text."""
-    return {
-        "object": "block",
-        "type": "paragraph",
-        "paragraph": {
-            "rich_text": [
-                {
-                    "type": "text",
-                    "text": {"content": text},
-                }
-            ]
-        },
-    }
 
 
 class NotionGetPageTool(NotionAPIClient):
@@ -197,9 +185,9 @@ class NotionCreatePageTool(NotionAPIClient):
             },
         }
 
-        # Optionally add content as a paragraph block
+        # Optionally add content as blocks (markdown → structured Notion blocks)
         if arguments.get("content"):
-            body["children"] = [_build_paragraph_block(arguments["content"])]
+            body["children"] = _markdown_to_notion_blocks(arguments["content"])
 
         logger.info("Creating Notion page: title=%s, parent_type=%s, parent_id=%s", title, parent_type, parent_id)
         page = await self._make_request("POST", "pages", credentials=credentials, json_body=body)
@@ -427,7 +415,7 @@ class NotionAppendPageContentTool(NotionAPIClient):
         if not text:
             raise HTTPException(status_code=400, detail="Parameter 'text' is required")
 
-        body = {"children": [_build_paragraph_block(text)]}
+        body = {"children": _markdown_to_notion_blocks(text)}
 
         logger.info("Appending content to Notion page: page_id=%s", page_id)
         response = await self._make_request(

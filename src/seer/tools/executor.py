@@ -73,7 +73,7 @@ async def execute_tool(
 
     try:
         logger.info("Executing tool '%s' for user {user.user_id}", tool_name)
-        result = await _execute_with_optional_credentials(tool, resolved, arguments or {}, context)
+        result = await _execute_with_retry(tool, resolver, resolved, arguments or {}, context, tool_name=tool_name)
         logger.info("Tool '%s' executed successfully", tool_name)
         return result
     except HTTPException:
@@ -85,6 +85,30 @@ async def execute_tool(
             status_code=500,
             detail=f"Tool execution failed: {str(e)}"
         ) from e
+
+
+async def _execute_with_retry(
+    tool,
+    resolver: CredentialResolver,
+    resolved: ResolvedCredentials,
+    arguments: Dict[str, Any],
+    context: Optional["WorkflowRuntimeContext"],
+    *,
+    tool_name: str,
+) -> Any:
+    """Execute tool, retrying once with a force-refreshed token on 401."""
+    try:
+        return await _execute_with_optional_credentials(tool, resolved, arguments, context)
+    except HTTPException as exc:
+        if (
+            exc.status_code == 401
+            and resolved.connection
+            and resolved.connection.refresh_token_enc
+        ):
+            logger.info("Retrying tool '%s' after 401 with force-refreshed token", tool_name)
+            resolved = await resolver.resolve(arguments, force_refresh=True)
+            return await _execute_with_optional_credentials(tool, resolved, arguments, context)
+        raise
 
 
 async def _execute_with_optional_credentials(

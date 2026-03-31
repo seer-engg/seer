@@ -21,6 +21,7 @@ from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
+from fastapi import HTTPException
 from seer.core.errors import ExecutionError
 from seer.core.registry.default_models import DEPRECATED_MODEL_MAP
 from seer.logger import get_logger
@@ -377,12 +378,34 @@ def _make_tool_executor(
                 credentials = await resolver.resolve(kwargs)
                 access_token = credentials.access_token
 
-            result = await base_tool.execute(
-                access_token=access_token,
-                arguments=kwargs,
-                credentials=credentials,
-                context=ctx.runtime_context,
-            )
+            try:
+                result = await base_tool.execute(
+                    access_token=access_token,
+                    arguments=kwargs,
+                    credentials=credentials,
+                    context=ctx.runtime_context,
+                )
+            except HTTPException as exc:
+                if (
+                    exc.status_code == 401
+                    and credentials
+                    and credentials.connection
+                    and credentials.connection.refresh_token_enc
+                ):
+                    logger.info(
+                        "Retrying tool %s after 401 with force-refreshed token",
+                        base_tool.name,
+                    )
+                    credentials = await resolver.resolve(kwargs, force_refresh=True)
+                    access_token = credentials.access_token
+                    result = await base_tool.execute(
+                        access_token=access_token,
+                        arguments=kwargs,
+                        credentials=credentials,
+                        context=ctx.runtime_context,
+                    )
+                else:
+                    raise
 
             from seer.config import config as seer_config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
 
