@@ -13,7 +13,6 @@ Why Row Count Tracking:
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from itertools import zip_longest
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -186,7 +185,15 @@ class GoogleSheetsRowAddedAdapter(PollAdapter):
         }
 
         if headers:
-            fields = dict(zip_longest(headers, row, fillvalue=None))
+            # Use zip for matched columns, then assign overflow columns a
+            # generated header so every dict key is a string (orjson requires it).
+            fields: Dict[str, Any] = {}
+            for i, value in enumerate(row):
+                key = headers[i] if i < len(headers) else f"column_{i + 1}"
+                fields[key] = value
+            # Include header columns that have no corresponding value (row shorter than headers)
+            for i in range(len(row), len(headers)):
+                fields[headers[i]] = None
             base["fields"] = fields
             base["row_values"] = None
         else:
