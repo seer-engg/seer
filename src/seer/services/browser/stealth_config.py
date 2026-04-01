@@ -1,30 +1,12 @@
-"""Browser stealth configuration for anti-detection.
+"""Browser profile configuration for Browserless connections.
 
-Uses Chrome's new headless mode (--headless=new) which is much harder
-to detect than the old headless mode. Works on cloud/AWS without Xvfb.
-
-The key insight is that Chrome 109+ introduced a "new headless" mode that:
-1. Shares code with headed Chrome (identical rendering)
-2. Doesn't expose headless-specific JavaScript artifacts
-3. Passes most bot detection including Google's
-4. Runs without a display (perfect for containers/serverless)
+Provides user agent strings and BrowserProfile kwargs for remote
+browser sessions connected via CDP to a Browserless service.
 """
 from __future__ import annotations
 
 import platform
-from typing import Any, Dict, List
-
-# Stealth Chrome args - key is --headless=new for undetectable headless
-STEALTH_CHROME_ARGS: List[str] = [
-    "--headless=new",  # Chrome 109+ new headless mode (critical!)
-    "--disable-blink-features=AutomationControlled",
-    "--disable-infobars",
-    "--disable-dev-shm-usage",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-extensions",
-    "--disable-popup-blocking",
-]
+from typing import Any, Dict
 
 # Realistic Chrome user agents (update periodically)
 CHROME_USER_AGENTS: Dict[str, str] = {
@@ -44,33 +26,17 @@ def get_platform_user_agent() -> str:
     return CHROME_USER_AGENTS.get(system, CHROME_USER_AGENTS["linux"])
 
 
-def get_stealth_profile_kwargs() -> Dict[str, Any]:
-    """Get BrowserUseProfile kwargs with stealth settings.
+def get_remote_profile_kwargs() -> Dict[str, Any]:
+    """Get BrowserUseProfile kwargs for remote Browserless connections.
 
-    Uses new headless mode which works identically to headed Chrome
-    and is undetectable by most bot detection systems including Google.
-
-    We set headless=False but pass --headless=new via args. This bypasses
-    browser-use's default headless handling and uses Chrome's new
-    undetectable headless mode directly.
+    When connecting to a remote Browserless service via CDP, Chrome
+    launch args are managed by Browserless itself. Only user_agent
+    and viewport are forwarded via BrowserProfile.
 
     Returns:
         Dict of kwargs to pass to BrowserUseProfile constructor.
     """
     return {
-        "headless": False,  # We handle headless via --headless=new in args
-        "args": STEALTH_CHROME_ARGS,
         "user_agent": get_platform_user_agent(),
         "viewport": {"width": 1280, "height": 800},
     }
-
-
-def get_headed_stealth_args() -> List[str]:
-    """Get stealth args for headed mode (excludes --headless=new).
-
-    For local development where a visible browser window is desired.
-
-    Returns:
-        List of Chrome args without headless flag.
-    """
-    return [arg for arg in STEALTH_CHROME_ARGS if arg != "--headless=new"]

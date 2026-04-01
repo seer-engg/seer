@@ -552,6 +552,17 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
         description="Enable stealth mode (--headless=new) for interactive browser sessions",
     )
 
+    # Browserless (remote browser service)
+    browserless_url: Optional[str] = Field(
+        default=None,
+        description="WebSocket URL for Browserless service (e.g. ws://browserless:3000). "
+        "When set, browsers are spawned remotely instead of locally.",
+    )
+    browserless_token: Optional[str] = Field(
+        default=None,
+        description="Authentication token for Browserless service",
+    )
+
     # ============================================================================
     # Langfuse Configuration
     # ============================================================================

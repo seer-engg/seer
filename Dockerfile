@@ -1,11 +1,33 @@
 # Seer Backend Server Dockerfile
-# Multi-stage build: builder installs deps, runtime copies only what's needed
+# Multi-stage build: runtime-base has system deps, builder installs Python deps,
+# final stage combines runtime-base + built app.
 
-# Global ARG — must be before any FROM to be usable in FROM instructions
-# Defaults to local base image; CI overrides with ECR URI
-ARG BASE_IMAGE=seer-base:latest
+# ── Stage 1: Runtime base ──────────────────────────────────────────
+# Slow-changing system deps cached as a layer — only rebuilds when apt list changes
+FROM python:3.12-slim AS runtime-base
 
-# ── Stage 1: Builder ──────────────────────────────────────────────
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libpq-dev \
+    postgresql-client \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libharfbuzz0b \
+    libfontconfig1 \
+    libcairo2 \
+    libgdk-pixbuf-2.0-0 \
+    shared-mime-info \
+    curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install uv package manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Clean up curl (only needed for uv install)
+RUN apt-get purge -y curl && apt-get autoremove -y
+
+# ── Stage 2: Builder ──────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
 WORKDIR /app
@@ -36,14 +58,10 @@ COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
-# ── Stage 2: Runtime ─────────────────────────────────────────────
-# Uses prebuilt seer-base image (apt deps + Playwright + uv already installed)
-FROM ${BASE_IMAGE}
+# ── Stage 3: Runtime ─────────────────────────────────────────────
+FROM runtime-base
 
 WORKDIR /app
-
-# uv is already in the base image
-ENV PATH="/root/.local/bin:$PATH"
 
 # Copy app with installed deps
 COPY --from=builder /app /app
