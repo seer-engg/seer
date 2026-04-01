@@ -519,8 +519,23 @@ class AgentNode(NodeBase):
             raise ValueError("AgentNode 'max_iterations' must be a positive integer")
 
 
+class EABotNode(NodeBase):
+    """meetingsEA node — joins a meeting, records, and returns transcript when done.
+
+    Uses LangGraph's interrupt() to pause the workflow while the bot is in the meeting.
+    Automatically resumes when the meeting ends via webhook from the Attendee service.
+    """
+    type: Literal["ea_bot"] = "ea_bot"
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
+    # inputs: meeting_url (required), bot_name (optional), recording_mode (optional)
+    timeout_seconds: int = Field(
+        default=14400,
+        description="Max wait time in seconds for the meeting to end (default: 4 hours)",
+    )
+
+
 Node = Annotated[
-    Union[ToolNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode, AgentNode],
+    Union[ToolNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode, AgentNode, EABotNode],
     Field(discriminator="type"),
 ]
 

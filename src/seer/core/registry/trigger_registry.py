@@ -517,6 +517,27 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
 
     registry.register(
         TriggerDefinition(
+            key="webhook.meetings_ea.bot_event",
+            title="meetingsEA Bot Event",
+            provider="meetings_ea",
+            mode="webhook",
+            description=(
+                "Receive real-time events from meetingsEA bots. "
+                "Triggers on bot state changes (joined, recording, ended) and transcript updates."
+            ),
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_meetings_ea_bot_event_payload_schema()),
+                config=_meetings_ea_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_meetings_ea_sample_event(),
+                requires_connection=False,
+            ),
+        )
+    )
+
+    registry.register(
+        TriggerDefinition(
             key="form.hitl",
             title="HITL Form",
             provider="form",
@@ -694,6 +715,7 @@ def _google_calendar_event_changed_payload_schema() -> JsonSchema:
                 },
             },
             "is_all_day": {"type": "boolean", "description": "Whether this is an all-day event"},
+            "conference_link": {"type": ["string", "null"], "description": "Video conference URL (Google Meet, Zoom, etc.)"},
             "recurring_event_id": {"type": ["string", "null"], "description": "Parent event if recurring instance"},
             "created": {"type": ["string", "null"], "description": "Event creation timestamp (RFC3339)"},
             "updated": {"type": ["string", "null"], "description": "Event last modified timestamp (RFC3339)"},
@@ -748,6 +770,7 @@ def _google_calendar_event_changed_sample_event() -> Dict[str, Any]:
             {"email": "attendee@example.com", "display_name": "John Smith", "response_status": "accepted", "optional": False, "self": True},
         ],
         "is_all_day": False,
+        "conference_link": "https://meet.google.com/abc-defg-hij",
         "recurring_event_id": None,
         "created": "2026-01-10T09:00:00Z",
         "updated": "2026-01-10T09:00:00Z",
@@ -829,6 +852,7 @@ def _google_calendar_event_start_payload_schema() -> JsonSchema:
                 },
             },
             "is_all_day": {"type": "boolean", "description": "Whether this is an all-day event"},
+            "conference_link": {"type": ["string", "null"], "description": "Video conference URL (Google Meet, Zoom, etc.)"},
             "recurring_event_id": {"type": ["string", "null"], "description": "Parent event if recurring instance"},
             "created": {"type": ["string", "null"], "description": "Event creation timestamp (RFC3339)"},
             "updated": {"type": ["string", "null"], "description": "Event last modified timestamp (RFC3339)"},
@@ -899,6 +923,7 @@ def _google_calendar_event_start_sample_event() -> Dict[str, Any]:
             {"email": "attendee@example.com", "display_name": "John Smith", "response_status": "accepted", "optional": False, "self": True},
         ],
         "is_all_day": False,
+        "conference_link": "https://meet.google.com/abc-defg-hij",
         "recurring_event_id": None,
         "created": "2026-01-10T09:00:00Z",
         "updated": "2026-01-10T09:00:00Z",
@@ -1402,6 +1427,62 @@ def _twilio_whatsapp_sample_event() -> Dict[str, Any]:
         "account_id": None,
         "occurred_at": "2026-03-25T14:30:00Z",
         "received_at": "2026-03-25T14:30:01Z",
+        "data": payload,
+        "raw": {"headers": {}, "body": payload},
+    }
+
+
+def _meetings_ea_bot_event_payload_schema() -> JsonSchema:
+    """Payload schema for meetingsEA bot events from the Attendee service."""
+    return {
+        "type": "object",
+        "properties": {
+            "event": {
+                "type": "string",
+                "description": "Event type (e.g., bot.state_change, transcript.update)",
+            },
+            "data": {
+                "type": "object",
+                "description": "Event data containing bot details",
+                "properties": {
+                    "id": {"type": "string", "description": "Bot ID"},
+                    "state": {"type": "string", "description": "Bot state"},
+                    "meeting_url": {"type": "string", "description": "Meeting URL"},
+                    "metadata": {"type": "object", "description": "Bot metadata"},
+                },
+            },
+        },
+        "required": ["event", "data"],
+    }
+
+
+def _meetings_ea_config_schema() -> JsonSchema:
+    """Config schema for meetingsEA triggers — no user configuration needed."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+        "description": "meetingsEA uses platform-level credentials. No configuration needed.",
+    }
+
+
+def _meetings_ea_sample_event() -> Dict[str, Any]:
+    payload = {
+        "event": "bot.state_change",
+        "data": {
+            "id": "bot_abc123",
+            "state": "ended",
+            "meeting_url": "https://meet.google.com/abc-defg-hij",
+            "metadata": {"seer_org_id": "1"},
+        },
+    }
+    return {
+        "id": "evt_sample_meetings_ea_bot_event",
+        "trigger_key": "webhook.meetings_ea.bot_event",
+        "provider": "meetings_ea",
+        "account_id": None,
+        "occurred_at": "2026-03-27T10:00:00Z",
+        "received_at": "2026-03-27T10:00:01Z",
         "data": payload,
         "raw": {"headers": {}, "body": payload},
     }
