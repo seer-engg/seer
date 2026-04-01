@@ -89,6 +89,17 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     )
 
     # ============================================================================
+    # meetingsEA Configuration
+    # ============================================================================
+
+    meetings_ea_api_key: Optional[str] = Field(
+        default=None, description="API key for meetingsEA meeting bot service"
+    )
+    meetings_ea_base_url: Optional[str] = Field(
+        default=None, description="Base URL for meetingsEA service (e.g., https://attendee.example.com)"
+    )
+
+    # ============================================================================
     # LangGraph Checkpointer Configuration
     # ============================================================================
 

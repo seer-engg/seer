@@ -41,6 +41,26 @@ def _format_12h(dt_str: Optional[str]) -> Optional[str]:
     return parsed.strftime("%I:%M %p").lstrip("0")
 
 
+def _extract_conference_link(event: Dict[str, Any]) -> Optional[str]:
+    """Extract the video conference link from a Google Calendar event.
+
+    Prefers hangoutLink (direct Meet link), falls back to the first video
+    entry point in conferenceData.
+    """
+    hangout = event.get("hangoutLink")
+    if hangout:
+        return hangout
+
+    conference_data = event.get("conferenceData")
+    if not conference_data or not isinstance(conference_data, dict):
+        return None
+
+    for ep in conference_data.get("entryPoints", []):
+        if isinstance(ep, dict) and ep.get("entryPointType") == "video":
+            return ep.get("uri")
+    return None
+
+
 def normalize_event(event: Dict[str, Any], calendar_id: str) -> Dict[str, Any]:
     """Normalize Google Calendar event to trigger payload format."""
     start = event.get("start", {})
@@ -89,6 +109,7 @@ def normalize_event(event: Dict[str, Any], calendar_id: str) -> Dict[str, Any]:
         },
         "attendees": attendees,
         "is_all_day": is_all_day,
+        "conference_link": _extract_conference_link(event),
         "recurring_event_id": event.get("recurringEventId"),
         "created": event.get("created"),
         "updated": event.get("updated"),

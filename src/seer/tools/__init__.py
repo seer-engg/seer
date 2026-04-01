@@ -9,6 +9,7 @@ from seer.tools.notion import register_notion_tools  # noqa: F401
 from seer.tools.discord import register_discord_tools  # noqa: F401
 from seer.tools.github import register_github_tools  # noqa: F401
 from seer.tools.http import register_http_tools  # noqa: F401
+from seer.tools.meetings_ea import register_meetings_ea_tools  # noqa: F401
 
 # Import tools to ensure they're registered
 from seer.tools.google import register_google_tools  # noqa: F401
@@ -40,6 +41,7 @@ register_notion_tools()
 register_twilio_tools()
 register_websearch_tools()
 register_http_tools()
+register_meetings_ea_tools()
 register_scratch_tools()
 
 __all__ = [
@@ -61,5 +63,6 @@ __all__ = [
     "register_twilio_tools",
     "register_websearch_tools",
     "register_http_tools",
+    "register_meetings_ea_tools",
     "register_scratch_tools",
 ]

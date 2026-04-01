@@ -324,6 +324,20 @@ INTEGRATION_CONFIGS: Dict[str, Dict[str, Any]] = {
             "scope_keywords": []
         }
     },
+    # meetingsEA — meeting bot (no OAuth, platform API key)
+    "meetings_ea": {
+        "display_name": "meetingsEA",
+        "oauth_provider": None,
+        "requires_oauth": False,
+        "icon": {"type": "lucide", "value": "Video"},
+        "brand_color": "#6366F1",
+        "default_scopes": [],
+        "scopes": [],
+        "detection_patterns": {
+            "tool_name_patterns": ["meetings_ea_"],
+            "scope_keywords": []
+        }
+    },
     # Slack integration
     "slack": {
         "display_name": "Slack",
