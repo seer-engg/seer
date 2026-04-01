@@ -124,4 +124,25 @@ class MeetingsEAToolBase(BaseTool, ABC):
         return f"{base.rstrip('/')}/api/v1/webhooks/meetings_ea"  # pylint: disable=no-member  # Reason: Pydantic Field resolves to str at runtime
 
 
-__all__ = ["MeetingsEAToolBase"]
+# Shared schema fragments for tools that operate on a single bot by ID
+BOT_ID_PARAMETERS_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "bot_id": {
+            "type": "string",
+            "description": "The bot identifier returned by meetings_ea_create_bot.",
+        },
+    },
+    "required": ["bot_id"],
+}
+
+BOT_ID_STATE_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "bot_id": {"type": "string"},
+        "state": {"type": "string"},
+    },
+}
+
+
+__all__ = ["MeetingsEAToolBase", "BOT_ID_PARAMETERS_SCHEMA", "BOT_ID_STATE_OUTPUT_SCHEMA"]

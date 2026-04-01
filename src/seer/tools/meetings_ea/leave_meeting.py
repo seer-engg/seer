@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from fastapi import HTTPException
 
 from seer.logger import get_logger
-from seer.tools.meetings_ea.base import MeetingsEAToolBase
+from seer.tools.meetings_ea.base import BOT_ID_PARAMETERS_SCHEMA, BOT_ID_STATE_OUTPUT_SCHEMA, MeetingsEAToolBase
 
 if TYPE_CHECKING:
     from seer.core.runtime.context import WorkflowRuntimeContext
@@ -22,25 +22,13 @@ class MeetingsEALeaveMeetingTool(MeetingsEAToolBase):
     description = "Tell a meetingsEA bot to leave the meeting it is currently in."
 
     def get_parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "bot_id": {
-                    "type": "string",
-                    "description": "The bot identifier returned by meetings_ea_create_bot.",
-                },
-            },
-            "required": ["bot_id"],
-        }
+        return BOT_ID_PARAMETERS_SCHEMA
 
     def get_output_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "bot_id": {"type": "string"},
-                "state": {"type": "string", "description": "Bot state after leave command"},
-            },
-        }
+        return {**BOT_ID_STATE_OUTPUT_SCHEMA, "properties": {
+            **BOT_ID_STATE_OUTPUT_SCHEMA["properties"],
+            "state": {"type": "string", "description": "Bot state after leave command"},
+        }}
 
     async def execute(
         self,
