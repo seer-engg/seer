@@ -35,6 +35,9 @@ class TestToolRegistration:
 
     def test_all_tools_registered(self):
         from seer.tools.base import list_tools
+        from seer.tools.meetings_ea import register_meetings_ea_tools
+
+        register_meetings_ea_tools()
 
         tools = list_tools()
         meetings_ea_tools = [t for t in tools if t.integration_type == "meetings_ea"]
