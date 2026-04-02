@@ -6,6 +6,7 @@ from . import discord_message_received  # noqa: F401
 from . import gmail_email_received  # noqa: F401
 from . import google_calendar_event_changed  # noqa: F401
 from . import google_calendar_event_start  # noqa: F401
+from . import google_sheets_row_added  # noqa: F401
 from . import slack_message_received  # noqa: F401
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "gmail_email_received",
     "google_calendar_event_changed",
     "google_calendar_event_start",
+    "google_sheets_row_added",
     "slack_message_received",
 ]

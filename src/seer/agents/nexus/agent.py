@@ -3,6 +3,8 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import (
     SummarizationMiddleware,
 )
+from seer.agents.nexus.loop_detection import LoopDetectionMiddleware
+from seer.agents.nexus.proposal_enforcement import ProposalEnforcementMiddleware
 from seer.agents.nexus.tool_call_sanitizer import ToolCallSanitizationMiddleware
 
 from seer.config import config
@@ -108,6 +110,8 @@ async def create_nexus_chat_agent(  # pylint: disable=too-many-positional-argume
     # before they're processed or stored in checkpoints
     middleware = [
         ToolCallSanitizationMiddleware(),
+        LoopDetectionMiddleware(),
+        ProposalEnforcementMiddleware(),
         SummarizationMiddleware(
             model=summarization_model,
             max_tokens_before_summary=256000 / 2,  # Model Limit 256k

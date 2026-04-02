@@ -1,4 +1,4 @@
-"""Tests for browser stealth configuration."""
+"""Tests for browser profile configuration."""
 import platform
 from unittest.mock import patch
 
@@ -6,30 +6,9 @@ import pytest
 
 from seer.services.browser.stealth_config import (
     CHROME_USER_AGENTS,
-    STEALTH_CHROME_ARGS,
-    get_headed_stealth_args,
     get_platform_user_agent,
-    get_stealth_profile_kwargs,
+    get_remote_profile_kwargs,
 )
-
-
-@pytest.mark.unit
-class TestStealthChromeArgs:
-    """Test stealth Chrome arguments."""
-
-    def test_contains_headless_new(self):
-        """Stealth args should contain --headless=new."""
-        assert "--headless=new" in STEALTH_CHROME_ARGS
-
-    def test_contains_automation_controlled_disable(self):
-        """Stealth args should disable AutomationControlled."""
-        assert "--disable-blink-features=AutomationControlled" in STEALTH_CHROME_ARGS
-
-    def test_no_empty_args(self):
-        """All args should be non-empty strings."""
-        for arg in STEALTH_CHROME_ARGS:
-            assert isinstance(arg, str)
-            assert len(arg) > 0
 
 
 @pytest.mark.unit
@@ -83,54 +62,33 @@ class TestGetPlatformUserAgent:
 
 
 @pytest.mark.unit
-class TestGetStealthProfileKwargs:
-    """Test get_stealth_profile_kwargs function."""
+class TestGetRemoteProfileKwargs:
+    """Test get_remote_profile_kwargs function."""
 
     def test_returns_dict(self):
         """Should return a dictionary."""
-        kwargs = get_stealth_profile_kwargs()
+        kwargs = get_remote_profile_kwargs()
         assert isinstance(kwargs, dict)
-
-    def test_headless_is_false(self):
-        """headless should be False (we use --headless=new in args instead)."""
-        kwargs = get_stealth_profile_kwargs()
-        assert kwargs["headless"] is False
-
-    def test_contains_args(self):
-        """Should contain stealth args."""
-        kwargs = get_stealth_profile_kwargs()
-        assert "args" in kwargs
-        assert "--headless=new" in kwargs["args"]
 
     def test_contains_user_agent(self):
         """Should contain a user agent string."""
-        kwargs = get_stealth_profile_kwargs()
+        kwargs = get_remote_profile_kwargs()
         assert "user_agent" in kwargs
         assert "Chrome/" in kwargs["user_agent"]
 
     def test_contains_viewport(self):
         """Should contain viewport settings."""
-        kwargs = get_stealth_profile_kwargs()
+        kwargs = get_remote_profile_kwargs()
         assert "viewport" in kwargs
         assert kwargs["viewport"]["width"] == 1280
         assert kwargs["viewport"]["height"] == 800
 
+    def test_no_chrome_args(self):
+        """Remote profile should not include Chrome launch args."""
+        kwargs = get_remote_profile_kwargs()
+        assert "args" not in kwargs
 
-@pytest.mark.unit
-class TestGetHeadedStealthArgs:
-    """Test get_headed_stealth_args function."""
-
-    def test_excludes_headless_new(self):
-        """Should exclude --headless=new for headed mode."""
-        args = get_headed_stealth_args()
-        assert "--headless=new" not in args
-
-    def test_keeps_other_stealth_args(self):
-        """Should keep other stealth args."""
-        args = get_headed_stealth_args()
-        assert "--disable-blink-features=AutomationControlled" in args
-
-    def test_returns_list(self):
-        """Should return a list."""
-        args = get_headed_stealth_args()
-        assert isinstance(args, list)
+    def test_no_headless_setting(self):
+        """Remote profile should not include headless setting."""
+        kwargs = get_remote_profile_kwargs()
+        assert "headless" not in kwargs

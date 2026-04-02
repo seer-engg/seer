@@ -8,11 +8,8 @@ and persisting encrypted session state.
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Dict, List, Optional
 from uuid import UUID
-
-from playwright.async_api import async_playwright
 
 from seer.config import config
 from seer.database import User
@@ -21,7 +18,6 @@ from seer.services.browser.encryption import SessionEncryptor
 from seer.services.browser.pool_manager import BrowserPoolManager
 from seer.services.browser.session_context_manager import SessionContextManager
 from seer.logger import get_logger
-from seer.services.browser.stealth_config import CHROME_USER_AGENTS, get_headed_stealth_args
 
 logger = get_logger(__name__)
 
@@ -105,83 +101,6 @@ class BrowserProfileManager:
             logger.info(f"Deleted browser profile {profile_id}")
         return updated > 0
 
-    async def start_interactive_login(
-        self,
-        user: User,
-        profile_id: UUID,
-        target_url: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Launch interactive browser for user to log in.
-
-        .. deprecated::
-            Use :meth:`create_interactive_session` + streaming WebSocket +
-            :meth:`complete_interactive_session` instead for remote/cloud use.
-
-        Opens a visible browser window where the user can navigate
-        and log into services. The session is captured when the browser closes.
-
-        Args:
-            user: Profile owner
-            profile_id: Profile to update with login session
-            target_url: Optional starting URL (e.g., "https://slack.com/signin")
-
-        Returns:
-            Status dict with profile_id, logged_in_domains, and status
-        """
-        profile = await BrowserProfile.get(id=profile_id, user=user)
-        logger.info(f"Starting interactive login for profile '{profile.name}' ({profile_id})")
-
-        async with async_playwright() as p:
-            # Load existing session if any (decrypt)
-            storage_state = None
-            if profile.session_state_enc:
-                storage_state = self._encryptor.decrypt(profile.session_state_enc)
-
-            # Launch VISIBLE browser with stealth args (headless=False for interactive login)
-            browser = await p.chromium.launch(
-                headless=False,
-                args=get_headed_stealth_args(),  # Stealth args without --headless=new
-            )
-            context = await browser.new_context(
-                storage_state=storage_state,
-                viewport={"width": 1280, "height": 800},
-                user_agent=CHROME_USER_AGENTS.get("linux"),  # Realistic user agent
-            )
-
-            page = await context.new_page()
-
-            # Navigate to target or a blank page
-            if target_url:
-                await page.goto(target_url)
-            else:
-                await page.goto("about:blank")
-
-            logger.info("Browser opened for interactive login. Waiting for user to close browser...")
-
-            # Wait for user to finish (they close the browser window)
-            try:
-                while len(context.pages) > 0:
-                    await asyncio.sleep(1)
-            except Exception:
-                pass
-
-            # Capture final session state
-            final_state = await context.storage_state()
-
-            # Save encrypted session state via context manager
-            await self._session_context.save_session_state(user, profile_id, final_state)
-
-            await browser.close()
-
-        domains = SessionContextManager.extract_domains(final_state)
-        logger.info(f"Session saved for profile '{profile.name}'. Domains: {domains}")
-        return {
-            "profile_id": str(profile_id),
-            "logged_in_domains": domains,
-            "status": "session_saved"
-        }
-
     async def get_session_state(self, user: User, profile_id: UUID) -> Optional[Dict[str, Any]]:
         """
         Load session state for workflow execution.
@@ -221,10 +140,10 @@ class BrowserProfileManager:
         profile_id: UUID,
         target_url: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a pooled headless session for interactive login via streaming.
+        """Create a pooled session for interactive login via streaming.
 
-        Unlike start_interactive_login(), this creates a headless browser session
-        that can be viewed and controlled remotely via WebSocket streaming.
+        Creates a remote browser session via Browserless that can be
+        viewed and controlled remotely via WebSocket streaming.
 
         Args:
             user: Profile owner

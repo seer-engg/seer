@@ -89,6 +89,17 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     )
 
     # ============================================================================
+    # meetingsEA Configuration
+    # ============================================================================
+
+    meetings_ea_api_key: Optional[str] = Field(
+        default=None, description="API key for meetingsEA meeting bot service"
+    )
+    meetings_ea_base_url: Optional[str] = Field(
+        default=None, description="Base URL for meetingsEA service (e.g., https://attendee.example.com)"
+    )
+
+    # ============================================================================
     # LangGraph Checkpointer Configuration
     # ============================================================================
 
@@ -539,6 +550,17 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     browser_stealth_enabled: bool = Field(
         default=True,
         description="Enable stealth mode (--headless=new) for interactive browser sessions",
+    )
+
+    # Browserless (remote browser service)
+    browserless_url: Optional[str] = Field(
+        default=None,
+        description="WebSocket URL for Browserless service (e.g. ws://browserless:3000). "
+        "When set, browsers are spawned remotely instead of locally.",
+    )
+    browserless_token: Optional[str] = Field(
+        default=None,
+        description="Authentication token for Browserless service",
     )
 
     # ============================================================================

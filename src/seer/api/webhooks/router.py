@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Header, Request, status
 
 from seer.api.webhooks import services as webhook_services
+from seer.api.webhooks.meetings_ea import router as meetings_ea_router
 from seer.api.webhooks.twilio_whatsapp import router as twilio_whatsapp_router
 
 router = APIRouter(prefix="/v1/webhooks", tags=["webhooks"])
@@ -25,6 +26,7 @@ async def generic_webhook(
     return {"ok": True, "event_id": event.id}
 
 
+router.include_router(meetings_ea_router)
 router.include_router(twilio_whatsapp_router)
 
 __all__ = ["router"]

@@ -72,6 +72,22 @@ class SeerConfigPropertiesMixin:
         return base64.urlsafe_b64encode(raw)
 
     @property
+    def browserless_cdp_url(self) -> "str | None":
+        """Build the full Browserless CDP WebSocket URL with optional token.
+
+        Returns None when browserless_url is not configured, signalling
+        that the pool manager should fall back to local browser launch.
+        """
+        url: "str | None" = self.browserless_url  # type: ignore[attr-defined]
+        if not url:
+            return None
+        token: "str | None" = self.browserless_token  # type: ignore[attr-defined]
+        if token:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}token={token}"
+        return url
+
+    @property
     def is_workflow_file_system_configured(self) -> bool:
         """Check if the workflow file system (S3/R2) is configured."""
         return self.workflow_file_s3_bucket is not None  # type: ignore[attr-defined]

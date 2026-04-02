@@ -131,11 +131,11 @@ class AirtableResourceProvider(ResourceProvider):
 
     async def _get_access_token(self, user: Any) -> str:
         """Get access token for the user's Airtable connection."""
-        connection = await OAuthConnection.get_or_none(
+        connection = await OAuthConnection.filter(
             user=user,
             provider="airtable",
-            status="active"
-        )
+            status="active",
+        ).order_by("-updated_at").first()
         if not connection or not connection.access_token_enc:
             raise_problem(
                 type_uri=INTEGRATION_PROBLEM,

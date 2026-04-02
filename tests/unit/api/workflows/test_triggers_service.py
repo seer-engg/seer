@@ -595,3 +595,110 @@ class TestGenerateCronEvent:
         event2 = generate_cron_event("trigger_1", {})
 
         assert event1["id"] != event2["id"]
+
+
+# =============================================================================
+# Cursor Reset on Re-enable Tests
+# =============================================================================
+
+
+class TestApplySubscriptionUpdatesReenableCursorReset:
+    """Tests for _apply_subscription_updates cursor reset when re-enabling."""
+
+    def test_reenable_polling_subscription_resets_cursor(self):
+        """Re-enabling a disabled polling subscription should clear poll_cursor_json
+        to force bootstrap_cursor() on next poll, preventing catchup storms."""
+        from seer.api.workflows.services.triggers import _apply_subscription_updates
+
+        subscription = MagicMock()
+        subscription.enabled = False
+        subscription.is_polling = True
+        subscription.poll_cursor_json = {"last_execution_utc": "2026-03-27T18:30:00+00:00"}
+        subscription.next_poll_at = datetime(2026, 3, 27, 18, 45)
+        subscription.trigger_key = "schedule.cron"
+
+        payload = MagicMock()
+        payload.enabled = True
+        payload.filters = None
+        payload.provider_connection_id = None
+        payload.provider_config = None
+
+        definition = MagicMock()
+
+        _apply_subscription_updates(subscription, payload, definition)
+
+        assert subscription.poll_cursor_json is None
+        assert subscription.next_poll_at is None
+        assert subscription.enabled is True
+
+    def test_reenable_non_polling_subscription_preserves_cursor(self):
+        """Re-enabling a non-polling subscription (e.g. webhook) should NOT reset cursor."""
+        from seer.api.workflows.services.triggers import _apply_subscription_updates
+
+        subscription = MagicMock()
+        subscription.enabled = False
+        subscription.is_polling = False
+        subscription.trigger_key = "webhook.generic"
+
+        payload = MagicMock()
+        payload.enabled = True
+        payload.filters = None
+        payload.provider_connection_id = None
+        payload.provider_config = None
+
+        definition = MagicMock()
+        original_cursor = {"some": "cursor"}
+        subscription.poll_cursor_json = original_cursor
+
+        _apply_subscription_updates(subscription, payload, definition)
+
+        assert subscription.poll_cursor_json == original_cursor
+        assert subscription.enabled is True
+
+    def test_disable_does_not_reset_cursor(self):
+        """Disabling a subscription should NOT reset the cursor."""
+        from seer.api.workflows.services.triggers import _apply_subscription_updates
+
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = True
+        subscription.trigger_key = "schedule.cron"
+
+        payload = MagicMock()
+        payload.enabled = False
+        payload.filters = None
+        payload.provider_connection_id = None
+        payload.provider_config = None
+
+        definition = MagicMock()
+        original_cursor = {"last_execution_utc": "2026-03-30T12:00:00+00:00"}
+        subscription.poll_cursor_json = original_cursor
+
+        _apply_subscription_updates(subscription, payload, definition)
+
+        assert subscription.poll_cursor_json == original_cursor
+        assert subscription.enabled is False
+
+    def test_already_enabled_does_not_reset_cursor(self):
+        """Setting enabled=True on an already-enabled subscription should NOT reset cursor."""
+        from seer.api.workflows.services.triggers import _apply_subscription_updates
+
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = True
+        subscription.trigger_key = "schedule.cron"
+
+        payload = MagicMock()
+        payload.enabled = True
+        payload.filters = None
+        payload.provider_connection_id = None
+        payload.provider_config = None
+
+        definition = MagicMock()
+        original_cursor = {"last_execution_utc": "2026-03-30T12:00:00+00:00"}
+        subscription.poll_cursor_json = original_cursor
+
+        _apply_subscription_updates(subscription, payload, definition)
+
+        # Cursor should be preserved — subscription was already enabled
+        assert subscription.poll_cursor_json == original_cursor

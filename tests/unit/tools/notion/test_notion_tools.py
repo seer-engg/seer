@@ -29,6 +29,11 @@ from seer.tools.notion.pages import (
     _extract_page_title,
     _extract_block_text,
 )
+from seer.tools.notion.markdown_blocks import (
+    _build_paragraph_blocks,
+    markdown_to_notion_blocks as _markdown_to_notion_blocks,
+    _NOTION_MAX_TEXT_LENGTH,
+)
 from seer.tools.notion.databases import (
     NotionQueryDatabaseTool,
     NotionCreateDatabaseEntryTool,
@@ -409,6 +414,249 @@ class TestNotionCreatePageTool:
         called_body = mock_req.call_args[1]["json_body"]
         assert "children" in called_body
         assert called_body["children"][0]["type"] == "paragraph"
+
+
+# ─── _build_paragraph_blocks chunking ────────────────────────────────────────
+
+@pytest.mark.unit
+class TestBuildParagraphBlocksChunking:
+    """Verify _build_paragraph_blocks splits text at the 2000-char Notion limit."""
+
+    def test_short_text_returns_single_block(self):
+        blocks = _build_paragraph_blocks("hello")
+        assert len(blocks) == 1
+        assert blocks[0]["paragraph"]["rich_text"][0]["text"]["content"] == "hello"
+
+    def test_exactly_2000_chars_returns_single_block(self):
+        text = "a" * _NOTION_MAX_TEXT_LENGTH
+        blocks = _build_paragraph_blocks(text)
+        assert len(blocks) == 1
+        assert len(blocks[0]["paragraph"]["rich_text"][0]["text"]["content"]) == 2000
+
+    def test_text_over_2000_chars_is_chunked(self):
+        """Regression test for the 2770-char incident on 2026-03-30."""
+        text = "x" * 2770
+        blocks = _build_paragraph_blocks(text)
+        assert len(blocks) == 2
+        assert len(blocks[0]["paragraph"]["rich_text"][0]["text"]["content"]) == 2000
+        assert len(blocks[1]["paragraph"]["rich_text"][0]["text"]["content"]) == 770
+
+    def test_large_text_chunked_into_many_blocks(self):
+        text = "b" * 6100
+        blocks = _build_paragraph_blocks(text)
+        assert len(blocks) == 4  # 2000 + 2000 + 2000 + 100
+        assert len(blocks[3]["paragraph"]["rich_text"][0]["text"]["content"]) == 100
+
+    def test_each_block_has_correct_structure(self):
+        blocks = _build_paragraph_blocks("test content")
+        block = blocks[0]
+        assert block["object"] == "block"
+        assert block["type"] == "paragraph"
+        assert block["paragraph"]["rich_text"][0]["type"] == "text"
+
+    @pytest.mark.asyncio
+    async def test_create_page_with_long_content_sends_multiple_children(self):
+        """End-to-end regression: NotionCreatePageTool must chunk content > 2000 chars."""
+        tool = NotionCreatePageTool()
+        mock_response = {"id": "id", "url": "https://notion.so/id"}
+        long_content = "z" * 2770
+        with patch.object(tool, "_make_request", new=AsyncMock(return_value=mock_response)) as mock_req:
+            await tool.execute(
+                None,
+                {
+                    "parent_id": "parent",
+                    "parent_type": "page",
+                    "title": "My Page",
+                    "content": long_content,
+                },
+                credentials=make_credentials(),
+            )
+
+        called_body = mock_req.call_args[1]["json_body"]
+        # Markdown converter wraps plain text in a single <p>, chunking happens inside rich_text
+        assert len(called_body["children"]) == 1
+        rich_text = called_body["children"][0]["paragraph"]["rich_text"]
+        assert len(rich_text) == 2
+        assert len(rich_text[0]["text"]["content"]) == 2000
+        assert len(rich_text[1]["text"]["content"]) == 770
+
+    @pytest.mark.asyncio
+    async def test_append_page_with_long_text_sends_multiple_children(self):
+        """End-to-end regression: NotionAppendPageContentTool must chunk text > 2000 chars."""
+        tool = NotionAppendPageContentTool()
+        mock_response = {"results": [{"id": "b1"}, {"id": "b2"}]}
+        long_text = "w" * 4500
+        with patch.object(tool, "_make_request", new=AsyncMock(return_value=mock_response)) as mock_req:
+            await tool.execute(
+                None,
+                {"page_id": "p1", "text": long_text},
+                credentials=make_credentials(),
+            )
+
+        called_body = mock_req.call_args[1]["json_body"]
+        # Markdown converter wraps plain text in a single <p>, chunking happens inside rich_text
+        assert len(called_body["children"]) == 1
+        rich_text = called_body["children"][0]["paragraph"]["rich_text"]
+        assert len(rich_text) == 3  # 2000 + 2000 + 500
+
+
+# ─── Markdown to Notion Blocks ───────────────────────────────────────────────
+
+@pytest.mark.unit
+class TestMarkdownToNotionBlocks:
+    """Test _markdown_to_notion_blocks converts markdown to structured Notion blocks."""
+
+    def test_heading_1(self):
+        blocks = _markdown_to_notion_blocks("# Hello World")
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "heading_1"
+        assert blocks[0]["heading_1"]["rich_text"][0]["text"]["content"] == "Hello World"
+
+    def test_heading_2(self):
+        blocks = _markdown_to_notion_blocks("## Sub Heading")
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "heading_2"
+
+    def test_heading_3(self):
+        blocks = _markdown_to_notion_blocks("### Sub Sub Heading")
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "heading_3"
+
+    def test_h4_maps_to_heading_3(self):
+        """Notion only has 3 heading levels; h4+ fall back to heading_3."""
+        blocks = _markdown_to_notion_blocks("#### Deep Heading")
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "heading_3"
+
+    def test_bullet_list(self):
+        md = "- first\n- second\n- third"
+        blocks = _markdown_to_notion_blocks(md)
+        assert len(blocks) == 3
+        for b in blocks:
+            assert b["type"] == "bulleted_list_item"
+        assert blocks[0]["bulleted_list_item"]["rich_text"][0]["text"]["content"] == "first"
+        assert blocks[2]["bulleted_list_item"]["rich_text"][0]["text"]["content"] == "third"
+
+    def test_numbered_list(self):
+        md = "1. alpha\n2. beta\n3. gamma"
+        blocks = _markdown_to_notion_blocks(md)
+        assert len(blocks) == 3
+        for b in blocks:
+            assert b["type"] == "numbered_list_item"
+
+    def test_code_block(self):
+        md = "```python\nprint('hello')\n```"
+        blocks = _markdown_to_notion_blocks(md)
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "code"
+        assert blocks[0]["code"]["language"] == "python"
+        assert "print('hello')" in blocks[0]["code"]["rich_text"][0]["text"]["content"]
+
+    def test_code_block_no_language(self):
+        md = "```\nsome code\n```"
+        blocks = _markdown_to_notion_blocks(md)
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "code"
+        assert blocks[0]["code"]["language"] == "plain text"
+
+    def test_blockquote(self):
+        md = "> This is a quote"
+        blocks = _markdown_to_notion_blocks(md)
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "quote"
+        assert "This is a quote" in blocks[0]["quote"]["rich_text"][0]["text"]["content"]
+
+    def test_horizontal_rule(self):
+        md = "above\n\n---\n\nbelow"
+        blocks = _markdown_to_notion_blocks(md)
+        types = [b["type"] for b in blocks]
+        assert "divider" in types
+
+    def test_bold_annotation(self):
+        md = "Some **bold** text"
+        blocks = _markdown_to_notion_blocks(md)
+        assert blocks[0]["type"] == "paragraph"
+        rich_text = blocks[0]["paragraph"]["rich_text"]
+        bold_parts = [rt for rt in rich_text if rt.get("annotations", {}).get("bold")]
+        assert len(bold_parts) >= 1
+        assert bold_parts[0]["text"]["content"] == "bold"
+
+    def test_italic_annotation(self):
+        md = "Some *italic* text"
+        blocks = _markdown_to_notion_blocks(md)
+        rich_text = blocks[0]["paragraph"]["rich_text"]
+        italic_parts = [rt for rt in rich_text if rt.get("annotations", {}).get("italic")]
+        assert len(italic_parts) >= 1
+        assert italic_parts[0]["text"]["content"] == "italic"
+
+    def test_inline_code_annotation(self):
+        md = "Use `variable` here"
+        blocks = _markdown_to_notion_blocks(md)
+        rich_text = blocks[0]["paragraph"]["rich_text"]
+        code_parts = [rt for rt in rich_text if rt.get("annotations", {}).get("code")]
+        assert len(code_parts) >= 1
+        assert code_parts[0]["text"]["content"] == "variable"
+
+    def test_link(self):
+        md = "Click [here](https://example.com) now"
+        blocks = _markdown_to_notion_blocks(md)
+        rich_text = blocks[0]["paragraph"]["rich_text"]
+        link_parts = [rt for rt in rich_text if rt["text"].get("link")]
+        assert len(link_parts) >= 1
+        assert link_parts[0]["text"]["link"]["url"] == "https://example.com"
+        assert link_parts[0]["text"]["content"] == "here"
+
+    def test_mixed_content(self):
+        md = "# Title\n\nSome paragraph.\n\n- bullet one\n- bullet two\n\n## Another heading"
+        blocks = _markdown_to_notion_blocks(md)
+        types = [b["type"] for b in blocks]
+        assert types[0] == "heading_1"
+        assert "paragraph" in types
+        assert "bulleted_list_item" in types
+        assert "heading_2" in types
+
+    def test_plain_text_fallback(self):
+        """Plain text without markdown syntax should produce paragraph blocks."""
+        blocks = _markdown_to_notion_blocks("Just plain text here")
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "paragraph"
+        assert blocks[0]["paragraph"]["rich_text"][0]["text"]["content"] == "Just plain text here"
+
+    def test_empty_string_fallback(self):
+        blocks = _markdown_to_notion_blocks("")
+        assert len(blocks) >= 1
+        assert blocks[0]["type"] == "paragraph"
+
+    def test_long_content_chunked_in_rich_text(self):
+        """Long plain text is still chunked at 2000-char boundaries inside rich_text."""
+        long_text = "a" * 2770
+        blocks = _markdown_to_notion_blocks(long_text)
+        # Should be 1 paragraph with chunked rich_text
+        assert len(blocks) == 1
+        rich_text = blocks[0]["paragraph"]["rich_text"]
+        total = sum(len(rt["text"]["content"]) for rt in rich_text)
+        assert total == 2770
+
+    @pytest.mark.asyncio
+    async def test_create_page_with_markdown_produces_heading(self):
+        """End-to-end: notion_create_page with markdown heading produces heading_1 block."""
+        tool = NotionCreatePageTool()
+        mock_response = {"id": "id", "url": "https://notion.so/id"}
+        with patch.object(tool, "_make_request", new=AsyncMock(return_value=mock_response)) as mock_req:
+            await tool.execute(
+                None,
+                {
+                    "parent_id": "parent",
+                    "parent_type": "page",
+                    "title": "Test",
+                    "content": "# My Heading\n\nSome text.",
+                },
+                credentials=make_credentials(),
+            )
+        called_body = mock_req.call_args[1]["json_body"]
+        children = called_body["children"]
+        assert children[0]["type"] == "heading_1"
+        assert children[1]["type"] == "paragraph"
 
 
 # ─── NotionUpdatePageTool ─────────────────────────────────────────────────────

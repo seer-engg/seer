@@ -26,6 +26,8 @@ from seer.core.errors import (  # pylint: disable=no-name-in-module  # Reason: P
     ProviderAuthError,
     ProviderError,
 )
+from fastapi import HTTPException
+from seer.core.errors import ExecutionError
 from seer.core.registry.default_models import DEPRECATED_MODEL_MAP
 from seer.logger import get_logger
 from seer.core.expr.typecheck import schema_from_output_contract
@@ -381,12 +383,34 @@ def _make_tool_executor(
                 credentials = await resolver.resolve(kwargs)
                 access_token = credentials.access_token
 
-            result = await base_tool.execute(
-                access_token=access_token,
-                arguments=kwargs,
-                credentials=credentials,
-                context=ctx.runtime_context,
-            )
+            try:
+                result = await base_tool.execute(
+                    access_token=access_token,
+                    arguments=kwargs,
+                    credentials=credentials,
+                    context=ctx.runtime_context,
+                )
+            except HTTPException as exc:
+                if (
+                    exc.status_code == 401
+                    and credentials
+                    and credentials.connection
+                    and credentials.connection.refresh_token_enc
+                ):
+                    logger.info(
+                        "Retrying tool %s after 401 with force-refreshed token",
+                        base_tool.name,
+                    )
+                    credentials = await resolver.resolve(kwargs, force_refresh=True)
+                    access_token = credentials.access_token
+                    result = await base_tool.execute(
+                        access_token=access_token,
+                        arguments=kwargs,
+                        credentials=credentials,
+                        context=ctx.runtime_context,
+                    )
+                else:
+                    raise
 
             from seer.config import config as seer_config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
 
@@ -867,7 +891,7 @@ def _extract_agent_config(node: "AgentNode") -> Dict[str, Any]:
 
     max_iterations = node.inputs.get("max_iterations", 10)
     temperature = node.inputs.get("temperature", 0.2)
-    enable_artifacts = bool(node.inputs.get("enable_artifacts", True))
+    enable_artifacts = bool(node.inputs.get("enable_artifacts", False))
     memory_bank_id = node.inputs.get("memory_bank_id")
 
     return {

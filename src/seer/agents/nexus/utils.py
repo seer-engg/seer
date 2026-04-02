@@ -2,6 +2,7 @@ from typing import Any, List, Optional
 from seer.logger import get_logger
 from seer.agents.nexus.tools import (
     submit_workflow_spec,
+    complete_response,
     ask_clarification_questions,
 )
 from seer.agents.nexus.tools.workflow_tools import (
@@ -31,6 +32,7 @@ def get_workflow_tools(workflow_id: Optional[str] = None) -> List:
     # Nexus-only tools (tightly coupled to agent context, not in factory)
     nexus_only_tools = [
         submit_workflow_spec,
+        complete_response,
         ask_clarification_questions,
     ]
 

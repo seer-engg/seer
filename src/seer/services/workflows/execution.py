@@ -41,7 +41,7 @@ def _extract_hitl_interrupt(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     for interrupt_obj in interrupts:
         interrupt_value = getattr(interrupt_obj, "value", None)
-        if isinstance(interrupt_value, dict) and interrupt_value.get("type") == "hitl":
+        if isinstance(interrupt_value, dict) and interrupt_value.get("type") in ("hitl", "ea_bot"):
             return interrupt_value
     return None
 

@@ -70,6 +70,7 @@ POLLING_TRIGGERS = [
     "poll.slack.message_received",
     "poll.google_calendar.event_changed",
     "poll.google_calendar.event_start",
+    "poll.google_sheets.row_added",
     "schedule.cron",
 ]
 
@@ -204,6 +205,99 @@ def _airtable_new_record_in_view_sample_event() -> Dict[str, Any]:
     }
 
 
+def _google_sheets_row_added_payload_schema() -> JsonSchema:
+    """Payload schema for Google Sheets row added trigger."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "row_number": {"type": "integer", "description": "1-based row number in the sheet"},
+            "spreadsheet_id": {"type": "string", "description": "Google Sheets spreadsheet ID"},
+            "sheet_name": {"type": "string", "description": "Name of the sheet/tab"},
+            "fields": {
+                "type": ["object", "null"],
+                "additionalProperties": True,
+                "description": "Row data mapped by header names (when has_header_row is true)",
+            },
+            "row_values": {
+                "type": ["array", "null"],
+                "items": {
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "number"},
+                        {"type": "boolean"},
+                        {"type": "null"},
+                    ]
+                },
+                "description": "Raw row values as array (when has_header_row is false)",
+            },
+        },
+        "required": ["row_number", "spreadsheet_id", "sheet_name"],
+    }
+
+
+def _google_sheets_row_added_config_schema() -> JsonSchema:
+    """Config schema for Google Sheets row added trigger."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "spreadsheet_id": {
+                "type": "string",
+                "description": "Google Sheets spreadsheet ID",
+                "x-resource-picker": {
+                    "provider": "google",
+                    "resource_type": "google_spreadsheet",
+                    "display_field": "name",
+                    "value_field": "id",
+                    "search_enabled": True,
+                },
+            },
+            "sheet_name": {
+                "type": "string",
+                "default": "Sheet1",
+                "description": "Name of the sheet/tab to monitor for new rows.",
+            },
+            "has_header_row": {
+                "type": "boolean",
+                "default": True,
+                "description": (
+                    "If true, the first row is treated as column headers and used "
+                    "as field keys in event payloads."
+                ),
+            },
+            **_oauth_connection_property(),
+        },
+        "required": ["spreadsheet_id"],
+    }
+
+
+def _google_sheets_row_added_sample_event() -> Dict[str, Any]:
+    """Sample event for Google Sheets row added trigger."""
+    payload = {
+        "row_number": 5,
+        "spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms",
+        "sheet_name": "Sheet1",
+        "fields": {
+            "Name": "Jane Smith",
+            "Email": "jane@example.com",
+            "Status": "Active",
+            "Date Added": "2026-03-15",
+        },
+        "row_values": None,
+    }
+    return {
+        "id": "evt_sample_poll_google_sheets_row_added",
+        "trigger_key": "poll.google_sheets.row_added",
+        "provider": "google",
+        "account_id": None,
+        "occurred_at": "2026-03-15T10:00:00Z",
+        "received_at": "2026-03-15T10:00:05Z",
+        "data": payload,
+        "raw": {"values": [["Jane Smith", "jane@example.com", "Active", "2026-03-15"]]},
+    }
+
+
 def _register_builtin_triggers(registry: TriggerRegistry) -> None:
     registry.register(
         TriggerDefinition(
@@ -290,6 +384,24 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
                 sample_event=_google_calendar_event_start_sample_event(),
                 requires_connection=True,
                 required_scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+            ),
+        )
+    )
+    registry.register(
+        TriggerDefinition(
+            key="poll.google_sheets.row_added",
+            title="Google Sheets",
+            provider="google",
+            mode="polling",
+            description="Poll a Google Sheet for newly added rows at the bottom of a sheet.",
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_google_sheets_row_added_payload_schema()),
+                config=_google_sheets_row_added_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_google_sheets_row_added_sample_event(),
+                requires_connection=True,
+                required_scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
             ),
         )
     )
@@ -398,6 +510,27 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             ),
             meta=TriggerMetadata(
                 sample_event=_twilio_whatsapp_sample_event(),
+                requires_connection=False,
+            ),
+        )
+    )
+
+    registry.register(
+        TriggerDefinition(
+            key="webhook.meetings_ea.bot_event",
+            title="meetingsEA Bot Event",
+            provider="meetings_ea",
+            mode="webhook",
+            description=(
+                "Receive real-time events from meetingsEA bots. "
+                "Triggers on bot state changes (joined, recording, ended) and transcript updates."
+            ),
+            schemas=TriggerSchemas(
+                event=_enveloped_event_schema(_meetings_ea_bot_event_payload_schema()),
+                config=_meetings_ea_config_schema(),
+            ),
+            meta=TriggerMetadata(
+                sample_event=_meetings_ea_sample_event(),
                 requires_connection=False,
             ),
         )
@@ -582,6 +715,7 @@ def _google_calendar_event_changed_payload_schema() -> JsonSchema:
                 },
             },
             "is_all_day": {"type": "boolean", "description": "Whether this is an all-day event"},
+            "conference_link": {"type": ["string", "null"], "description": "Video conference URL (Google Meet, Zoom, etc.)"},
             "recurring_event_id": {"type": ["string", "null"], "description": "Parent event if recurring instance"},
             "created": {"type": ["string", "null"], "description": "Event creation timestamp (RFC3339)"},
             "updated": {"type": ["string", "null"], "description": "Event last modified timestamp (RFC3339)"},
@@ -636,6 +770,7 @@ def _google_calendar_event_changed_sample_event() -> Dict[str, Any]:
             {"email": "attendee@example.com", "display_name": "John Smith", "response_status": "accepted", "optional": False, "self": True},
         ],
         "is_all_day": False,
+        "conference_link": "https://meet.google.com/abc-defg-hij",
         "recurring_event_id": None,
         "created": "2026-01-10T09:00:00Z",
         "updated": "2026-01-10T09:00:00Z",
@@ -717,6 +852,7 @@ def _google_calendar_event_start_payload_schema() -> JsonSchema:
                 },
             },
             "is_all_day": {"type": "boolean", "description": "Whether this is an all-day event"},
+            "conference_link": {"type": ["string", "null"], "description": "Video conference URL (Google Meet, Zoom, etc.)"},
             "recurring_event_id": {"type": ["string", "null"], "description": "Parent event if recurring instance"},
             "created": {"type": ["string", "null"], "description": "Event creation timestamp (RFC3339)"},
             "updated": {"type": ["string", "null"], "description": "Event last modified timestamp (RFC3339)"},
@@ -787,6 +923,7 @@ def _google_calendar_event_start_sample_event() -> Dict[str, Any]:
             {"email": "attendee@example.com", "display_name": "John Smith", "response_status": "accepted", "optional": False, "self": True},
         ],
         "is_all_day": False,
+        "conference_link": "https://meet.google.com/abc-defg-hij",
         "recurring_event_id": None,
         "created": "2026-01-10T09:00:00Z",
         "updated": "2026-01-10T09:00:00Z",
@@ -1290,6 +1427,62 @@ def _twilio_whatsapp_sample_event() -> Dict[str, Any]:
         "account_id": None,
         "occurred_at": "2026-03-25T14:30:00Z",
         "received_at": "2026-03-25T14:30:01Z",
+        "data": payload,
+        "raw": {"headers": {}, "body": payload},
+    }
+
+
+def _meetings_ea_bot_event_payload_schema() -> JsonSchema:
+    """Payload schema for meetingsEA bot events from the Attendee service."""
+    return {
+        "type": "object",
+        "properties": {
+            "event": {
+                "type": "string",
+                "description": "Event type (e.g., bot.state_change, transcript.update)",
+            },
+            "data": {
+                "type": "object",
+                "description": "Event data containing bot details",
+                "properties": {
+                    "id": {"type": "string", "description": "Bot ID"},
+                    "state": {"type": "string", "description": "Bot state"},
+                    "meeting_url": {"type": "string", "description": "Meeting URL"},
+                    "metadata": {"type": "object", "description": "Bot metadata"},
+                },
+            },
+        },
+        "required": ["event", "data"],
+    }
+
+
+def _meetings_ea_config_schema() -> JsonSchema:
+    """Config schema for meetingsEA triggers — no user configuration needed."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+        "description": "meetingsEA uses platform-level credentials. No configuration needed.",
+    }
+
+
+def _meetings_ea_sample_event() -> Dict[str, Any]:
+    payload = {
+        "event": "bot.state_change",
+        "data": {
+            "id": "bot_abc123",
+            "state": "ended",
+            "meeting_url": "https://meet.google.com/abc-defg-hij",
+            "metadata": {"seer_org_id": "1"},
+        },
+    }
+    return {
+        "id": "evt_sample_meetings_ea_bot_event",
+        "trigger_key": "webhook.meetings_ea.bot_event",
+        "provider": "meetings_ea",
+        "account_id": None,
+        "occurred_at": "2026-03-27T10:00:00Z",
+        "received_at": "2026-03-27T10:00:01Z",
         "data": payload,
         "raw": {"headers": {}, "body": payload},
     }

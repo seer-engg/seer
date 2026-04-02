@@ -1,5 +1,5 @@
 """
-Polling-based trigger event browsers for Gmail, Discord, Slack, and Google Calendar.
+Polling-based trigger event browsers for Gmail, Discord, Slack, Google Calendar, and Google Sheets.
 
 Extracted from trigger_event_browser to keep module sizes manageable.
 These functions fetch live events from external APIs for trigger event browsing.
@@ -8,6 +8,7 @@ These functions fetch live events from external APIs for trigger event browsing.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from itertools import zip_longest
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -42,6 +43,11 @@ from seer.core.triggers.polling.adapters.google_calendar_common import (
 )
 from seer.core.triggers.polling.adapters.google_calendar_event_start import (
     GoogleCalendarEventStartAdapter,
+)
+from seer.core.triggers.polling.adapters.google_sheets_row_added import (
+    GoogleSheetsRowAddedAdapter,
+    SHEETS_API_BASE,
+    DEFAULT_SHEET_NAME,
 )
 from seer.database import User
 from seer.logger import get_logger
@@ -904,4 +910,174 @@ def _handle_google_calendar_error(response: httpx.Response, calendar_id: str) ->
     raise HTTPException(
         status_code=response.status_code,
         detail=f"Google Calendar API error: {response.text[:200]}",
+    )
+
+
+# =============================================================================
+# Google Sheets Event Browsing
+# =============================================================================
+
+SHEETS_MAX_BROWSE_ROWS = 50
+
+
+async def list_google_sheets_events(
+    user: User,
+    provider_connection_id: int,
+    options,
+    _gsheets_adapter: GoogleSheetsRowAddedAdapter,  # pylint: disable=unused-argument # Reason: Interface consistency with other list_*_events functions
+) -> Dict[str, Any]:
+    """List recent rows from a Google Sheet for browsing."""
+    _, access_token = await get_oauth_token(
+        user, connection_id=str(provider_connection_id)
+    )
+
+    filter_params = options.filter_params or {}
+    spreadsheet_id = filter_params.get("spreadsheet_id")
+    sheet_name = filter_params.get("sheet_name", DEFAULT_SHEET_NAME)
+
+    if not spreadsheet_id:
+        raise HTTPException(
+            status_code=400,
+            detail="spreadsheet_id is required in filter_params for Google Sheets trigger browsing.",
+        )
+
+    headers_http = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{SHEETS_API_BASE}/{spreadsheet_id}/values/{sheet_name}",
+                headers=headers_http,
+            )
+            if resp.status_code >= 400:
+                _handle_google_sheets_error(resp, spreadsheet_id)
+
+            all_rows = resp.json().get("values", [])
+
+            if not all_rows:
+                return {
+                    "items": [],
+                    "next_page_token": None,
+                    "trigger_key": options.trigger_key,
+                    "supports_search": False,
+                }
+
+            # Use first row as headers, remaining as data rows
+            column_headers = [str(cell) for cell in all_rows[0]]
+            data_rows = all_rows[1:]
+
+            # Take last N rows (newest at bottom), reversed for display
+            start_idx = max(0, len(data_rows) - SHEETS_MAX_BROWSE_ROWS)
+            browse_slice = list(enumerate(data_rows[start_idx:], start=start_idx))
+            browse_slice.reverse()
+
+            items: List[Dict[str, Any]] = [
+                _build_google_sheets_event_item(
+                    row=row,
+                    row_number=idx + 2,  # +1 for 0-based index, +1 for header row
+                    column_headers=column_headers,
+                    spreadsheet_id=spreadsheet_id,
+                    sheet_name=sheet_name,
+                    provider_connection_id=provider_connection_id,
+                    trigger_id=options.trigger_id,
+                    trigger_key=options.trigger_key,
+                )
+                for idx, row in browse_slice
+            ]
+
+            return {
+                "items": items,
+                "next_page_token": None,
+                "trigger_key": options.trigger_key,
+                "supports_search": False,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected Google Sheets browsing failure")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to browse Google Sheets events: {str(exc)[:200]}",
+        ) from exc
+
+
+def _build_google_sheets_event_item(  # pylint: disable=too-many-arguments # Reason: All params are distinct sheet-row context needed for envelope construction
+    *,
+    row: List[Any],
+    row_number: int,
+    column_headers: List[str],
+    spreadsheet_id: str,
+    sheet_name: str,
+    provider_connection_id: int,
+    trigger_id: str,
+    trigger_key: str,
+) -> Dict[str, Any]:
+    """Build a single browsable event item from a sheet row."""
+    fields = dict(zip_longest(column_headers, row, fillvalue=None)) if column_headers else {}
+    display_title = str(row[0]) if row else f"Row {row_number}"
+    display_subtitle = f"Row {row_number}"
+    preview = ", ".join(str(cell) for cell in row[:5])[:200] if row else None
+
+    payload = {
+        "row_number": row_number,
+        "spreadsheet_id": spreadsheet_id,
+        "sheet_name": sheet_name,
+        "fields": fields if column_headers else None,
+        "row_values": row if not column_headers else None,
+    }
+
+    occurred_at = datetime.now(timezone.utc)
+    envelope = build_event_envelope(
+        TriggerEventEnvelopeInput(
+            trigger_id=trigger_id,
+            trigger_key=trigger_key,
+            title=display_title,
+            provider="google",
+            provider_connection_id=provider_connection_id,
+            payload=payload,
+            raw={"row_number": row_number, "values": row},
+            occurred_at=occurred_at,
+        )
+    )
+
+    return {
+        "id": f"{spreadsheet_id}:{sheet_name}:{row_number}",
+        "display_title": display_title,
+        "display_subtitle": display_subtitle,
+        "preview": preview,
+        "envelope": envelope,
+        "metadata": {
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_name": sheet_name,
+            "row_number": row_number,
+        },
+    }
+
+
+def _handle_google_sheets_error(response: httpx.Response, spreadsheet_id: str) -> None:
+    """Handle Google Sheets API errors."""
+    if response.status_code == 401:
+        raise HTTPException(
+            status_code=401,
+            detail="Google Sheets authentication failed. Please reconnect your Google account.",
+        )
+    if response.status_code == 403:
+        raise HTTPException(
+            status_code=403,
+            detail="Google Sheets access denied. Please ensure you have granted Sheets permissions.",
+        )
+    if response.status_code == 404:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Spreadsheet '{spreadsheet_id}' not found or not accessible.",
+        )
+    if response.status_code == 429:
+        raise HTTPException(
+            status_code=429,
+            detail="Google Sheets rate limit exceeded. Please try again later.",
+        )
+    raise HTTPException(
+        status_code=response.status_code,
+        detail=f"Google Sheets API error: {response.text[:200]}",
     )

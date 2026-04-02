@@ -42,6 +42,21 @@ services:
   #     --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT:-/mlflow/artifacts}
   #     --allowed-hosts \"${MLFLOW_ALLOWED_HOSTS:-*}\""
 
+  browserless:
+    image: ghcr.io/browserless/chromium
+    ports:
+      - "${BROWSERLESS_PORT:-3000}:3000"
+    environment:
+      TOKEN: "${BROWSERLESS_TOKEN:-}"
+      CONCURRENT: "${BROWSERLESS_MAX_CONCURRENT:-5}"
+      TIMEOUT: "${BROWSERLESS_TIMEOUT:-300000}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/active || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   migrations:
     build:
       context: .
@@ -102,6 +117,8 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
+      browserless:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -113,6 +130,8 @@ services:
       # MLFLOW_TRACKING_URI: "http://mlflow:5000"
       # MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
       # MLFLOW_ENABLED: "${MLFLOW_ENABLED:-true}"
+      BROWSERLESS_URL: "ws://browserless:3000"
+      BROWSERLESS_TOKEN: "${BROWSERLESS_TOKEN:-}"
       FRONTEND_URL: "${FRONTEND_URL:-https://app.getseer.dev}"
       BACKEND_API_URL: "${BACKEND_API_URL:-localhost:${API_PORT:-8000}}"
       AUTO_OPEN_BROWSER: "${AUTO_OPEN_BROWSER:-true}"
@@ -151,6 +170,8 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
+      browserless:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -159,6 +180,8 @@ services:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
       REDIS_URL: "redis://valkey:6379/0"
       UV_LINK_MODE: "copy"
+      BROWSERLESS_URL: "ws://browserless:3000"
+      BROWSERLESS_TOKEN: "${BROWSERLESS_TOKEN:-}"
       # MLFLOW_TRACKING_URI: "http://mlflow:5000"
       # MLFLOW_EXPERIMENT_NAME: "seer-worker"
       # MLFLOW_ENABLED: "${MLFLOW_ENABLED:-true}"

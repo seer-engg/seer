@@ -43,25 +43,38 @@ logger = get_logger("api.integrations.services")
 
 
 
-async def get_connection_for_provider(user: User, provider: str) -> Optional[OAuthConnection]:
+async def get_connection_for_provider(
+    user: User, provider: str, *, connection_id: Optional[int] = None
+) -> Optional[OAuthConnection]:
     """
     Get active OAuth connection for a specific provider.
+
+    When connection_id is provided, returns that specific connection (if it belongs
+    to the user, matches the provider, and is active). When omitted, returns the
+    most recently updated active connection for the provider.
 
     Args:
         user: User model instance
         provider: OAuth provider name (google, github, etc.)
+        connection_id: Optional specific connection ID to look up
 
     Returns:
         OAuthConnection if found, None otherwise
     """
     oauth_provider = get_oauth_provider(provider)
     try:
-        connection = await OAuthConnection.get_or_none(
+        if connection_id is not None:
+            return await OAuthConnection.get_or_none(
+                id=connection_id,
+                user=user,
+                provider=oauth_provider,
+                status="active",
+            )
+        return await OAuthConnection.filter(
             user=user,
             provider=oauth_provider,
-            status="active"
-        )
-        return connection
+            status="active",
+        ).order_by("-updated_at").first()
     except Exception as e:
         logger.error("Error getting connection for provider %s: %s", provider, e)
         return None
