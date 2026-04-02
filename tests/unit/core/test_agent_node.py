@@ -1713,6 +1713,8 @@ class TestAgentNodeUsageTracking:
         mock_user.user_id = "usr_test"
         context = MagicMock(spec=WorkflowRuntimeContext)
         context.user = mock_user
+        context.byok_api_key = None
+        context.byok_base_url = None
 
         mock_chat_model = MagicMock()
         model_def = ModelDefinition(
@@ -1776,6 +1778,8 @@ class TestAgentNodeUsageTracking:
         mock_user.user_id = "usr_test"
         context = MagicMock(spec=WorkflowRuntimeContext)
         context.user = mock_user
+        context.byok_api_key = None
+        context.byok_base_url = None
 
         mock_chat_model = MagicMock()
         model_def = ModelDefinition(
