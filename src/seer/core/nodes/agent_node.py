@@ -20,14 +20,14 @@ from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
+from fastapi import HTTPException
 from pydantic import BaseModel, Field, create_model
+
 from seer.core.errors import (  # pylint: disable=no-name-in-module  # Reason: ProviderAuthError/ProviderError defined in Task 6
     ExecutionError,
     ProviderAuthError,
     ProviderError,
 )
-from fastapi import HTTPException
-from seer.core.errors import ExecutionError
 from seer.core.registry.default_models import DEPRECATED_MODEL_MAP
 from seer.logger import get_logger
 from seer.core.expr.typecheck import schema_from_output_contract
