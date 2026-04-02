@@ -40,8 +40,8 @@ async def _handle_mouse_event(streamer: StreamingService, data: dict) -> None:
     click_count = int(data.get("clickCount", 1))
 
     if action == "click":
-        # Use JavaScript click - industry standard (Playwright, Puppeteer, browser-use)
-        # CDP mousePressed/mouseReleased don't fire the 'click' event
+        # Use CDP mousePressed/mouseReleased sequence for trusted clicks
+        # that propagate into cross-origin iframes (e.g. reCAPTCHA)
         await streamer.dispatch_click_js(x, y, button)
     elif action == "down":
         await streamer.dispatch_mouse_event("mousePressed", x, y, button=button, click_count=click_count)
