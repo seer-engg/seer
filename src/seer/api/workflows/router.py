@@ -183,7 +183,17 @@ async def generate_trigger_event(
 
 @router.get("/registries/models", response_model=api_models.ModelRegistryResponse)
 async def get_model_registry(request: Request):
-    _require_user(request)
+    user = _require_user(request)
+    if user.active_organization_id:
+        from seer.api.models.router import _get_byok_models  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+        byok_models = await _get_byok_models(user.active_organization_id)
+        if byok_models is not None:
+            return api_models.ModelRegistryResponse(
+                models=[
+                    api_models.ModelDescriptor(id=m.id, title=m.name, supports_json_schema=True)
+                    for m in byok_models
+                ]
+            )
     return await services.list_models()
 
 

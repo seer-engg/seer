@@ -106,4 +106,13 @@ TIER_LIMITS_REGISTRY: dict[SubscriptionTier, TierLimits] = {
         llm_credits_5h=constants.LLM_CREDITS_5H_PRO_PLUS,
         llm_credits_weekly=constants.LLM_CREDITS_WEEKLY_PRO_PLUS,
     ),
+    SubscriptionTier.BYOK: TierLimits(
+        workflows=constants.WORKFLOWS_BYOK,
+        runs_monthly=constants.RUNS_MONTHLY_BYOK,
+        account_day_limit=constants.ACCOUNT_DAY_LIMIT_BYOK,
+        poll_min_interval_seconds=constants.POLL_MIN_INTERVAL_BYOK,
+        llm_credits_monthly=constants.LLM_CREDITS_BYOK,
+        llm_credits_5h=constants.LLM_CREDITS_5H_BYOK,
+        llm_credits_weekly=constants.LLM_CREDITS_WEEKLY_BYOK,
+    ),
 }

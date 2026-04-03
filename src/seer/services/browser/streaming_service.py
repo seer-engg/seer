@@ -288,11 +288,13 @@ class StreamingService:
             session_id=self._target_session_id,
         )
 
-    async def dispatch_click_js(self, x: float, y: float, _button: str = "left") -> None:
-        """Dispatch a click using JavaScript - the industry standard approach.
+    async def dispatch_click_js(self, x: float, y: float, button: str = "left") -> None:
+        """Dispatch a click using CDP mousePressed + mouseReleased sequence.
 
-        CDP mousePressed/mouseReleased don't fire the 'click' event. All production
-        tools (Playwright, Puppeteer, browser-use) use JavaScript injection instead.
+        Uses real CDP input events instead of JavaScript injection so that:
+        1. Clicks propagate into cross-origin iframes (e.g. reCAPTCHA)
+        2. Events have isTrusted=true at the browser compositor level
+        3. Bot-detection scripts see authentic input events
 
         Args:
             x: X coordinate in screencast space (will be scaled)
@@ -305,29 +307,43 @@ class StreamingService:
 
         # Scale coordinates from screencast space to viewport space
         scaled_x, scaled_y = self._scale_coordinates(x, y)
-        logger.info(f"JS Click: input=({x:.0f},{y:.0f}) -> viewport=({scaled_x:.0f},{scaled_y:.0f})")
-
-        # Industry standard: use elementFromPoint + click()
-        # This is what Puppeteer and browser-use do
-        js_code = f"""
-        (() => {{
-            const el = document.elementFromPoint({scaled_x}, {scaled_y});
-            if (el) {{
-                el.click();
-                return {{ success: true, tagName: el.tagName, id: el.id }};
-            }}
-            return {{ success: false }};
-        }})()
-        """
+        logger.info(f"CDP Click: input=({x:.0f},{y:.0f}) -> viewport=({scaled_x:.0f},{scaled_y:.0f})")
 
         try:
-            result = await self._cdp_client.send.Runtime.evaluate(
-                params={"expression": js_code, "returnByValue": True},
+            # Move mouse to target first (some sites track mouse movement)
+            await self._cdp_client.send.Input.dispatchMouseEvent(
+                params={
+                    "type": "mouseMoved",
+                    "x": scaled_x,
+                    "y": scaled_y,
+                },
                 session_id=self._target_session_id,
             )
-            logger.info(f"JS Click result: {result}")
+            # mousePressed + mouseReleased = full click at compositor level
+            # This is how Playwright implements .click() under the hood
+            await self._cdp_client.send.Input.dispatchMouseEvent(
+                params={
+                    "type": "mousePressed",
+                    "x": scaled_x,
+                    "y": scaled_y,
+                    "button": button,
+                    "clickCount": 1,
+                },
+                session_id=self._target_session_id,
+            )
+            await self._cdp_client.send.Input.dispatchMouseEvent(
+                params={
+                    "type": "mouseReleased",
+                    "x": scaled_x,
+                    "y": scaled_y,
+                    "button": button,
+                    "clickCount": 1,
+                },
+                session_id=self._target_session_id,
+            )
+            logger.info(f"CDP Click completed at viewport=({scaled_x:.0f},{scaled_y:.0f})")
         except Exception as e:
-            logger.error(f"JS Click failed: {e}")
+            logger.error(f"CDP Click failed: {e}")
 
     async def dispatch_scroll_event(
         self, x: float, y: float, delta_x: float = 0, delta_y: float = -120

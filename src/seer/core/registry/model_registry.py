@@ -35,28 +35,32 @@ class ModelDefinition:
             return self.json_handler is not None
         return False
 
-    def get_chat_model(self, temperature: float = 0.2) -> "BaseChatModel":
+    def get_chat_model(
+        self,
+        temperature: float = 0.2,
+        byok_api_key: str | None = None,
+        byok_base_url: str | None = None,
+    ) -> "BaseChatModel":
         """
         Get a LangChain BaseChatModel instance for agent use cases.
 
-        Uses chat_model_factory if provided, otherwise falls back to get_llm().
-
-        Args:
-            temperature: Model temperature (default 0.2)
-
-        Returns:
-            BaseChatModel instance for use with LangGraph agents
-
-        Raises:
-            ValueError: If no chat model can be created for this model
+        Uses BYOK credentials if provided, else chat_model_factory, else get_llm().
         """
         # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
         from seer.llm import get_llm
 
+        if byok_api_key:
+            from seer.llm import get_llm_for_byok  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+            return get_llm_for_byok(
+                model=self.model_id,
+                temperature=temperature,
+                api_key=byok_api_key,
+                base_url=byok_base_url or "https://openrouter.ai/api/v1",
+            )
+
         if self.chat_model_factory is not None:
             return self.chat_model_factory()
 
-        # Fallback to get_llm with model_id
         return get_llm(model=self.model_id, temperature=temperature)
 
 

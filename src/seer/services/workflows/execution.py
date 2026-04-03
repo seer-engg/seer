@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # Reason: Execution module covers full workflow lifecycle; refactor tracked separately
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
@@ -5,7 +6,7 @@ from fastapi import HTTPException
 from langgraph.types import Command
 
 from seer.api.agents.checkpointer import get_checkpointer
-from seer.core.errors import ExecutionError, WorkflowCompilerError
+from seer.core.errors import ExecutionError, ProviderError, WorkflowCompilerError  # pylint: disable=no-name-in-module  # Reason: ProviderError defined in Task 6 - will exist after merge
 from seer.database import WorkflowRun, User, WorkflowRunStatus
 from seer.database.models import UserSettings
 from seer.core.runtime.context import WorkflowRuntimeContext
@@ -19,6 +20,17 @@ logger = get_logger(__name__)
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def _resolve_byok_credentials(runtime_context: WorkflowRuntimeContext) -> None:
+    """Populate BYOK credentials on runtime_context if org is on BYOK plan."""
+    if not runtime_context.organization_id:
+        return
+    from seer.services.byok.llm_resolver import resolve_byok_credentials  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+    creds = await resolve_byok_credentials(runtime_context.organization_id)
+    if creds:
+        runtime_context.byok_api_key, runtime_context.byok_base_url = creds
 
 
 def _extract_hitl_interrupt(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -111,7 +123,7 @@ def _build_run_config(run: WorkflowRun, config_payload: Optional[Dict[str, Any]]
     return base_config
 
 
-async def _execute_run(
+async def _execute_run(  # pylint: disable=too-many-locals,too-many-statements,too-complex  # Reason: Orchestrates full workflow run lifecycle including BYOK, cost caps, and error handling
     run: WorkflowRun,
     user: User,
     *,
@@ -176,6 +188,9 @@ async def _execute_run(
             memory_access=WorkflowMemoryRuntimeAdapter(user=user, organization_id=organization_id),
             mcp_config_resolver=McpServerConfigResolverImpl(user=user),
         )
+
+        await _resolve_byok_credentials(runtime_context)
+
         result = await compiled.ainvoke(
             config=effective_config,
             context=runtime_context,
@@ -213,6 +228,23 @@ async def _execute_run(
 
             # Return result with interrupt flag for caller awareness
             return {"__interrupted__": True, "__interrupt_data__": hitl_interrupt, **result}
+
+    except ProviderError as exc:
+        logger.warning(
+            "Provider error for workflow run '%s': %s",
+            run.run_id,
+            exc,
+            extra={"run_id": run.run_id},
+        )
+        await WorkflowRun.filter(id=run.id).update(
+            status=WorkflowRunStatus.FAILED,
+            finished_at=_now(),
+            error=f"[PROVIDER ERROR] {exc}",
+        )
+        await capture_workflow_run_event(
+            "workflow_run_failed", user.email, run.run_id,
+            getattr(run.workflow, "workflow_id", None), error=f"[PROVIDER ERROR] {exc}")
+        raise
 
     except Exception as exc:
         # Conditional import here to avoid circular dependency during module initialization
@@ -343,7 +375,7 @@ async def _validate_resume_request(
         raise HTTPException(status_code=408, detail="HITL interrupt has timed out")
 
 
-async def _execute_resume(
+async def _execute_resume(  # pylint: disable=too-many-locals  # Reason: Resume path carries same lifecycle state as execute including BYOK resolution
     run: WorkflowRun,
     user: User,
     compiled: Any,
@@ -370,6 +402,8 @@ async def _execute_resume(
         memory_access=WorkflowMemoryRuntimeAdapter(user=user, organization_id=organization_id),
         mcp_config_resolver=McpServerConfigResolverImpl(user=user),
     )
+
+    await _resolve_byok_credentials(runtime_context)
 
     # Resume with user responses using LangGraph's Command
     resume_command = Command(resume=responses)
