@@ -1,6 +1,5 @@
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
-import traceback
 from fastapi import HTTPException
 
 from langgraph.types import Command
@@ -144,11 +143,7 @@ async def _execute_run(
         compiled = await _compile_workflow(user, run.spec, checkpointer=checkpointer, organization_id=organization_id)
     except WorkflowCompilerError as exc:
         logger.error("Workflow compilation failed", exc_info=True)
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.FAILED,
-            finished_at=_now(),
-            error=str(exc),
-        )
+        await _fail_run(run, str(exc))
         raise
     try:
         run_config = dict(config_payload or {})
@@ -223,29 +218,18 @@ async def _execute_run(
         # Conditional import here to avoid circular dependency during module initialization
         from seer.observability.exceptions import RunCostCapExceeded  # pylint: disable=import-outside-toplevel  # Reason: circular dependency
 
-        # Handle cost cap exceeded with structured error
         if isinstance(exc, RunCostCapExceeded):
             logger.warning(
-                "Run cost cap exceeded for workflow run '%s'",
-                run.run_id,
-                extra={
-                    "run_id": run.run_id,
-                    "accumulated_cost": exc.accumulated_cost,
-                    "cost_cap": exc.cost_cap,
-                },
+                "Run cost cap exceeded for workflow run '%s'", run.run_id,
+                extra={"run_id": run.run_id, "accumulated_cost": exc.accumulated_cost, "cost_cap": exc.cost_cap},
             )
-            await WorkflowRun.filter(id=run.id).update(
-                status=WorkflowRunStatus.FAILED,
-                finished_at=_now(),
-                error=exc.to_dict(),
-            )
+            await _fail_run(run, exc.to_dict())
             await capture_workflow_run_event(
                 "workflow_run_failed", user.email, run.run_id,
                 getattr(run.workflow, "workflow_id", None), error=str(exc))
             raise HTTPException(status_code=402, detail=exc.to_dict()) from exc
 
-        # Handle other exceptions
-        print(f"{traceback.format_exc()}")
+        logger.error("Workflow execution failed for run '%s'", run.run_id, exc_info=True)
 
         # Extract error trace from ExecutionError (persists node traces when checkpoints aren't written)
         node_traces = None
@@ -253,10 +237,8 @@ async def _execute_run(
             node_traces = exc.trace_data  # pylint: disable=no-member  # Reason: ExecutionError adds trace_data attribute in __init__
 
         await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.FAILED,
-            finished_at=_now(),
-            error=str(exc),
-            node_traces=node_traces,
+            status=WorkflowRunStatus.FAILED, finished_at=_now(),
+            error=str(exc), node_traces=node_traces,
         )
         await capture_workflow_run_event(
             "workflow_run_failed", user.email, run.run_id,
@@ -453,6 +435,47 @@ async def _execute_resume(
     return result
 
 
+async def _resume_browser_hitl(
+    run: WorkflowRun,
+    interrupt_data: Dict[str, Any],
+    responses: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Resume a browser HITL interrupt by resolving the in-process Future."""
+    from seer.services.browser import hitl_bridge  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+    request_id = interrupt_data.get("request_id", "")
+    resolved = hitl_bridge.resolve_hitl_wait(str(run.run_id), request_id, responses)
+
+    await WorkflowRun.filter(id=run.id).update(
+        status=WorkflowRunStatus.RUNNING,
+        pending_interrupt_node_id=None,
+        pending_interrupt_data=None,
+        interrupt_expires_at=None,
+    )
+
+    if not resolved:
+        logger.warning(
+            "Browser HITL Future not found for run=%s request=%s (server may have restarted)",
+            run.run_id, request_id,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Browser HITL session expired or server restarted. The browser task must be re-run.",
+        )
+
+    logger.info("Browser HITL resumed: run=%s request=%s", run.run_id, request_id)
+    return {"status": "running", "run_id": run.run_id, "message": "Browser agent resumed with human response"}
+
+
+async def _fail_run(run: WorkflowRun, error: Any) -> None:
+    """Mark a run as failed with the given error."""
+    await WorkflowRun.filter(id=run.id).update(
+        status=WorkflowRunStatus.FAILED,
+        finished_at=_now(),
+        error=error if isinstance(error, dict) else str(error),
+    )
+
+
 async def resume_workflow_run(
     user: User,
     run_id: str,
@@ -461,20 +484,11 @@ async def resume_workflow_run(
     """
     Resume a workflow run that is paused at an HITL interrupt.
 
-    Args:
-        user: The user resuming the run
-        run_id: Public run ID (run_XXX format)
-        responses: User responses keyed by input field ID
-
-    Returns:
-        Execution result or new interrupt data if another HITL node is reached
-
     Raises:
         HTTPException: If run is not found, not owned by user, or not in INTERRUPTED state
     """
     from seer.database.workflow_models import parse_run_public_id  # pylint: disable=import-outside-toplevel  # Reason: avoid circular import
 
-    # Parse and fetch the run
     try:
         run_pk = parse_run_public_id(run_id)
     except ValueError as exc:
@@ -485,23 +499,19 @@ async def resume_workflow_run(
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
 
     await run.fetch_related("user", "workflow")
-
-    # Validate resume request
     await _validate_resume_request(user, run)
 
     logger.info(
         "Resuming workflow run '%s' with responses for node '%s'",
-        run.run_id,
-        run.pending_interrupt_node_id,
-        extra={
-            "run_id": run.run_id,
-            "node_id": run.pending_interrupt_node_id,
-            "response_keys": list(responses.keys()),
-        },
+        run.run_id, run.pending_interrupt_node_id,
+        extra={"run_id": run.run_id, "node_id": run.pending_interrupt_node_id, "response_keys": list(responses.keys())},
     )
 
-    # Save previous interrupt data before clearing (needed for stale-interrupt detection in loops)
     prev_interrupt_data = run.pending_interrupt_data
+
+    # Browser HITL: resolve the in-process Future instead of LangGraph resume
+    if prev_interrupt_data and prev_interrupt_data.get("type") == "browser_hitl":
+        return await _resume_browser_hitl(run, prev_interrupt_data, responses)
 
     # Mark run as running again
     await WorkflowRun.filter(id=run.id).update(
@@ -513,18 +523,13 @@ async def resume_workflow_run(
 
     # Compile workflow
     checkpointer = await get_checkpointer()
-    # Get organization_id from workflow for shared connection resolution
     organization_id = getattr(run.workflow, "organization_id", None)
 
     try:
         compiled = await _compile_workflow(user, run.spec, checkpointer=checkpointer, organization_id=organization_id)
     except WorkflowCompilerError as exc:
         logger.error("Workflow compilation failed during resume", exc_info=True)
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.FAILED,
-            finished_at=_now(),
-            error=str(exc),
-        )
+        await _fail_run(run, str(exc))
         raise HTTPException(status_code=500, detail=f"Compilation failed: {exc}") from exc
 
     # Execute resume
@@ -535,19 +540,11 @@ async def resume_workflow_run(
 
         if isinstance(exc, RunCostCapExceeded):
             logger.warning("Run cost cap exceeded during resume for '%s'", run.run_id)
-            await WorkflowRun.filter(id=run.id).update(
-                status=WorkflowRunStatus.FAILED,
-                finished_at=_now(),
-                error=exc.to_dict(),
-            )
+            await _fail_run(run, exc.to_dict())
             raise HTTPException(status_code=402, detail=exc.to_dict()) from exc
 
         logger.exception("Error during workflow resume", extra={"run_id": run.run_id})
-        await WorkflowRun.filter(id=run.id).update(
-            status=WorkflowRunStatus.FAILED,
-            finished_at=_now(),
-            error=str(exc),
-        )
+        await _fail_run(run, str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
