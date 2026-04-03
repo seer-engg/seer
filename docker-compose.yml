@@ -132,7 +132,7 @@ services:
       # MLFLOW_ENABLED: "${MLFLOW_ENABLED:-true}"
       BROWSERLESS_URL: "ws://browserless:3000"
       BROWSERLESS_TOKEN: "${BROWSERLESS_TOKEN:-}"
-      FRONTEND_URL: "${FRONTEND_URL:-https://app.getseer.dev}"
+      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:${FRONTEND_PORT:-5173}}"
       BACKEND_API_URL: "${BACKEND_API_URL:-localhost:${API_PORT:-8000}}"
       AUTO_OPEN_BROWSER: "${AUTO_OPEN_BROWSER:-true}"
       CHAT_MESSAGES_TOTAL_SELF_HOSTED: "${CHAT_MESSAGES_TOTAL_SELF_HOSTED:--1}"
@@ -203,6 +203,23 @@ services:
     # Use worker-watch for hot-reloading in development (uses watchmedo with debouncing)
     command: ["worker-watch"]
 
+  frontend:
+    image: node:22-alpine
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    working_dir: /app
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      VITE_BACKEND_API_URL: "http://localhost:${API_PORT:-8000}"
+      VITE_CLERK_PUBLISHABLE_KEY: "${VITE_CLERK_PUBLISHABLE_KEY:-}"
+    volumes:
+      - ./seer-frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: ["sh", "-c", "npm install && npm run dev -- --host 0.0.0.0 --port 5173"]
+
 volumes:
   postgres_data:
   mlflow_data:
+  frontend_node_modules:
