@@ -1109,6 +1109,8 @@ def _create_mock_context_with_file_system() -> MagicMock:
     context = MagicMock(spec=WorkflowRuntimeContext)
     context.user = mock_user
     context.workflow_run_id = "run_test123"
+    context.byok_api_key = None
+    context.byok_base_url = None
 
     mock_fs = AsyncMock()
     mock_fs.get_file_content = AsyncMock(return_value=b"file content bytes")
