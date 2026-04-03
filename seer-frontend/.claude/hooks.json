@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd $CLAUDE_PROJECT_DIR && npm run lint -- --fix 2>/dev/null || true",
+            "description": "Auto-format code after edits"
+          }
+        ]
+      }
+    ]
+  }
+}
