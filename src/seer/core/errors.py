@@ -88,3 +88,11 @@ class ExecutionError(WorkflowCompilerError):
     def __init__(self, message: str, trace_data: dict | None = None, errors: Optional[List[NodeError]] = None):
         super().__init__(message, errors=errors)
         self.trace_data = trace_data
+
+
+class ProviderError(Exception):
+    """Error from the user's LLM provider, not from Seer."""
+
+
+class ProviderAuthError(ProviderError):
+    """Authentication failure with the user's LLM provider."""

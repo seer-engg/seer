@@ -153,6 +153,7 @@ async def send_message(
         image_model=body.image_model,
         image_size=body.image_size or "1024x1024",
         user_timezone=body.timezone,
+        organization_id=user.active_organization_id,
     )
 
     session.current_execution_task_id = (
@@ -186,7 +187,7 @@ async def stream_message(
     async def event_generator():
         try:
             from seer.config import config  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
-            from seer.llm import get_llm  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+            from seer.services.byok.llm_resolver import resolve_llm  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
             from seer.worker.tasks.general_chat import _build_langchain_messages  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
 
             from langchain_core.messages import SystemMessage  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
@@ -202,7 +203,7 @@ async def stream_message(
             ] + _build_langchain_messages(history)
 
             model = body.model or config.default_llm_model
-            llm = get_llm(model=model)
+            llm = await resolve_llm(model=model, organization_id=user.active_organization_id)
 
             full_response = ""
             async for chunk in llm.astream(lc_messages):

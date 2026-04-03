@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from fastapi import HTTPException
 from langchain_core.messages import HumanMessage
 
+from seer.config import config
 from seer.llm import get_llm
 from seer.logger import get_logger
 from seer.tools.base import BaseTool, register_tool
@@ -68,7 +69,7 @@ class ModelBlockTool(BaseTool):
             "required": ["prompt"]
         }
 
-    async def execute(
+    async def execute(  # pylint: disable=too-many-locals  # Reason: BYOK branching adds necessary variables
         self,
         access_token: Optional[str],
         arguments: Dict[str, Any],
@@ -88,8 +89,8 @@ class ModelBlockTool(BaseTool):
         Returns:
             Dict with "output" (text) and optionally "structured_output" (dict)
         """
-        # access_token, credentials, and context are unused but required for interface consistency
-        _ = access_token, credentials, context
+        # credentials is unused but required for interface consistency
+        _ = access_token, credentials
         prompt = arguments.get("prompt")
         if not prompt:
             raise HTTPException(
@@ -103,11 +104,22 @@ class ModelBlockTool(BaseTool):
         system_message = arguments.get("system_message")
 
         try:
-            # Get LLM instance
-            llm = get_llm(
-                model=model_name or None,  # Use default if not specified
-                temperature=temperature
-            )
+            # Get LLM instance — use BYOK credentials from runtime context if available
+            byok_key = getattr(context, "byok_api_key", None) if context else None
+            byok_url = getattr(context, "byok_base_url", None) if context else None
+            if byok_key:
+                from seer.llm import get_llm_for_byok  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+                llm = get_llm_for_byok(
+                    model=model_name or config.default_llm_model,
+                    temperature=temperature,
+                    api_key=byok_key,
+                    base_url=byok_url or "https://openrouter.ai/api/v1",
+                )
+            else:
+                llm = get_llm(
+                    model=model_name or None,  # Use default if not specified
+                    temperature=temperature
+                )
 
             # Build messages
             messages = []
