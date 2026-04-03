@@ -138,6 +138,9 @@ class LLMUsageRecord(models.Model):
     operation = fields.CharField(max_length=100, null=True)  # e.g., "workflow_execution", "chat_message"
     metadata = fields.JSONField(null=True)  # Flexible storage for additional data
 
+    # BYOK flag: True when LLM call used user's own API key (excluded from credit limits)
+    is_byok = fields.BooleanField(default=False)
+
     created_at = fields.DatetimeField(auto_now_add=True, db_index=True)
 
     class Meta:

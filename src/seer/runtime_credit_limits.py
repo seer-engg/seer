@@ -10,6 +10,11 @@ async def check_runtime_credit_limit(context: Any, logger: logging.Logger) -> No
     if not context or not getattr(context, "user", None):
         return
 
+    # BYOK calls bypass credit limits — the user bears the LLM cost directly
+    byok_key = getattr(context, "byok_api_key", None)
+    if isinstance(byok_key, str) and byok_key:
+        return
+
     from seer.observability.credit_gate import check_credit_limit  # pylint: disable=import-outside-toplevel  # Reason: Late import avoids optional runtime dependency cycles
 
     organization = None

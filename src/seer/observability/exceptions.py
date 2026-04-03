@@ -251,7 +251,7 @@ class PollingIntervalTooFast(UsageLimitError):
         message = (
             f"The {tier.value} plan allows polling intervals of {min_interval}s or slower. "
             f"Your requested {requested_interval}s has been adjusted to {min_interval}s. "
-            "Upgrade to Pro+ for faster polling."
+            "Upgrade to Pro for faster polling."
         )
         super().__init__(
             resource="polling_interval",

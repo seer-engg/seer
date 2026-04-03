@@ -15,7 +15,18 @@ This means you must configure products and prices in the Stripe Dashboard before
 
 ## Products to Create
 
-Create **3 subscription products** in Stripe Dashboard > Product Catalog.
+Create **2 subscription products** in Stripe Dashboard > Product Catalog.
+
+### Lite Product
+
+| Field | Value |
+|-------|-------|
+| Name | Lite |
+| **Metadata** | |
+| `tier` | `lite` |
+| `display_name` | `Lite` |
+| `features` | `["10 workflows", "500K monthly runs", "5-minute polling", "$10 LLM credits/month"]` |
+| `sort_order` | `1` |
 
 ### Pro Product
 
@@ -26,17 +37,6 @@ Create **3 subscription products** in Stripe Dashboard > Product Catalog.
 | `tier` | `pro` |
 | `display_name` | `Pro` |
 | `features` | `["Unlimited workflows", "1M monthly runs", "1-minute polling", "$20 LLM credits/month"]` |
-| `sort_order` | `1` |
-
-### Pro+ Product
-
-| Field | Value |
-|-------|-------|
-| Name | Pro+ |
-| **Metadata** | |
-| `tier` | `pro_plus` |
-| `display_name` | `Pro+` |
-| `features` | `["Unlimited workflows", "5M monthly runs", "30-second polling", "$50 LLM credits/month", "Priority support"]` |
 | `sort_order` | `2` |
 | `badge` *(optional)* | `MOST POPULAR` |
 
@@ -44,7 +44,7 @@ Create **3 subscription products** in Stripe Dashboard > Product Catalog.
 
 | Key | Required | Description |
 |-----|----------|-------------|
-| `tier` | Yes | Internal tier identifier: `pro`, `pro_plus` |
+| `tier` | Yes | Internal tier identifier: `lite`, `pro` |
 | `display_name` | Yes | UI display name |
 | `features` | Yes | JSON array of feature strings |
 | `sort_order` | No | Display order (lower = first) |
@@ -55,7 +55,7 @@ Create **3 subscription products** in Stripe Dashboard > Product Catalog.
 
 ## Prices to Create
 
-For each product above, create **2 prices** (monthly + annual = 6 total prices).
+For each product above, create **2 prices** (monthly + annual = 4 total prices).
 
 ### Monthly Price Template
 
@@ -63,7 +63,7 @@ For each product above, create **2 prices** (monthly + annual = 6 total prices).
 |-------|-------|
 | Billing period | Recurring (Monthly) |
 | **Metadata** | |
-| `tier` | `<tier_name>` (e.g., `pro`, `pro_plus`) |
+| `tier` | `<tier_name>` (e.g., `lite`, `pro`) |
 | `variant` | `regular` |
 | `trial_period_days` *(optional)* | `14` |
 
@@ -157,8 +157,8 @@ These are the default LLM credit limits per tier (from `constants.py`):
 | Tier | Monthly | 5-Hour Window | Weekly Window | Min Polling Interval |
 |------|---------|---------------|---------------|----------------------|
 | Free | $1.00 | $1.00 | $1.00 | 15 minutes |
+| Lite | $10.00 | $3.00 | $6.00 | 5 minutes |
 | Pro | $20.00 | $5.00 | $12.00 | 1 minute |
-| Pro+ | $50.00 | $15.00 | $35.00 | 30 seconds |
 
 ---
 
@@ -228,14 +228,14 @@ STRIPE_WEBHOOK_SECRET=whsec_...    # From webhook endpoint settings
 Use this checklist when setting up Stripe in test mode:
 
 ### Products
+- [ ] Create Lite product with `tier: lite` metadata
 - [ ] Create Pro product with `tier: pro` metadata
-- [ ] Create Pro+ product with `tier: pro_plus` metadata
 
 ### Prices
+- [ ] Create monthly price for Lite (`tier: lite`, `variant: regular`)
+- [ ] Create annual price for Lite
 - [ ] Create monthly price for Pro (`tier: pro`, `variant: regular`)
 - [ ] Create annual price for Pro
-- [ ] Create monthly price for Pro+
-- [ ] Create annual price for Pro+
 
 ### Overage (Billing Meter)
 - [ ] Create Billing Meter with event name `llm_overage_usage`
@@ -268,7 +268,7 @@ After configuration, verify your setup:
 
 3. **Check logs for cache refresh:**
    ```
-   Pricing cache refreshed: 3 products, 6 prices, overage_price=price_xxx
+   Pricing cache refreshed: 2 products, 4 prices, overage_price=price_xxx
    ```
 
 4. **Test checkout flow:**

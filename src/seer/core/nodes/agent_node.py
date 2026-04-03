@@ -1203,9 +1203,11 @@ class AgentNodeType(BaseNodeType):
         # Resolve BYOK credentials from runtime context
         byok_key = None
         byok_url = None
+        byok_prov = None
         if ctx.runtime_context:
             byok_key = ctx.runtime_context.byok_api_key
             byok_url = ctx.runtime_context.byok_base_url
+            byok_prov = ctx.runtime_context.byok_provider
 
         model_def = services.model_registry.get(config["model_id"])
         llm = model_def.get_chat_model(
@@ -1214,6 +1216,7 @@ class AgentNodeType(BaseNodeType):
             else 0.2,
             byok_api_key=byok_key,
             byok_base_url=byok_url,
+            byok_provider=byok_prov,
         )
         # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
         from langchain.agents.middleware import SummarizationMiddleware

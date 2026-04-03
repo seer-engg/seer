@@ -216,7 +216,7 @@ async def enable_overage_pricing(request: Request, body: EnableOverageRequest):
     Enable usage-based pricing for LLM credits.
 
     Requirements:
-    - Paid tier subscription (PRO or PRO_PLUS)
+    - Paid tier subscription (LITE or PRO)
     - Active subscription status
     - Payment method on file
 

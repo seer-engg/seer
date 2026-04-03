@@ -23,12 +23,14 @@ class AddKeyRequest(BaseModel):
     label: str = Field(max_length=100)
     api_key: str = Field(min_length=8)
     base_url: str = Field(default="https://openrouter.ai/api/v1", max_length=500)
+    provider: str = Field(default="openrouter", max_length=50)  # openrouter, openai, anthropic, google, custom
 
 
 class KeyResponse(BaseModel):
     id: int
     label: str
     base_url: str
+    provider: str
     key_masked: str
     is_active: bool
     status: str
@@ -81,6 +83,7 @@ def _key_to_response(key: LLMApiKey) -> KeyResponse:
         id=key.id,
         label=key.label,
         base_url=key.base_url,
+        provider=key.provider,
         key_masked=masked,
         is_active=key.is_active,
         status=key.status,
@@ -102,20 +105,21 @@ async def list_keys(request: Request):
 
 @router.post("/keys", response_model=KeyResponse, status_code=201)
 async def add_key(request: Request, body: AddKeyRequest):
-    """Add a new LLM API key. Deactivates any existing active key."""
+    """Add a new LLM API key. Deactivates any existing active key for the same provider."""
     user = _require_user(request)
     org = await _get_org(user)
 
     vault = get_key_vault()
 
-    # Deactivate existing active keys for this org
-    await LLMApiKey.filter(organization=org, is_active=True).update(is_active=False)
+    # Deactivate existing active keys for this org + provider combo
+    await LLMApiKey.filter(organization=org, provider=body.provider, is_active=True).update(is_active=False)
 
     key = await LLMApiKey.create(
         organization=org,
         created_by=user,
         label=body.label,
         base_url=body.base_url,
+        provider=body.provider,
         key_enc=vault.encrypt(body.api_key),
         key_suffix=vault.suffix(body.api_key),
         is_active=True,

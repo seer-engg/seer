@@ -40,6 +40,7 @@ class ModelDefinition:
         temperature: float = 0.2,
         byok_api_key: str | None = None,
         byok_base_url: str | None = None,
+        byok_provider: str | None = None,
     ) -> "BaseChatModel":
         """
         Get a LangChain BaseChatModel instance for agent use cases.
@@ -55,6 +56,7 @@ class ModelDefinition:
                 model=self.model_id,
                 temperature=temperature,
                 api_key=byok_api_key,
+                provider=byok_provider or "openrouter",
                 base_url=byok_base_url or "https://openrouter.ai/api/v1",
             )
 

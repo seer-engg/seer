@@ -33,6 +33,11 @@ ALLOWED_UNSAFE_MIGRATIONS = {
         "reason": "Drops is_active column that was never checked in any execution path. Safe to remove.",
         "unsafe_patterns": ["DROP COLUMN"]
     },
+    "63_20260403115350_add_provider_to_byok.py": {
+        "added_to_allowlist": "2026-04-03",
+        "reason": "DROP COLUMN only in downgrade() for rollback of new provider/provider_config columns. Upgrade is safe.",
+        "unsafe_patterns": ["DROP COLUMN"]
+    },
 }
 
 DANGEROUS_PATTERNS = {

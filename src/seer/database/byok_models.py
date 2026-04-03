@@ -8,7 +8,7 @@ class LLMApiKey(models.Model):
     """
     Encrypted LLM API key storage for BYOK users.
 
-    Org-scoped: each org has at most one active key.
+    Org-scoped: each org has at most one active key per provider.
     Keys are Fernet-encrypted at rest via the key_vault service.
     The raw key is NEVER returned in API responses — only masked version.
     """
@@ -28,6 +28,8 @@ class LLMApiKey(models.Model):
     base_url = fields.CharField(max_length=500, default="https://openrouter.ai/api/v1")
     key_enc = fields.TextField()
     key_suffix = fields.CharField(max_length=8)
+    provider = fields.CharField(max_length=50, default="openrouter")  # openrouter, openai, anthropic, google, custom
+    provider_config = fields.JSONField(default={})
     is_active = fields.BooleanField(default=True)
     status = fields.CharField(max_length=20, default="active")  # active, revoked
     last_used_at = fields.DatetimeField(null=True)
@@ -36,7 +38,7 @@ class LLMApiKey(models.Model):
 
     class Meta:
         table = "llm_api_keys"
-        indexes = (("organization", "is_active"),)
+        indexes = (("organization", "provider", "is_active"),)
 
     def __str__(self) -> str:
         return f"LLMApiKey<org={self.organization_id}, label={self.label}, suffix=...{self.key_suffix}>"  # pylint: disable=no-member # tortoise FK generates _id at runtime

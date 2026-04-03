@@ -3,7 +3,7 @@
 Numerical constants for usage limits across subscription tiers.
 
 These values define the hard limits for each feature dimension across
-Free, Pro, and Pro+ tiers.
+Free, Lite, and Pro tiers.
 
 Convention:
   - -1 means unlimited
@@ -26,16 +26,14 @@ class TieredUsageLimits(BaseSettings):
 
     WORKFLOWS_FREE: int = Field(default=3)
     WORKFLOWS_PRO: int = Field(default=-1)  # Unlimited
-    WORKFLOWS_PRO_PLUS: int = Field(default=-1)  # Unlimited
-    WORKFLOWS_BYOK: int = Field(default=-1)  # Unlimited
+    WORKFLOWS_LITE: int = Field(default=10)
     # ============================================================================
     # Workflow Run Limits (Monthly)
     # ============================================================================
 
     RUNS_MONTHLY_FREE: int = Field(default=100)
     RUNS_MONTHLY_PRO: int = Field(default=1_000_000)
-    RUNS_MONTHLY_PRO_PLUS: int = Field(default=5_000_000)
-    RUNS_MONTHLY_BYOK: int = Field(default=1_000_000)
+    RUNS_MONTHLY_LITE: int = Field(default=500_000)
 
     # ============================================================================
     # Account Day Limits
@@ -43,8 +41,7 @@ class TieredUsageLimits(BaseSettings):
 
     ACCOUNT_DAY_LIMIT_FREE: int = Field(default=-1)  # No signup-age limit
     ACCOUNT_DAY_LIMIT_PRO: int = Field(default=-1)  # No limit
-    ACCOUNT_DAY_LIMIT_PRO_PLUS: int = Field(default=-1)  # No limit
-    ACCOUNT_DAY_LIMIT_BYOK: int = Field(default=-1)
+    ACCOUNT_DAY_LIMIT_LITE: int = Field(default=-1)  # No limit
 
     # ============================================================================
     # Polling Frequency Limits (Minimum Interval in Seconds)
@@ -52,8 +49,7 @@ class TieredUsageLimits(BaseSettings):
 
     POLL_MIN_INTERVAL_FREE: int = Field(default=900)  # 15 minutes
     POLL_MIN_INTERVAL_PRO: int = Field(default=60)  # 1 minute
-    POLL_MIN_INTERVAL_PRO_PLUS: int = Field(default=30)  # 30 seconds
-    POLL_MIN_INTERVAL_BYOK: int = Field(default=60)  # 1 minute, same as PRO
+    POLL_MIN_INTERVAL_LITE: int = Field(default=300)  # 5 minutes
 
     # ============================================================================
     # LLM Credit Limits (Monthly, in USD)
@@ -61,8 +57,7 @@ class TieredUsageLimits(BaseSettings):
 
     LLM_CREDITS_FREE: float = Field(default=1.00)
     LLM_CREDITS_PRO: float = Field(default=20.00)
-    LLM_CREDITS_PRO_PLUS: float = Field(default=50.00)
-    LLM_CREDITS_BYOK: float = Field(default=-1)  # Unlimited (BYOK)
+    LLM_CREDITS_LITE: float = Field(default=10.00)
 
     # ============================================================================
     # LLM Credit Limits (5-Hour Rolling Window, in USD)
@@ -70,8 +65,7 @@ class TieredUsageLimits(BaseSettings):
 
     LLM_CREDITS_5H_FREE: float = Field(default=1.00)
     LLM_CREDITS_5H_PRO: float = Field(default=5.00)
-    LLM_CREDITS_5H_PRO_PLUS: float = Field(default=15.00)
-    LLM_CREDITS_5H_BYOK: float = Field(default=-1)  # Unlimited
+    LLM_CREDITS_5H_LITE: float = Field(default=3.00)
 
     # ============================================================================
     # LLM Credit Limits (Weekly Rolling Window, in USD)
@@ -79,8 +73,7 @@ class TieredUsageLimits(BaseSettings):
 
     LLM_CREDITS_WEEKLY_FREE: float = Field(default=1.00)
     LLM_CREDITS_WEEKLY_PRO: float = Field(default=12.00)
-    LLM_CREDITS_WEEKLY_PRO_PLUS: float = Field(default=35.00)
-    LLM_CREDITS_WEEKLY_BYOK: float = Field(default=-1)  # Unlimited
+    LLM_CREDITS_WEEKLY_LITE: float = Field(default=6.00)
 
     # ============================================================================
     # Credit Thresholds

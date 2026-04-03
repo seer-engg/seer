@@ -33,7 +33,7 @@ from seer.observability.constants import tiered_usage_limits
 logger = get_logger("api.subscriptions.overage_service")
 
 # Tiers eligible for overage pricing
-OVERAGE_ELIGIBLE_TIERS = {SubscriptionTier.PRO, SubscriptionTier.PRO_PLUS}
+OVERAGE_ELIGIBLE_TIERS = {SubscriptionTier.LITE, SubscriptionTier.PRO}
 
 # Stripe Billing Meter event name (must match meter configured in Stripe Dashboard)
 OVERAGE_METER_EVENT_NAME = "llm_overage_usage"
@@ -85,7 +85,7 @@ async def is_overage_eligible(subscription: BillingSubscription) -> bool:
     Check if a subscription is eligible for overage pricing.
 
     Requires:
-    - Paid tier (PRO or PRO_PLUS)
+    - Paid tier (LITE or PRO)
     - Active subscription status
     - Payment method on file
 

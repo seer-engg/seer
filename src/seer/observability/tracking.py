@@ -85,12 +85,16 @@ async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positi
     operation: Optional[str] = None,
     metadata: Optional[dict] = None,
     organization: Optional[Organization] = None,
+    is_byok: bool = False,
 ) -> LLMUsageRecord:
     """
     Track an LLM API call for cost monitoring.
 
     For team organizations, this updates both user-in-org counters (for per-member
     breakdown) and org-level counters (for limit enforcement).
+
+    BYOK calls (is_byok=True) are recorded for analytics but do NOT increment
+    UsageCounters or trigger overage billing, since the user bears the LLM cost.
 
     Args:
         user: The user making the call
@@ -103,14 +107,16 @@ async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positi
         operation: Optional operation type (e.g., "workflow_execution", "chat_message")
         metadata: Optional additional metadata
         organization: Optional organization context (for team billing)
+        is_byok: Whether this call used the user's own API key (BYOK)
 
     Returns:
         The created LLMUsageRecord
     """
     logger.info(
-        "Tracking LLM usage for user %s (org=%s): provider=%s, model=%s, input_tokens=%d, output_tokens=%d, cost=%.6f",
+        "Tracking LLM usage for user %s (org=%s, byok=%s): provider=%s, model=%s, input_tokens=%d, output_tokens=%d, cost=%.6f",
         user.user_id,
         organization.id if organization else None,
+        is_byok,
         provider,
         model,
         input_tokens,
@@ -129,7 +135,12 @@ async def track_llm_usage(  # pylint: disable=too-many-arguments,too-many-positi
         cost=cost,
         operation=operation,
         metadata=metadata,
+        is_byok=is_byok,
     )
+
+    # BYOK calls are tracked for analytics but don't count against credit limits
+    if is_byok:
+        return record
 
     # Get billing period based on context
     period_start, period_end = await get_effective_billing_period(user, organization)
@@ -369,6 +380,7 @@ async def get_rolling_llm_credits_used(user: User, window: timedelta) -> Decimal
     result = await LLMUsageRecord.filter(
         user=user,
         created_at__gte=cutoff,
+        is_byok=False,  # Exclude BYOK usage from credit calculations
     ).annotate(total_cost=Sum("cost")).values("total_cost")
 
     if result and result[0]["total_cost"]:
@@ -490,6 +502,7 @@ async def get_org_rolling_llm_credits_used(organization: Organization, window: t
     result = await LLMUsageRecord.filter(
         organization=organization,
         created_at__gte=cutoff,
+        is_byok=False,  # Exclude BYOK usage from credit calculations
     ).annotate(total_cost=Sum("cost")).values("total_cost")
 
     if result and result[0]["total_cost"]:
@@ -831,7 +844,7 @@ async def get_llm_usage_records_paginated(
         .limit(limit)
         .values(
             "id", "provider", "model", "input_tokens", "output_tokens",
-            "total_tokens", "cost", "operation", "workflow_run_id", "created_at",
+            "total_tokens", "cost", "operation", "workflow_run_id", "is_byok", "created_at",
         )
     )
 
