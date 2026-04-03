@@ -13,7 +13,7 @@ import base64
 import json
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from browser_use import Agent, ChatOpenAI
 from pydantic import BaseModel, create_model
@@ -324,6 +324,10 @@ class BrowserService:
         timeout_seconds: int,
         browser_session: "BrowserSession",
         model: Optional[str] = None,
+        enable_hitl: bool = False,
+        hitl_timeout_seconds: int = 1800,
+        hitl_callback: Optional[Any] = None,
+        hitl_future_factory: Optional[Any] = None,
     ) -> tuple[Any, Optional[Dict[str, Any]]]:
         """
         Run the BrowserUse agent with a managed browser session.
@@ -331,6 +335,9 @@ class BrowserService:
         Uses model-aware structured output:
         - For Kimi/Moonshot: Uses custom submit_result tool for reliable extraction
         - For OpenAI/Claude: Uses standard output_model_schema
+
+        When enable_hitl is True, registers an ask_human tool on the agent
+        regardless of model type.
 
         Args:
             task: The task description
@@ -340,57 +347,56 @@ class BrowserService:
             timeout_seconds: Task timeout
             browser_session: The browser session to use
             model: OpenRouter model identifier. If None, uses config.default_llm_model
+            enable_hitl: When True, registers ask_human tool on the agent
+            hitl_timeout_seconds: Max seconds to wait for human response
+            hitl_callback: Async callback invoked when ask_human is called
+            hitl_future_factory: Callable returning asyncio.Future for ask_human to await
 
         Returns:
             Tuple of (agent_history, tool_extracted_data).
             tool_extracted_data is set when using custom submit_result tool.
         """
         llm = self._get_agent_llm(model)
-        model_name = getattr(llm, "model", "")
+        use_custom_tool = self._uses_custom_submit_tool(getattr(llm, "model", "")) and extraction_schema
 
-        # Decide approach based on model capabilities
-        use_custom_tool = self._uses_custom_submit_tool(model_name) and extraction_schema
-
-        if use_custom_tool:
-            # Kimi/Moonshot: Use custom submit_result tool
-            custom_tools = CustomBrowserTools(extraction_schema=extraction_schema)
-            enhanced_task = self._enhance_task(task, inputs, extraction_schema, use_submit_tool=True)
-
+        # When HITL is enabled, always use CustomBrowserTools (ask_human is orthogonal to submit_result)
+        if use_custom_tool or enable_hitl:
+            custom_tools = CustomBrowserTools(
+                extraction_schema=extraction_schema if use_custom_tool else None,
+                enable_hitl=enable_hitl,
+                hitl_callback=hitl_callback,
+                hitl_future_factory=hitl_future_factory,
+                hitl_timeout_seconds=hitl_timeout_seconds,
+            )
             agent = Agent(
-                task=enhanced_task,
+                task=self._enhance_task(task, inputs, extraction_schema, use_submit_tool=bool(use_custom_tool), enable_hitl=enable_hitl),
                 llm=llm,
                 browser_session=browser_session,
                 tools=custom_tools,
-                output_model_schema=None,  # No standard structured output
+                output_model_schema=None if use_custom_tool else self._create_output_model(extraction_schema),
                 calculate_cost=True,
             )
 
             history = await asyncio.wait_for(
                 agent.run(max_steps=max_steps),
-                timeout=timeout_seconds
+                timeout=timeout_seconds + hitl_timeout_seconds if enable_hitl else timeout_seconds,
             )
-
-            # Return data from custom tool if available
             return history, custom_tools.get_extracted_data() if custom_tools.has_extracted_data() else None
 
-        # OpenAI/Claude: Use standard structured output
-        output_model = self._create_output_model(extraction_schema)
-        enhanced_task = self._enhance_task(task, inputs, extraction_schema, use_submit_tool=False)
-
+        # OpenAI/Claude without HITL: Use standard structured output
         agent = Agent(
-            task=enhanced_task,
+            task=self._enhance_task(task, inputs, extraction_schema, use_submit_tool=False, enable_hitl=False),
             llm=llm,
             browser_session=browser_session,
-            output_model_schema=output_model,
+            output_model_schema=self._create_output_model(extraction_schema),
             calculate_cost=True,
         )
 
         history = await asyncio.wait_for(
             agent.run(max_steps=max_steps),
-            timeout=timeout_seconds
+            timeout=timeout_seconds,
         )
-
-        return history, None  # Standard extraction handled by caller
+        return history, None
 
     async def _start_recording_if_enabled(
         self,
@@ -456,6 +462,10 @@ class BrowserService:
         browser_session: "BrowserSession",
         model: Optional[str] = None,
         managed_session: Optional["ManagedSession"] = None,
+        enable_hitl: bool = False,
+        hitl_timeout_seconds: int = 1800,
+        hitl_callback: Optional[Any] = None,
+        hitl_future_factory: Optional[Any] = None,
     ) -> tuple[Any, Optional[Dict[str, Any]]]:
         """Run agent with automatic recovery from transient target detachment.
 
@@ -478,7 +488,11 @@ class BrowserService:
             try:
                 return await self._run_browser_agent(
                     task, inputs, extraction_schema, max_steps, timeout_seconds,
-                    browser_session, model
+                    browser_session, model,
+                    enable_hitl=enable_hitl,
+                    hitl_timeout_seconds=hitl_timeout_seconds,
+                    hitl_callback=hitl_callback,
+                    hitl_future_factory=hitl_future_factory,
                 )
             except ValueError as e:
                 error_str = str(e).lower()
@@ -606,6 +620,9 @@ class BrowserService:
         workflow_run_id: Optional[str] = None,
         model: Optional[str] = None,
         organization_id: Optional[int] = None,
+        enable_hitl: bool = False,
+        hitl_timeout_seconds: int = 1800,
+        node_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute a browser automation task using a pooled browser session.
@@ -627,6 +644,9 @@ class BrowserService:
             workflow_run_id: Run ID for organizing screenshot files
             model: OpenRouter model identifier. If None, uses config.default_llm_model
             organization_id: Organization ID for file ownership
+            enable_hitl: When True, registers ask_human tool on the browser agent
+            hitl_timeout_seconds: Max seconds to wait for human response during HITL
+            node_id: Browser node ID (used for HITL interrupt tracking)
 
         Returns:
             Result dict with success, result, extracted_data, final_url, screenshots
@@ -650,46 +670,148 @@ class BrowserService:
             workflow_run_id=workflow_run_id,
         )
 
+        hitl_callback, hitl_future_factory = self._build_hitl_hooks(
+            managed, workflow_run_id, node_id, hitl_timeout_seconds,
+        ) if enable_hitl and workflow_run_id else (None, None)
+
         try:
             history, tool_extracted_data = await self._run_browser_agent_with_recovery(
                 task, inputs, extraction_schema, max_steps, timeout_seconds,
                 browser_session=managed.session,
                 model=model,
                 managed_session=managed,
+                enable_hitl=enable_hitl,
+                hitl_timeout_seconds=hitl_timeout_seconds,
+                hitl_callback=hitl_callback,
+                hitl_future_factory=hitl_future_factory,
+            )
+            return await self._build_success_result(
+                history, tool_extracted_data, extraction_schema, model,
+                save_screenshots=save_screenshots, file_system=file_system,
+                workflow_run_id=workflow_run_id, user=user, organization_id=organization_id,
+            )
+        except TargetDetachmentError as e:
+            logger.error(f"Target detachment during task: {e}")
+            await self._emergency_save_recording(managed, user, browser_profile_id, workflow_run_id)
+            return {**self._build_error_result(f"Browser target detached: {str(e)}"),
+                    "error_type": "target_detachment", "partial_recording_saved": True, "usage": None}
+        except asyncio.TimeoutError:
+            logger.warning(f"Browser task timed out after {timeout_seconds}s")
+            return {**self._build_error_result(f"Task timed out after {timeout_seconds} seconds"),
+                    "error_type": "timeout", "usage": None}
+        except Exception as e:
+            error_type = self._categorize_error(e)
+            logger.error(f"Browser task failed ({error_type}): {e}")
+            if error_type == "target_detachment":
+                await self._emergency_save_recording(managed, user, browser_profile_id, workflow_run_id)
+            return {**self._build_error_result(f"Task failed: {str(e)}"),
+                    "error_type": error_type, "usage": None}
+        finally:
+            managed.hitl_paused = False
+            await self._save_recording_if_enabled(managed, user, browser_profile_id, workflow_run_id)
+            final_state = await pool.release_session(managed.id)
+            if final_state and browser_profile_id and user:
+                await self._session_context.save_session_state(
+                    user, UUID(browser_profile_id), final_state
+                )
+
+    def _build_hitl_hooks(
+        self,
+        managed: "ManagedSession",
+        workflow_run_id: Optional[str],
+        node_id: Optional[str],
+        hitl_timeout_seconds: int,
+    ) -> tuple[Any, Any]:
+        """Build HITL callback and future factory closures for browser agent."""
+        from seer.services.browser import hitl_bridge  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+        async def _on_hitl_request(
+            question: str,
+            context: Optional[str],
+            options: Optional[List[str]],
+        ) -> None:
+            """Persist HITL interrupt to DB and pause session reaping."""
+            from seer.database.workflow_models import WorkflowRun, WorkflowRunStatus, parse_run_public_id  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+            from datetime import datetime, timezone, timedelta  # pylint: disable=import-outside-toplevel  # Reason: Only needed for HITL
+
+            managed.hitl_paused = True
+            request_id = str(uuid4())
+            setattr(managed, '_hitl_request_id', request_id)
+
+            # Get the page's CDP target_id so the API process can connect to the same page
+            target_id = None
+            try:
+                page = await managed.session.must_get_current_page()
+                target_id = getattr(page, '_target_id', None)  # pylint: disable=protected-access  # Reason: browser-use stores target_id as private
+            except Exception as e:
+                logger.warning("Could not get page target_id for HITL streaming: %s", e)
+
+            interrupt_data = {
+                "type": "browser_hitl",
+                "node_id": node_id,
+                "request_id": request_id,
+                "session_id": managed.id,
+                "target_id": target_id,
+                "title": "Browser Agent Needs Input",
+                "description": question,
+                "context": context,
+                "options": options,
+                "inputs": [{
+                    "id": "response",
+                    "input_type": "single_choice" if options else "text",
+                    "question": question,
+                    "required": True,
+                    **({"options": [{"value": opt, "label": opt} for opt in options]} if options else {}),
+                }],
+            }
+
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=hitl_timeout_seconds)
+            run_pk = parse_run_public_id(str(workflow_run_id))
+
+            await WorkflowRun.filter(id=run_pk).update(
+                status=WorkflowRunStatus.INTERRUPTED,
+                pending_interrupt_node_id=node_id,
+                pending_interrupt_data=interrupt_data,
+                interrupt_expires_at=expires_at,
+            )
+            logger.info(
+                "Browser HITL interrupt persisted: run=%s node=%s request=%s question=%s",
+                workflow_run_id, node_id, request_id, question[:100],
             )
 
-            # Get extracted data - from custom tool (Kimi) or standard extraction
-            if tool_extracted_data is not None:
-                # Kimi: Data from submit_result tool
-                extracted_data = tool_extracted_data
-            elif extraction_schema:
-                # OpenAI/Claude: Standard extraction from history
-                extracted_data = await self._extract_structured_data(history, extraction_schema)
-            else:
-                # No schema: Basic extraction
-                extracted_data = self._extract_data(history)
+        def _hitl_future_factory() -> "asyncio.Future":
+            """Create a Future for the ask_human action to await."""
+            request_id = getattr(managed, '_hitl_request_id', str(uuid4()))
+            return hitl_bridge.register_hitl_wait(str(workflow_run_id), request_id)
 
-            # If extraction_schema was provided but extraction failed, return failure
-            # This prevents downstream validation errors on empty extracted_data
-            # Still include available metadata for debugging
-            if extraction_schema and not extracted_data:
-                logger.warning("Browser agent completed but failed to extract structured data")
-                return {
-                    **self._build_error_result("Failed to extract structured data from agent output"),
-                    "final_url": self._extract_final_url(history),
-                    "urls": self._extract_urls(history),
-                    "duration_seconds": self._extract_duration(history),
-                    "steps_count": self._extract_steps_count(history),
-                    "extracted_content": self._extract_all_content(history),
-                    "model_thoughts": self._extract_model_thoughts(history),
-                    "model_actions": self._extract_model_actions(history),
-                    "usage": self._extract_usage_metadata(history, model),
-                }
+        return _on_hitl_request, _hitl_future_factory
 
+    async def _build_success_result(
+        self,
+        history: Any,
+        tool_extracted_data: Optional[Dict[str, Any]],
+        extraction_schema: Optional[Dict[str, Any]],
+        model: Optional[str],
+        *,
+        save_screenshots: bool = False,
+        file_system: Optional["WorkflowFileSystem"] = None,
+        workflow_run_id: Optional[str] = None,
+        user: Optional[User] = None,
+        organization_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Build the success result dict from agent history and extracted data."""
+        if tool_extracted_data is not None:
+            extracted_data = tool_extracted_data
+        elif extraction_schema:
+            extracted_data = await self._extract_structured_data(history, extraction_schema)
+        else:
+            extracted_data = self._extract_data(history)
+
+        # Extraction failed with schema provided — return failure with metadata for debugging
+        if extraction_schema and not extracted_data:
+            logger.warning("Browser agent completed but failed to extract structured data")
             return {
-                "success": True,
-                "result": format_browser_history(history) if history else {},
-                "extracted_data": extracted_data if extracted_data else {},
+                **self._build_error_result("Failed to extract structured data from agent output"),
                 "final_url": self._extract_final_url(history),
                 "urls": self._extract_urls(history),
                 "duration_seconds": self._extract_duration(history),
@@ -697,55 +819,30 @@ class BrowserService:
                 "extracted_content": self._extract_all_content(history),
                 "model_thoughts": self._extract_model_thoughts(history),
                 "model_actions": self._extract_model_actions(history),
-                "screenshots": await self._save_screenshots(
-                    history=history,
-                    save_screenshots=save_screenshots,
-                    file_system=file_system,
-                    workflow_run_id=workflow_run_id,
-                    user=user,
-                    organization_id=organization_id,
-                ),
                 "usage": self._extract_usage_metadata(history, model),
             }
 
-        except TargetDetachmentError as e:
-            # Target detachment with recovery failed - emergency save recording
-            logger.error(f"Target detachment during task: {e}")
-            await self._emergency_save_recording(managed, user, browser_profile_id, workflow_run_id)
-            return {
-                **self._build_error_result(f"Browser target detached: {str(e)}"),
-                "error_type": "target_detachment",
-                "partial_recording_saved": True,
-                "usage": None,
-            }
-        except asyncio.TimeoutError:
-            logger.warning(f"Browser task timed out after {timeout_seconds}s")
-            return {
-                **self._build_error_result(f"Task timed out after {timeout_seconds} seconds"),
-                "error_type": "timeout",
-                "usage": None,
-            }
-        except Exception as e:
-            # Categorize and log the error
-            error_type = self._categorize_error(e)
-            logger.error(f"Browser task failed ({error_type}): {e}")
-
-            # Emergency save for target-related errors
-            if error_type == "target_detachment":
-                await self._emergency_save_recording(managed, user, browser_profile_id, workflow_run_id)
-
-            return {
-                **self._build_error_result(f"Task failed: {str(e)}"),
-                "error_type": error_type,
-                "usage": None,
-            }
-        finally:
-            await self._save_recording_if_enabled(managed, user, browser_profile_id, workflow_run_id)
-            final_state = await pool.release_session(managed.id)
-            if final_state and browser_profile_id and user:
-                await self._session_context.save_session_state(
-                    user, UUID(browser_profile_id), final_state
-                )
+        return {
+            "success": True,
+            "result": format_browser_history(history) if history else {},
+            "extracted_data": extracted_data if extracted_data else {},
+            "final_url": self._extract_final_url(history),
+            "urls": self._extract_urls(history),
+            "duration_seconds": self._extract_duration(history),
+            "steps_count": self._extract_steps_count(history),
+            "extracted_content": self._extract_all_content(history),
+            "model_thoughts": self._extract_model_thoughts(history),
+            "model_actions": self._extract_model_actions(history),
+            "screenshots": await self._save_screenshots(
+                history=history,
+                save_screenshots=save_screenshots,
+                file_system=file_system,
+                workflow_run_id=workflow_run_id,
+                user=user,
+                organization_id=organization_id,
+            ),
+            "usage": self._extract_usage_metadata(history, model),
+        }
 
     def _get_agent_llm(self, model: Optional[str] = None) -> Any:
         """
@@ -889,6 +986,7 @@ class BrowserService:
         inputs: Dict[str, Any],
         extraction_schema: Optional[Dict[str, Any]] = None,
         use_submit_tool: bool = False,
+        enable_hitl: bool = False,
     ) -> str:
         """
         Enhance task description with input context and extraction instructions.
@@ -901,6 +999,7 @@ class BrowserService:
             inputs: Additional context from workflow
             extraction_schema: JSON schema for expected output structure
             use_submit_tool: If True, instruct to use submit_result action (for Kimi)
+            enable_hitl: If True, instruct agent to use ask_human for obstacles
 
         Returns:
             Enhanced task string with context and instructions
@@ -926,6 +1025,18 @@ class BrowserService:
             else:
                 # OpenAI/Claude: Standard instruction (structured output handles it)
                 enhanced += f"\n\nIMPORTANT: Make sure to collect and return: {fields_str}"
+
+        if enable_hitl:
+            enhanced += (
+                "\n\nHUMAN ASSISTANCE: You have access to the ask_human action. "
+                "You MUST use it in these situations — do NOT attempt to handle them yourself:\n"
+                "- CAPTCHA challenges: NEVER try to solve CAPTCHAs yourself. Immediately call ask_human "
+                "and describe what CAPTCHA you see (e.g., 'Google reCAPTCHA asking to select images with traffic lights').\n"
+                "- Login/authentication: If you need credentials or 2FA codes, call ask_human.\n"
+                "- Ambiguous choices: If the page presents options and you're unsure which to pick, call ask_human.\n"
+                "- Blocked or restricted content: If access is denied or requires human verification, call ask_human.\n"
+                "Do NOT waste steps retrying something that requires human intervention."
+            )
 
         return enhanced
 

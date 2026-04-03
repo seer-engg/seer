@@ -433,6 +433,7 @@ async def get_run_interrupt(request: Request, run_id: str):
     return api_models.HITLInterruptResponse(
         run_id=interrupt_data.get("run_id", run_id),
         status=interrupt_data.get("status", "interrupted"),
+        type=interrupt_payload.get("type", "hitl"),
         node_id=interrupt_data.get("node_id"),
         title=interrupt_payload.get("title"),
         description=interrupt_payload.get("description"),
@@ -447,6 +448,8 @@ async def get_run_interrupt(request: Request, run_id: str):
         timeout_seconds=interrupt_payload.get("timeout_seconds"),
         expires_at=interrupt_data.get("expires_at"),
         is_expired=interrupt_data.get("is_expired") or False,
+        session_id=interrupt_payload.get("session_id"),
+        target_id=interrupt_payload.get("target_id"),
     )
 
 

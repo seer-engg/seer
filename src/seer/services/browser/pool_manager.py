@@ -41,9 +41,12 @@ class ManagedSession:
     timeout: int = 300
     recording_id: Optional[str] = None  # RecordingService recording ID for save_recording()
     start_url: Optional[str] = None  # URL session started on (for recording metadata)
+    hitl_paused: bool = False  # Set True during HITL wait to prevent reaping
 
     @property
     def is_expired(self) -> bool:
+        if self.hitl_paused:
+            return False
         return (time.monotonic() - self.created_at) > self.timeout
 
 

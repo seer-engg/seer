@@ -446,6 +446,18 @@ class BrowserNode(NodeBase):
         )
     )
 
+    # Human-in-the-loop configuration
+    enable_hitl: bool = Field(
+        default=True,
+        description="When True, the browser agent can pause and ask the human for input via ask_human tool."
+    )
+    hitl_timeout_seconds: int = Field(
+        default=1800,
+        ge=60,
+        le=86400,
+        description="Maximum seconds to wait for human response during HITL. Default 30 min, max 24h."
+    )
+
 
 class AgentNode(NodeBase):
     """

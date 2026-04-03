@@ -373,6 +373,7 @@ class HITLInterruptResponse(BaseModel):
     """Response containing HITL interrupt data for a run."""
     run_id: str
     status: str
+    type: str = "hitl"  # "hitl" for standard HITL, "browser_hitl" for browser agent HITL
     node_id: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
@@ -381,6 +382,8 @@ class HITLInterruptResponse(BaseModel):
     timeout_seconds: Optional[int] = None
     expires_at: Optional[str] = None
     is_expired: bool = False
+    session_id: Optional[str] = None  # Browser pool session ID for live view (browser_hitl only)
+    target_id: Optional[str] = None  # CDP target ID for cross-process streaming (browser_hitl only)
 
 
 class WorkflowFileItem(BaseModel):
