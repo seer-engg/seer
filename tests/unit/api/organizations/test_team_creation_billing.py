@@ -271,7 +271,7 @@ class TestTransferSubscriptionLogic:
 
     def test_transfer_condition_requires_paid_tier(self):
         """Transfer requires non-FREE tier subscription."""
-        for tier in [SubscriptionTier.PRO, SubscriptionTier.PRO_PLUS]:
+        for tier in [SubscriptionTier.LITE, SubscriptionTier.PRO]:
             subscription = MagicMock(spec=BillingSubscription)
             subscription.tier = tier
             subscription.status = SubscriptionStatus.ACTIVE

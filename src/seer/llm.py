@@ -93,10 +93,48 @@ def get_llm_for_byok(
     model: str,
     temperature: float,
     api_key: str,
+    provider: str = "openrouter",
     base_url: str = "https://openrouter.ai/api/v1",
 ) -> BaseChatModel:
-    """Create an LLM using user-provided BYOK credentials."""
-    logger.info("🔑 BYOK LLM | Model: %s | Base URL: %s", model, base_url)
+    """Create an LLM using user-provided BYOK credentials.
+
+    Uses the provider to select the correct LangChain class:
+    - openrouter/custom: ChatOpenAI with base_url
+    - openai: ChatOpenAI (default base_url)
+    - anthropic: ChatAnthropic
+    - google: ChatGoogleGenerativeAI (requires langchain-google-genai)
+    """
+    logger.info("🔑 BYOK LLM | Model: %s | Provider: %s | Base URL: %s", model, provider, base_url)
+
+    if provider == "anthropic":
+        return ChatAnthropic(
+            model=model,
+            anthropic_api_key=api_key,
+            temperature=temperature,
+        )
+
+    if provider == "google":
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI  # pylint: disable=import-outside-toplevel  # Reason: Optional dependency
+        except ImportError as exc:
+            raise ValueError(
+                "Google provider requires langchain-google-genai. Install with: uv add langchain-google-genai"
+            ) from exc
+        return ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=api_key,
+            temperature=temperature,
+        )
+
+    if provider == "openai":
+        return ChatOpenAI(
+            model=model,
+            temperature=temperature,
+            api_key=api_key,
+            use_responses_api=False,
+        )
+
+    # openrouter, custom — OpenAI-compatible with base_url
     return ChatOpenAI(
         model=model,
         temperature=temperature,

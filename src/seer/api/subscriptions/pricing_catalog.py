@@ -7,8 +7,8 @@ product names, features, or display labels live in this module.
 Stripe metadata conventions
 ---------------------------
 **Product metadata** (set on each Stripe Product):
-    tier (required)            : "pro" / "pro_plus"
-    display_name (required)    : "Pro" / "Pro+"
+    tier (required)            : "lite" / "pro"
+    display_name (required)    : "Lite" / "Pro"
     features (required)        : JSON array, e.g. '["Unlimited workflows","Priority support"]'
     sort_order                 : "1", "2" — display ordering
     badge (optional)           : e.g. "MOST POPULAR"

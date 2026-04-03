@@ -143,7 +143,7 @@ async def backfill_missing_org_stripe_customers(
     subscription_customer_map = await _build_subscription_customer_map()
 
     candidate_query = BillingSubscription.filter(
-        tier__in=[SubscriptionTier.PRO, SubscriptionTier.PRO_PLUS],
+        tier__in=[SubscriptionTier.LITE, SubscriptionTier.PRO],
         status__in=[SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING],
     ).prefetch_related("organization__owner")
 

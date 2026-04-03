@@ -39,9 +39,8 @@ class StripeCustomer(models.Model):
 class SubscriptionTier(str, Enum):
     """Available subscription tiers."""
     FREE = "free"
+    LITE = "lite"
     PRO = "pro"
-    PRO_PLUS = "pro_plus"
-    BYOK = "byok"
 
 
 class SubscriptionStatus(str, Enum):

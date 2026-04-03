@@ -274,6 +274,7 @@ class UsageRecordItem(BaseModel):
     cost: float
     operation: str | None
     workflow_run_id: str | None
+    is_byok: bool = False
     created_at: datetime
 
 
@@ -283,6 +284,8 @@ class AnalyticsOverviewResponse(BaseModel):
     total_cost: float
     total_tokens: int
     total_calls: int
+    byok_cost: float = 0.0
+    platform_cost: float = 0.0
     by_model: list[ModelUsageItem]
     by_operation: list[OperationUsageItem]
     daily_trend: list[DailyUsageItem]
@@ -319,6 +322,23 @@ async def _resolve_period(
     return start or period_start, end or period_end
 
 
+async def _get_byok_cost(user: User, period_start: datetime, period_end: datetime) -> Decimal:
+    """Get total cost of BYOK LLM calls in the given period."""
+    from seer.database.usage_models import LLMUsageRecord  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+    from tortoise.functions import Sum  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+    result = await LLMUsageRecord.filter(
+        user=user,
+        created_at__gte=period_start,
+        created_at__lt=period_end,
+        is_byok=True,
+    ).annotate(total_cost=Sum("cost")).values("total_cost")
+
+    if result and result[0]["total_cost"]:
+        return Decimal(str(result[0]["total_cost"]))
+    return Decimal("0.0")
+
+
 # =============================================================================
 # Analytics Endpoints
 # =============================================================================
@@ -338,15 +358,18 @@ async def get_usage_analytics(
 
     filter_kwargs = {"model": model, "operation": operation}
 
-    by_model, by_operation, daily_trend = await asyncio.gather(
+    by_model, by_operation, daily_trend, byok_cost_result = await asyncio.gather(
         get_llm_usage_by_model(user, period_start, period_end, **filter_kwargs),
         get_llm_usage_by_operation(user, period_start, period_end, **filter_kwargs),
         get_llm_usage_daily_trend(user, period_start, period_end, **filter_kwargs),
+        _get_byok_cost(user, period_start, period_end),
     )
 
     total_cost = sum(float(r["total_cost"]) for r in by_model) if by_model else 0.0
     total_tokens = sum(r["total_tokens"] for r in by_model) if by_model else 0
     total_calls = sum(r["call_count"] for r in by_model) if by_model else 0
+    byok_cost = float(byok_cost_result)
+    platform_cost = total_cost - byok_cost
 
     return AnalyticsOverviewResponse(
         period_start=period_start,
@@ -354,6 +377,8 @@ async def get_usage_analytics(
         total_cost=total_cost,
         total_tokens=total_tokens,
         total_calls=total_calls,
+        byok_cost=byok_cost,
+        platform_cost=platform_cost,
         by_model=[ModelUsageItem(**r) for r in by_model],
         by_operation=[OperationUsageItem(**r) for r in by_operation],
         daily_trend=[DailyUsageItem(**r) for r in daily_trend],

@@ -38,13 +38,13 @@ class TestShortTermLimitConstants:
         """Test that 5-hour constants exist for all tiers."""
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_5H_FREE")
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_5H_PRO")
-        assert hasattr(tiered_usage_limits, "LLM_CREDITS_5H_PRO_PLUS")
+        assert hasattr(tiered_usage_limits, "LLM_CREDITS_5H_LITE")
 
     def test_weekly_constants_exist_for_all_tiers(self):
         """Test that weekly constants exist for all tiers."""
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_WEEKLY_FREE")
         assert hasattr(tiered_usage_limits, "LLM_CREDITS_WEEKLY_PRO")
-        assert hasattr(tiered_usage_limits, "LLM_CREDITS_WEEKLY_PRO_PLUS")
+        assert hasattr(tiered_usage_limits, "LLM_CREDITS_WEEKLY_LITE")
 
     def test_5h_limits_match_monthly_for_free_tier(self):
         """Test that free-tier 5h credits match the monthly allowance."""

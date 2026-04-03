@@ -107,12 +107,14 @@ class ModelBlockTool(BaseTool):
             # Get LLM instance — use BYOK credentials from runtime context if available
             byok_key = getattr(context, "byok_api_key", None) if context else None
             byok_url = getattr(context, "byok_base_url", None) if context else None
+            byok_prov = getattr(context, "byok_provider", None) if context else None
             if byok_key:
                 from seer.llm import get_llm_for_byok  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
                 llm = get_llm_for_byok(
                     model=model_name or config.default_llm_model,
                     temperature=temperature,
                     api_key=byok_key,
+                    provider=byok_prov or "openrouter",
                     base_url=byok_url or "https://openrouter.ai/api/v1",
                 )
             else:

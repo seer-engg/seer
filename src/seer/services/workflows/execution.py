@@ -30,7 +30,7 @@ async def _resolve_byok_credentials(runtime_context: WorkflowRuntimeContext) -> 
 
     creds = await resolve_byok_credentials(runtime_context.organization_id)
     if creds:
-        runtime_context.byok_api_key, runtime_context.byok_base_url = creds
+        runtime_context.byok_api_key, runtime_context.byok_base_url, runtime_context.byok_provider = creds
 
 
 def _extract_hitl_interrupt(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:

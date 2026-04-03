@@ -485,12 +485,14 @@ class WorkflowCompilerSingleton:
 
             byok_api_key = invocation.get("byok_api_key")
             byok_base_url = invocation.get("byok_base_url")
+            byok_provider = invocation.get("byok_provider")
             if byok_api_key:
                 from seer.llm import get_llm_for_byok  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
                 llm = get_llm_for_byok(
                     model=model_id,
                     temperature=parameters.get("temperature") or 0.2,
                     api_key=byok_api_key,
+                    provider=byok_provider or "openrouter",
                     base_url=byok_base_url or "https://openrouter.ai/api/v1",
                 )
             else:
@@ -534,12 +536,14 @@ class WorkflowCompilerSingleton:
 
             byok_api_key = invocation.get("byok_api_key")
             byok_base_url = invocation.get("byok_base_url")
+            byok_provider = invocation.get("byok_provider")
             if byok_api_key:
                 from seer.llm import get_llm_for_byok  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
                 llm = get_llm_for_byok(
                     model=model_id,
                     temperature=parameters.get("temperature") or 0.2,
                     api_key=byok_api_key,
+                    provider=byok_provider or "openrouter",
                     base_url=byok_base_url or "https://openrouter.ai/api/v1",
                 )
             else:

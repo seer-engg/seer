@@ -2,7 +2,7 @@
 Usage limits and enforcement system for Seer.
 
 This module provides centralized configuration and tracking for subscription-based
-usage limits across different tiers (Self-Hosted, Cloud Free, Cloud Pro/Pro+/Ultra).
+usage limits across different tiers (Cloud Free, Lite, Pro).
 
 Also provides Sentry error monitoring utilities for error capture and context enrichment.
 """
