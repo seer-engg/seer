@@ -82,3 +82,10 @@ notebooks/
 .env.docker
 .worktrees/
 .worktrees/
+
+# Frontend
+seer-frontend/node_modules/
+seer-frontend/dist/
+seer-frontend/.env
+seer-frontend/.env.local
+seer-frontend/.env.test

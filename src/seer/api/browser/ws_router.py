@@ -299,11 +299,17 @@ async def complete_session(
 # WebSocket Auth Helper
 # ------------------------------------------------------------------
 async def _verify_ws_token(token: str) -> Optional[str]:
-    """Verify JWT token for WebSocket connection using ClerkJWTVerifier.
+    """Verify JWT token for WebSocket connection.
+
+    In local auth mode, returns the default local user ID without verification.
 
     Returns:
         User ID string, or None if verification fails
     """
+    if config.auth_provider != "clerk":
+        from seer.auth.local_provider import LOCAL_DEFAULT_USER_ID  # pylint: disable=import-outside-toplevel  # Reason: conditional import for local auth
+        return LOCAL_DEFAULT_USER_ID
+
     if not token:
         return None
 

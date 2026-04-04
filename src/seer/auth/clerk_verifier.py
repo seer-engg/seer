@@ -44,9 +44,7 @@ class ClerkJWTVerifier:
     """
     Verifies Clerk-issued JWT tokens using JWKS.
 
-    This class encapsulates the JWT verification logic that was previously
-    embedded in ClerkAuthMiddleware, making it reusable across different
-    contexts (FastAPI, MCP, etc.).
+    Implements the AuthProvider interface for use with the pluggable auth system.
 
     Example:
         verifier = ClerkJWTVerifier(
@@ -81,6 +79,9 @@ class ClerkJWTVerifier:
         self._jwks_client = PyJWKClient(jwks_url)
         self._issuer = issuer
         self._audience = list(audience) if audience else None
+
+    def is_auth_required(self) -> bool:
+        return True
 
     def verify_token(self, token: str) -> Optional[VerifiedClerkToken]:
         """

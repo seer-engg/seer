@@ -1,0 +1,24 @@
+{
+  "model": "claude-sonnet-4-5-20250929",
+  "env": {
+    "DESIGN_SYSTEM_COLORS": "src/index.css",
+    "UI_COMPONENTS": "src/components/ui",
+    "BADGE_REFERENCE": "src/components/workflows/ToolSelector.tsx"
+  },
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Edit(src/components/**)",
+      "Edit(src/lib/**)",
+      "Edit(src/pages/**)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "serena@claude-plugins-official": true
+  },
+  "outputStyle": "Explanatory"
+}

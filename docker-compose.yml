@@ -26,22 +26,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # mlflow:
-  #   image: ghcr.io/mlflow/mlflow:v3.8.1
-  #   ports:
-  #     - "${MLFLOW_PORT:-5000}:5000"
-  #   environment:
-  #     MLFLOW_BACKEND_STORE_URI: "sqlite:////mlflow/mlflow.db"
-  #     MLFLOW_DEFAULT_ARTIFACT_ROOT: "/mlflow/artifacts"
-  #     MLFLOW_ALLOWED_HOSTS: "*"
-  #   volumes:
-  #     - mlflow_data:/mlflow
-  #   command: >
-  #     sh -c "mlflow server --host 0.0.0.0 --port 5000
-  #     --backend-store-uri ${MLFLOW_BACKEND_STORE_URI:-sqlite:////mlflow/mlflow.db}
-  #     --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT:-/mlflow/artifacts}
-  #     --allowed-hosts \"${MLFLOW_ALLOWED_HOSTS:-*}\""
-
   browserless:
     image: ghcr.io/browserless/chromium
     ports:
@@ -75,35 +59,6 @@ services:
     command: ["sh", "-c", "PGPASSWORD=${POSTGRES_PASSWORD:-postgres} psql -h postgres -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-seer} -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE SCHEMA IF NOT EXISTS seer;' && uv run aerich upgrade"]
     restart: "no"
 
-  # Optional seed service - only runs with: docker compose --profile seed up
-  seed:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    depends_on:
-      migrations:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
-      UV_LINK_MODE: "copy"
-      # AWS credentials for S3 access (required for seeding)
-      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
-      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
-      AWS_REGION: "${AWS_REGION:-us-east-1}"
-      WORKFLOW_FILE_S3_BUCKET: "${WORKFLOW_FILE_S3_BUCKET:-}"
-      WORKFLOW_FILE_S3_ENDPOINT_URL: "${WORKFLOW_FILE_S3_ENDPOINT_URL:-}"
-    volumes:
-      - ./:/app
-      - /app/.venv
-    command: ["sh", "-c", "uv run python scripts/seed_import.py"]
-    restart: "no"
-    profiles:
-      - seed  # Only activate with --profile seed
-
   api:
     build:
       context: .
@@ -132,7 +87,7 @@ services:
       # MLFLOW_ENABLED: "${MLFLOW_ENABLED:-true}"
       BROWSERLESS_URL: "ws://browserless:3000"
       BROWSERLESS_TOKEN: "${BROWSERLESS_TOKEN:-}"
-      FRONTEND_URL: "${FRONTEND_URL:-https://app.getseer.dev}"
+      FRONTEND_URL: "${FRONTEND_URL:-http://localhost:${FRONTEND_PORT:-5173}}"
       BACKEND_API_URL: "${BACKEND_API_URL:-localhost:${API_PORT:-8000}}"
       AUTO_OPEN_BROWSER: "${AUTO_OPEN_BROWSER:-true}"
       CHAT_MESSAGES_TOTAL_SELF_HOSTED: "${CHAT_MESSAGES_TOTAL_SELF_HOSTED:--1}"
@@ -151,6 +106,7 @@ services:
       MEM0_EMBEDDER_PROVIDER: "${MEM0_EMBEDDER_PROVIDER:-openai}"
       MEM0_EMBEDDER_MODEL: "${MEM0_EMBEDDER_MODEL:-text-embedding-3-small}"
       MEM0_EMBEDDING_DIMS: "${MEM0_EMBEDDING_DIMS:-1536}"
+      AUTH_PROVIDER: "${AUTH_PROVIDER:-local}"
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -197,12 +153,30 @@ services:
       MEM0_EMBEDDER_PROVIDER: "${MEM0_EMBEDDER_PROVIDER:-openai}"
       MEM0_EMBEDDER_MODEL: "${MEM0_EMBEDDER_MODEL:-text-embedding-3-small}"
       MEM0_EMBEDDING_DIMS: "${MEM0_EMBEDDING_DIMS:-1536}"
+      AUTH_PROVIDER: "${AUTH_PROVIDER:-local}"
     volumes:
       - ./:/app
       - /app/.venv
     # Use worker-watch for hot-reloading in development (uses watchmedo with debouncing)
     command: ["worker-watch"]
 
+  frontend:
+    image: node:22-alpine
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    working_dir: /app
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      VITE_BACKEND_API_URL: "${VITE_BACKEND_API_URL:-http://localhost:8000}"
+      VITE_CLERK_PUBLISHABLE_KEY: "${VITE_CLERK_PUBLISHABLE_KEY:-}"
+    volumes:
+      - ./seer-frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: ["sh", "-c", "npm install && npm run dev -- --host 0.0.0.0 --port 5173"]
+
 volumes:
   postgres_data:
   mlflow_data:
+  frontend_node_modules:

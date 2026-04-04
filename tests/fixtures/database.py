@@ -64,6 +64,7 @@ def build_tortoise_config(database_url: str) -> Dict[str, Any]:
                     "seer.database.profile_models",
                     "seer.database.organization_models",
                     "seer.database.email_models",
+                    "seer.database.byok_models",
                     "seer.database.learning_models",
                     "aerich.models",
                 ],

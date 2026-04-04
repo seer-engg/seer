@@ -62,7 +62,7 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        if config.disable_usage_limits:
+        if config.disable_usage_limits or config.auth_provider != "clerk":
             return await call_next(request)
 
         # Public paths skip all checks

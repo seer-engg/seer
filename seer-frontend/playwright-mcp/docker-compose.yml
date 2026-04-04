@@ -1,0 +1,7 @@
+services:
+  playwright-mcp:
+    build: .
+    network_mode: host
+    environment:
+      - DISPLAY=:99
+    restart: unless-stopped

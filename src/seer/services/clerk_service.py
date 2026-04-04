@@ -41,6 +41,11 @@ async def _get_clerk_headers() -> Dict[str, str]:
     }
 
 
+def _is_clerk_enabled() -> bool:
+    """Check if Clerk auth provider is active."""
+    return config.auth_provider == "clerk"
+
+
 async def get_clerk_user(user_id: str) -> Dict[str, Any]:
     """
     Get a user from Clerk by their user ID.
@@ -52,8 +57,10 @@ async def get_clerk_user(user_id: str) -> Dict[str, Any]:
         User data from Clerk API
 
     Raises:
-        ClerkServiceError: If the API call fails
+        ClerkServiceError: If the API call fails or Clerk is not enabled
     """
+    if not _is_clerk_enabled():
+        raise ClerkServiceError("Clerk is not enabled (auth_provider != 'clerk')")
     headers = await _get_clerk_headers()
 
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -159,6 +166,9 @@ async def set_active_organization(user_id: str, org_id: int) -> Dict[str, Any]:
     Returns:
         Updated user data from Clerk API
     """
+    if not _is_clerk_enabled():
+        logger.debug("Clerk not enabled, skipping set_active_organization")
+        return {}
     logger.info("Setting active organization for user %s to org %s", user_id, org_id)
     return await update_clerk_user_metadata(
         user_id=user_id,
@@ -179,6 +189,9 @@ async def clear_active_organization(user_id: str) -> Dict[str, Any]:
     Returns:
         Updated user data from Clerk API
     """
+    if not _is_clerk_enabled():
+        logger.debug("Clerk not enabled, skipping clear_active_organization")
+        return {}
     logger.info("Clearing active organization for user %s", user_id)
     return await update_clerk_user_metadata(
         user_id=user_id,
@@ -196,6 +209,8 @@ async def get_user_active_organization_id(user_id: str) -> Optional[int]:
     Returns:
         The active organization ID, or None if not set
     """
+    if not _is_clerk_enabled():
+        return None
     try:
         user_data = await get_clerk_user(user_id)
         public_metadata = user_data.get("public_metadata", {})
