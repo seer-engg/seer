@@ -1,6 +1,6 @@
 ## Seer
 
-[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/seer-engg/seer/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](https://github.com/seer-engg/seer/blob/main/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/seer-engg/seer?style=social)](https://github.com/seer-engg/seer/stargazers)
 [![DeepWiki](https://img.shields.io/badge/docs-DeepWiki-blue)](https://deepwiki.com/seer-engg/seer)
 [![Discord](https://img.shields.io/badge/discord-join-7289DA?logo=discord&logoColor=white)](https://discord.gg/NuYsDdhJ)
@@ -9,74 +9,116 @@
 
 **Open-source workflow builder with cost controls and human oversight.** Build AI automations with tools like Gmail, GitHub, and Supabase - with built-in spend caps and approval gates.
 
-## Quick Start (Docker)
+## Quick Start
 
-1) Clone and start the stack (Postgres, Valkey, API, worker):
 ```bash
 git clone https://github.com/seer-engg/seer
 cd seer
+cp .env.example .env
+# Add your OPENAI_API_KEY to .env
 docker compose up
 ```
 
-2) Run database migrations:
-```bash
-docker compose exec api uv run aerich upgrade
-```
+That's it. Open http://localhost:5173 and start building workflows.
 
-3) Access the app:
-- **Cloud Frontend (Default):** Visit http://localhost:8000 → redirects to https://app.getseer.dev
-- **Local Frontend:** Set `FRONTEND_URL=http://localhost:5173` in `.env` file
-- API Docs: http://localhost:8000/docs
-- Backend Health: http://localhost:8000/health
+No accounts, no sign-ups — the app runs in local mode by default with no login required.
 
-Your browser will automatically open and connect the cloud frontend to your local backend. Sign in with Clerk to start using Seer.
+## What's Running
 
-## Local Development (without full Docker)
+`docker compose up` starts everything:
 
-- Prereqs: Python 3.12+, [uv](https://github.com/astral-sh/uv) installed (`pip install uv`), Postgres + Valkey running (use `docker compose up postgres valkey`).
-- Install deps: `uv sync`
-- Run API: `uv run uvicorn seer.api.main:app --reload --port 8000`
-- Run worker: `uv run taskiq worker seer.worker.broker:broker`
-- Run tests: `uv run pytest`
+| Service | Port | Description |
+|---------|------|-------------|
+| **Frontend** | [localhost:5173](http://localhost:5173) | React app (Vite dev server) |
+| **API** | [localhost:8000](http://localhost:8000) | FastAPI backend |
+| **Worker** | — | Background task worker (Taskiq) |
+| **Postgres** | 5432 | Database (pgvector) |
+| **Valkey** | 6379 | Redis-compatible cache |
+| **Browserless** | 3000 | Headless Chrome for browser tools |
 
-## Project Layout (backend)
-
-- `src/seer/api/` – FastAPI routers, middleware, API models (workflows, tools, integrations, triggers, agents).
-- `src/seer/services/` – business logic used by API/worker (workflow execution, triggers, integrations).
-- `src/seer/core/` – workflow compiler/runtime, schema models, global compiler singleton.
-- `src/seer/tools/` – tool registry, executor, credential resolver, provider implementations.
-- `src/seer/worker/` – Taskiq worker, background tasks, trigger polling.
-- `src/seer/agents/` – agent orchestration (LangGraph-based workflow agent).
-- `src/seer/database/` – Tortoise ORM models/config; migrations live in `/migrations`.
-- `src/seer/analytics/`, `src/seer/observability/`, `src/seer/utilities/` – shared instrumentation and helpers.
-- `scripts/` – maintenance helpers; `tests/` – automated tests.
+API docs are at http://localhost:8000/docs.
 
 ## Configuration
 
-Create a `.env` file:
+Create `.env` from the example:
 
 ```bash
-# Required
-OPENAI_API_KEY=sk-...
+cp .env.example .env
+```
 
-# Optional integrations (add as needed)
-GOOGLE_CLIENT_ID=...
+**Required:**
+```bash
+OPENAI_API_KEY=sk-...       # Or any LLM provider key
+```
+
+**Optional integrations (add as needed):**
+```bash
+ANTHROPIC_API_KEY=sk-ant-... # Claude models
+OPENROUTER_API_KEY=sk-or-... # Kimi, other models
+GOOGLE_CLIENT_ID=...         # Google integrations (Gmail, Sheets)
 GOOGLE_CLIENT_SECRET=...
-BRAVE_SEARCH_API_KEY=...
+BRAVE_SEARCH_API_KEY=...     # Web search tool
 ```
 
 Docker automatically configures `DATABASE_URL` and `REDIS_URL`.
 
-**Commands:**
+### Authentication
+
+Auth mode is controlled by a single env var:
+
+| `AUTH_PROVIDER` | Mode | Use case |
+|-----------------|------|----------|
+| `local` (default) | No login, single user | Self-hosted, personal use |
+| `clerk` | Clerk auth with login | Multi-user, cloud deployment |
+
+For `clerk` mode, also set `CLERK_JWKS_URL`, `CLERK_ISSUER`, `CLERK_SECRET_KEY`, and `VITE_CLERK_PUBLISHABLE_KEY`. See `.env.example` for details.
+
+## Local Development (without Docker)
+
+If you prefer running services directly:
+
 ```bash
-docker compose up                # Start all services
-docker compose logs -f           # Follow logs
-uv run pytest                    # Run tests
+# Start only infra
+docker compose up postgres valkey browserless -d
+
+# Backend (requires Python 3.12+, uv)
+uv sync
+uv run aerich upgrade
+uv run uvicorn seer.api.main:app --reload --port 8000
+
+# Worker
+uv run taskiq worker seer.worker.broker:broker
+
+# Frontend (requires Node 22+)
+cd seer-frontend
+npm install
+npm run dev
+```
+
+## Project Layout
+
+```
+seer/
+├── src/seer/              # Python backend
+│   ├── api/               # FastAPI routers, middleware
+│   ├── services/          # Business logic (workflows, triggers, integrations)
+│   ├── core/              # Workflow compiler/runtime, schema models
+│   ├── tools/             # Tool registry, executor, provider implementations
+│   ├── agents/            # LangGraph-based agent orchestration
+│   ├── worker/            # Taskiq background tasks, trigger polling
+│   ├── database/          # Tortoise ORM models/config
+│   └── auth/              # Auth provider abstraction (Clerk / local)
+├── seer-frontend/         # React + TypeScript + Vite frontend
+│   └── src/
+├── migrations/            # Database migrations
+├── tests/                 # Backend tests
+├── scripts/               # Maintenance scripts
+└── docker-compose.yml     # Full stack setup
 ```
 
 ## Migrations
 
-> Run migrations manually after pulling updates.
+Run migrations after pulling updates:
 
 ```bash
 # Docker
@@ -86,25 +128,29 @@ docker compose exec api uv run aerich upgrade
 uv run aerich upgrade
 ```
 
-### Why Seer?
+## Commands
 
-**💰 Cost Controls** - Per-workflow spend caps and token limits prevent runaway AI expenses
+```bash
+docker compose up              # Start all services
+docker compose up -d           # Start in background
+docker compose logs -f api     # Follow API logs
+docker compose down            # Stop all services
+docker compose down -v         # Stop and remove data
+uv run pytest                  # Run backend tests
+```
 
-**👁️ Human Oversight** - Approval gates for critical operations; complete audit trails
+## Why Seer?
 
-**🔗 Powerful Integrations** - Gmail, GitHub, Supabase, PostgreSQL with minimal permissions
+- **Cost Controls** - Per-workflow spend caps and token limits prevent runaway AI expenses
+- **Human Oversight** - Approval gates for critical operations; complete audit trails
+- **Powerful Integrations** - Gmail, GitHub, Supabase, PostgreSQL with minimal permissions
+- **AI-Native** - Chat interface for workflow design; intelligent error handling
+- **Self-Hostable** - `git clone` + `docker compose up`. No accounts needed
 
-**🤖 AI-Native** - Chat interface for workflow design; intelligent error handling
+## Documentation
 
-**🔒 Self-Hostable** - Deploy anywhere; full control over your data
+[Complete Documentation](https://deepwiki.com/seer-engg/seer) - Comprehensive guides, architecture, and examples on DeepWiki
 
-### Documentation
+## License
 
-📚 **[Complete Documentation](https://deepwiki.com/seer-engg/seer)** - Comprehensive guides, architecture, and examples on DeepWiki
-
-- [Quick Start](#quick-start-docker) - Get running in 60 seconds
-- [Worker Setup](src/seer/worker/README.md) - Background task worker configuration
-
-### License
-
-MIT License - 100% open source. See [LICENSE](LICENSE).
+AGPL-3.0 License - See [LICENSE](LICENSE).
