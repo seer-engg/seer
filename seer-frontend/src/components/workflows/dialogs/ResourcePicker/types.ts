@@ -59,4 +59,3 @@ export interface ResourcePickerProps {
   /** Custom trigger button class */
   className?: string;
 }
-

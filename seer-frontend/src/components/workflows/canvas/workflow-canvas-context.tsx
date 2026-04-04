@@ -18,5 +18,3 @@ export function useWorkflowCanvasContext(): WorkflowCanvasContextValue {
   }
   return context;
 }
-
-

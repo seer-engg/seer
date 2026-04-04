@@ -26,7 +26,7 @@ dist-ssr
 # intentionally kept
 .env
 
-# MCP configuration (contains API keys) dev shouldn't hardcode the keys 
+# MCP configuration (contains API keys) dev shouldn't hardcode the keys
 
 # Test results and coverage
 test-results/

@@ -1,6 +1,6 @@
 /**
  * Enhanced Workflow Canvas Component
- * 
+ *
  * Supports drag-and-drop blocks, custom node types, and connection validation.
  * Based on ReactFlow (@xyflow/react).
  */

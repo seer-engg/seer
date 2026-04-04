@@ -229,4 +229,3 @@ export const CALENDAR_START_TOOL_FALLBACK_NAMES = ['google_calendar_list_events'
 export const AIRTABLE_TOOL_FALLBACK_NAMES = ['airtable_list_records', 'airtable_create_record'];
 export const GOOGLE_SHEETS_TOOL_FALLBACK_NAMES = ['google_sheets_read', 'google_sheets_batch_read'];
 export const MEETINGS_EA_TOOL_FALLBACK_NAMES = ['meetings_ea_get_transcript', 'meetings_ea_get_recording'];
-
