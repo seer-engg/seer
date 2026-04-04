@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 from tortoise.backends.base.client import BaseDBAsyncClient
+from tortoise.exceptions import IntegrityError
 
 from seer.database import Organization, OrganizationMembership, User
 from seer.database.organization_models import (
@@ -88,22 +89,42 @@ async def create_personal_organization(
     # Generate unique slug
     slug = generate_slug(f"personal-{user.user_id}")
 
-    # Create the organization
-    organization = await Organization.create(
-        name=org_name,
-        slug=slug,
-        type=OrganizationType.PERSONAL,
-        owner=user,
-        settings={},
-    )
+    # Create the organization — handle concurrent creation race condition
+    # by catching IntegrityError on the unique slug constraint and falling
+    # back to fetching the existing org.
+    try:
+        organization = await Organization.create(
+            name=org_name,
+            slug=slug,
+            type=OrganizationType.PERSONAL,
+            owner=user,
+            settings={},
+        )
+    except IntegrityError:
+        # Concurrent request already created this org — fetch it
+        logger.info(
+            "Personal org slug %s already exists for user %s, fetching existing",
+            slug,
+            user.user_id,
+        )
+        organization = await Organization.get(slug=slug)
+        membership = await OrganizationMembership.get_or_none(
+            organization=organization,
+            user=user,
+        )
+        if membership:
+            return organization, membership
+        # Membership missing — fall through to create it
 
-    # Create owner membership
-    membership = await OrganizationMembership.create(
+    # Create owner membership (idempotent via get_or_create)
+    membership, _ = await OrganizationMembership.get_or_create(
         organization=organization,
         user=user,
-        role=OrganizationRole.OWNER,
-        status=MembershipStatus.ACTIVE,
-        joined_at=datetime.now(timezone.utc),
+        defaults={
+            "role": OrganizationRole.OWNER,
+            "status": MembershipStatus.ACTIVE,
+            "joined_at": datetime.now(timezone.utc),
+        },
     )
 
     # Create FREE subscription directly on organization
@@ -311,7 +332,8 @@ async def ensure_personal_organization(user: User) -> Tuple[Organization, Organi
     Ensure a user has a personal organization.
 
     If the personal org exists, returns it. Otherwise creates one.
-    This is idempotent and safe to call multiple times.
+    This is idempotent and safe to call concurrently — create_personal_organization
+    handles IntegrityError internally.
 
     Args:
         user: The user to ensure has a personal org
@@ -326,22 +348,16 @@ async def ensure_personal_organization(user: User) -> Tuple[Organization, Organi
     )
 
     if personal_org:
-        membership = await OrganizationMembership.get_or_none(
+        membership, _ = await OrganizationMembership.get_or_create(
             organization=personal_org,
             user=user,
-        )
-        if membership:
-            return personal_org, membership
-
-        # Membership missing (shouldn't happen, but fix it)
-        membership = await OrganizationMembership.create(
-            organization=personal_org,
-            user=user,
-            role=OrganizationRole.OWNER,
-            status=MembershipStatus.ACTIVE,
-            joined_at=datetime.now(timezone.utc),
+            defaults={
+                "role": OrganizationRole.OWNER,
+                "status": MembershipStatus.ACTIVE,
+                "joined_at": datetime.now(timezone.utc),
+            },
         )
         return personal_org, membership
 
-    # Create personal org
+    # Create personal org (handles concurrent creation internally)
     return await create_personal_organization(user)

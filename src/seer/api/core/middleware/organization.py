@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from seer.database import Organization, OrganizationMembership
-from seer.database.organization_models import MembershipStatus, OrganizationType
+from seer.database.organization_models import MembershipStatus
 from seer.logger import get_logger
 
 logger = get_logger("api.middleware.organization")
@@ -119,29 +119,14 @@ class OrganizationContextMiddleware(BaseHTTPMiddleware):
 
         Every user has exactly one personal organization created on signup.
         This method handles the edge case where signup flow might have failed
-        to create the personal org.
+        to create the personal org. Uses ensure_personal_organization which
+        is safe under concurrent requests.
         """
-        # Try to find existing personal org
-        personal_org = await Organization.get_or_none(
-            owner=db_user,
-            type=OrganizationType.PERSONAL,
-        )
-
-        if personal_org:
-            membership = await OrganizationMembership.get_or_none(
-                organization=personal_org,
-                user=db_user,
-            )
-            if membership:
-                return personal_org, membership
-
-        # Personal org doesn't exist - this is a legacy user or signup failed
-        # Create it now (should be rare in production)
-        logger.info("Creating missing personal org for user %s", db_user.user_id)
+        logger.info("Resolving personal org for user %s", db_user.user_id)
 
         # pylint: disable-next=import-outside-toplevel  # Reason: avoids circular import between middleware and service layer
-        from seer.services.organization_service import create_personal_organization
-        return await create_personal_organization(db_user)
+        from seer.services.organization_service import ensure_personal_organization
+        return await ensure_personal_organization(db_user)
 
     async def _persist_active_org(self, db_user, org_id: int) -> None:
         """Persist active organization when fallback or repair logic changes it."""
