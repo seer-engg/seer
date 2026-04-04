@@ -2,7 +2,7 @@
 
 ## Architectural Philosophy
 
-Seer is an AI workflow automation platform. Both the backend and frontend are closed source.
+Seer is an open-source AI workflow automation platform (AGPL-3.0). Monorepo: Python backend + React frontend in `seer-frontend/`.
 
 **Dependency direction is strict and one-way:**
 ```
@@ -22,6 +22,13 @@ Never reach "upward." If you need to, extract a shared abstraction into `core/` 
 - `src/seer/database/`: Tortoise ORM models/config. Migrations in `/migrations`.
 - `src/seer/observability/`: Structured logging and Sentry. Use this — never `print()` or bare `logging.getLogger()`.
 - `documentation/`: Docs site (Node-based). `scripts/`: Maintenance scripts.
+- `seer-frontend/src/`: React + TypeScript + Vite frontend.
+  - `components/ui/`: Base UI components (shadcn/ui)
+  - `components/workflows/`: Workflow builder (React Flow)
+  - `stores/`: Zustand state management
+  - `hooks/`: Custom React hooks (including auth abstraction)
+  - `lib/`: Utilities and API client
+  - `pages/`: Route pages
 
 ## Credentials & Secrets
 - **Never hardcode secrets.** Not in code, comments, or test fixtures.
@@ -68,3 +75,31 @@ When starting any feature, bugfix, or dev work in this repo:
 
 ## Trigger Handlers Must Be Idempotent
 The same event delivered twice must not produce duplicate workflow runs. This is a hard requirement for all trigger implementations in `src/seer/services/workflows/triggers.py` and `src/seer/worker/`.
+
+## Frontend
+
+### Tech Stack
+- React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui (Radix), React Query, React Router v6, React Flow (@xyflow/react), Zustand
+- Authentication: Clerk (cloud) or local mode (self-hosted) — abstracted via `src/hooks/useAuthProvider.ts`
+
+### Frontend Coding Style
+- TypeScript strict mode. Prefer named exports over default exports.
+- Use `cn()` from `@/lib/utils` for class merging.
+- All components must support dark mode (`dark:` Tailwind prefix).
+- Follow CVA (Class Variance Authority) pattern for component variants.
+
+### Frontend Build & Run
+- `cd seer-frontend && npm install && npm run dev` — or just `docker compose up`
+- `npm run lint -- --fix` for linting
+- `npm run build` for production build
+
+### Type Placement
+- Used in 3+ components across subdirs → root-level `types.ts` or `buildtypes.ts`
+- Used in 2+ files within same subdir → subdirectory-level `types.ts`
+- Otherwise → keep in component file
+
+### Auth Abstraction
+Auth is controlled by a single `AUTH_PROVIDER` env var on the backend. Frontend fetches mode at runtime from `/api/auth/config`.
+- Never import `useAuth`/`useUser`/`useClerk` directly — use `useAuthStatus`/`useCurrentUser`/`useSignOut` from `src/hooks/useAuthProvider.ts`
+- Local mode: no login, single default user, no Clerk key needed
+- Clerk mode: full Clerk auth with login
