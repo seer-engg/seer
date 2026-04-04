@@ -56,7 +56,7 @@ class TieredUsageLimits(BaseSettings):
     # ============================================================================
 
     LLM_CREDITS_FREE: float = Field(default=1.00)
-    LLM_CREDITS_PRO: float = Field(default=20.00)
+    LLM_CREDITS_PRO: float = Field(default=50.00)
     LLM_CREDITS_LITE: float = Field(default=10.00)
 
     # ============================================================================
@@ -64,7 +64,7 @@ class TieredUsageLimits(BaseSettings):
     # ============================================================================
 
     LLM_CREDITS_5H_FREE: float = Field(default=1.00)
-    LLM_CREDITS_5H_PRO: float = Field(default=5.00)
+    LLM_CREDITS_5H_PRO: float = Field(default=12.50)
     LLM_CREDITS_5H_LITE: float = Field(default=3.00)
 
     # ============================================================================
@@ -72,7 +72,7 @@ class TieredUsageLimits(BaseSettings):
     # ============================================================================
 
     LLM_CREDITS_WEEKLY_FREE: float = Field(default=1.00)
-    LLM_CREDITS_WEEKLY_PRO: float = Field(default=12.00)
+    LLM_CREDITS_WEEKLY_PRO: float = Field(default=30.00)
     LLM_CREDITS_WEEKLY_LITE: float = Field(default=6.00)
 
     # ============================================================================
