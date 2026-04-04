@@ -4,13 +4,25 @@
       "Read(**)",
       "Edit(src/**)",
       "Edit(tests/**)",
-      "Edit(migrations/**)"
+      "Edit(migrations/**)",
+      "Edit(seer-frontend/src/components/**)",
+      "Edit(seer-frontend/src/lib/**)",
+      "Edit(seer-frontend/src/pages/**)",
+      "Edit(seer-frontend/src/hooks/**)",
+      "Edit(seer-frontend/src/stores/**)"
     ]
+  },
+  "env": {
+    "DESIGN_SYSTEM_COLORS": "seer-frontend/src/index.css",
+    "UI_COMPONENTS": "seer-frontend/src/components/ui",
+    "BADGE_REFERENCE": "seer-frontend/src/components/workflows/ToolSelector.tsx"
   },
   "enableAllProjectMcpServers": true,
   "enabledPlugins": {
     "pyright-lsp@claude-plugins-official": true,
-    "context7@claude-plugins-official": true
+    "context7@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true
   },
   "outputStyle": "Explanatory"
 }

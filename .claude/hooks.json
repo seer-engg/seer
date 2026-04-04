@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd $CLAUDE_PROJECT_DIR && npm run lint -- --fix 2>/dev/null || true",
-            "description": "Auto-format code after edits"
+            "command": "cd $CLAUDE_PROJECT_DIR/seer-frontend && npm run lint -- --fix 2>/dev/null || true",
+            "description": "Auto-format frontend code after edits"
           }
         ]
       }

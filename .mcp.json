@@ -8,8 +8,8 @@
       "command": "uvx",
       "args": ["--python", "3.11", "langfuse-mcp"],
       "env": {
-        "LANGFUSE_PUBLIC_KEY": "pk-lf-3f5bb7dc-4462-454a-8304-cdedcc71a2eb",
-        "LANGFUSE_SECRET_KEY": "sk-lf-176dc3da-211e-421c-80d8-db6a1b9605e0",
+        "LANGFUSE_PUBLIC_KEY": "YOUR_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY": "YOUR_SECRET_KEY",
         "LANGFUSE_HOST": "https://tracing.getseer.dev"
       }
     },
@@ -20,6 +20,10 @@
             "METABASE_URL": "https://metabase.getseer.dev",
             "METABASE_API_KEY": "${METABASE_API_KEY}"
         }
+    },
+    "playwright": {
+      "type": "http",
+      "url": "http://localhost:9000/mcp"
     }
   }
 }

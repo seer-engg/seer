@@ -231,12 +231,12 @@ class TestFileContentProcessor:
 class TestIsSupportedForLLM:
     """Tests for is_supported_for_llm helper function."""
 
-    @pytest.mark.parametrize("mime_type", list(IMAGE_MIME_TYPES))
+    @pytest.mark.parametrize("mime_type", sorted(IMAGE_MIME_TYPES))
     def test_image_types_supported(self, mime_type: str):
         """All image MIME types are supported."""
         assert is_supported_for_llm(mime_type) is True
 
-    @pytest.mark.parametrize("mime_type", list(DOCUMENT_MIME_TYPES))
+    @pytest.mark.parametrize("mime_type", sorted(DOCUMENT_MIME_TYPES))
     def test_document_types_supported(self, mime_type: str):
         """All document MIME types are supported."""
         assert is_supported_for_llm(mime_type) is True
