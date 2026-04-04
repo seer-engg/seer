@@ -11,4 +11,3 @@ export interface RootStore {
   triggers: TriggersStore;
   chat: ChatStore;
 }
-

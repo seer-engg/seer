@@ -12,5 +12,3 @@ export function createStore<
 >(initializer: StateCreator<T, Mos, Mcs>) {
   return create<T>()(initializer);
 }
-
-

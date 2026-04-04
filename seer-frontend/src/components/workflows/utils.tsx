@@ -95,4 +95,3 @@ export const getDisplayableAssistantMessage = (content: string, fallback?: strin
   }
   return fallback?.trim() || GENERIC_PROPOSAL_MESSAGE;
 };
-

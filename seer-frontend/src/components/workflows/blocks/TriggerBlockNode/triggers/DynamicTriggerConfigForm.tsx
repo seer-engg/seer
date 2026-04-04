@@ -112,12 +112,12 @@ export function DynamicTriggerConfigForm({
       </div>
       {fields.map(({ name, def, required }) => {
         const value = configValues[name] ?? def.default ?? '';
-        
+
         // Build dependsOnValues for resource pickers that have dependencies
         const resourcePicker = def['x-resource-picker'] as ResourcePickerConfig | undefined;
         const dependsOnKey = resourcePicker?.depends_on;
-        const dependsOnValues = dependsOnKey 
-          ? { [dependsOnKey]: configValues[dependsOnKey] as string } 
+        const dependsOnValues = dependsOnKey
+          ? { [dependsOnKey]: configValues[dependsOnKey] as string }
           : undefined;
 
         return (

@@ -86,4 +86,3 @@ export const BUILT_IN_BLOCKS: BuiltInBlock[] = [
     icon: getBlockIconForType('ea_bot'),
   }] : []),
 ];
-

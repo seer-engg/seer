@@ -212,5 +212,3 @@ const createCanvasStore: StateCreator<CanvasStore> = (set, get) => ({
 });
 
 export const useCanvasStore = createStore(createCanvasStore);
-
-

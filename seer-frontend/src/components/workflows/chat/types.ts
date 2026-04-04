@@ -6,4 +6,3 @@ export interface SessionsStatus {
   fetchNextPage: () => void | Promise<unknown>;
   isFetchingNextPage: boolean;
 }
-

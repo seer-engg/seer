@@ -58,4 +58,3 @@ export function useBackendHealth() {
 
   return { isHealthy, isChecking, checkHealth };
 }
-

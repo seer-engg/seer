@@ -42,4 +42,3 @@ export function getOAuthProvider(integrationType: IntegrationType): OAuthProvide
 export function formatScopes(scopes: string[]): string {
   return scopes.join(" ");
 }
-
