@@ -20,9 +20,14 @@ from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field, create_model
 from fastapi import HTTPException
-from seer.core.errors import ExecutionError
+from pydantic import BaseModel, Field, create_model
+
+from seer.core.errors import (  # pylint: disable=no-name-in-module  # Reason: ProviderAuthError/ProviderError defined in Task 6
+    ExecutionError,
+    ProviderAuthError,
+    ProviderError,
+)
 from seer.core.registry.default_models import DEPRECATED_MODEL_MAP
 from seer.logger import get_logger
 from seer.core.expr.typecheck import schema_from_output_contract
@@ -1184,7 +1189,7 @@ class AgentNodeType(BaseNodeType):
 
         return bound_tools, worker_map
 
-    async def _invoke_agent(
+    async def _invoke_agent(  # pylint: disable=too-many-locals  # Reason: Agent invocation requires tracking tools, middleware, callbacks, and BYOK creds
         self,
         *,
         node: AgentNode,
@@ -1195,11 +1200,23 @@ class AgentNodeType(BaseNodeType):
         human_message: Any,
     ) -> Dict[str, Any]:
         """Create and invoke the LangChain agent with usage tracking callbacks."""
+        # Resolve BYOK credentials from runtime context
+        byok_key = None
+        byok_url = None
+        byok_prov = None
+        if ctx.runtime_context:
+            byok_key = ctx.runtime_context.byok_api_key
+            byok_url = ctx.runtime_context.byok_base_url
+            byok_prov = ctx.runtime_context.byok_provider
+
         model_def = services.model_registry.get(config["model_id"])
         llm = model_def.get_chat_model(
             temperature=config["temperature"]
             if isinstance(config["temperature"], (int, float))
-            else 0.2
+            else 0.2,
+            byok_api_key=byok_key,
+            byok_base_url=byok_url,
+            byok_provider=byok_prov,
         )
         # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports at module load time
         from langchain.agents.middleware import SummarizationMiddleware
@@ -1235,13 +1252,22 @@ class AgentNodeType(BaseNodeType):
             callbacks.append(CostCapCallbackHandler())
 
         try:
-            return await agent.ainvoke(
-                {"messages": [human_message]},
-                config={
-                    "recursion_limit": recursion_limit,
-                    "callbacks": callbacks,
-                },
-            )
+            try:
+                result = await agent.ainvoke(
+                    {"messages": [human_message]},
+                    config={
+                        "recursion_limit": recursion_limit,
+                        "callbacks": callbacks,
+                    },
+                )
+            except Exception as exc:
+                exc_type_name = type(exc).__name__
+                if "AuthenticationError" in exc_type_name or "401" in str(exc):
+                    raise ProviderAuthError(f"Provider authentication failed — check your API key: {exc}") from exc
+                if "APIError" in exc_type_name or "APIConnectionError" in exc_type_name:
+                    raise ProviderError(f"Provider error (not a Seer issue): {exc}") from exc
+                raise
+            return result
         finally:
             if ctx.runtime_context:
                 clear_chat_runtime_context()

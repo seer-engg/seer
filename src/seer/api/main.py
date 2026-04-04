@@ -29,6 +29,7 @@ from seer.api.core.middleware.usage_limit import UsageLimitMiddleware
 from seer.api.router import router
 from seer.api.tools.router import router as tools_router
 from seer.api.tracking.router import router as tracking_router
+from seer.api.byok.router import router as byok_router
 from seer.config import config
 from seer.database import db_lifespan
 from seer.logger import get_logger
@@ -182,6 +183,7 @@ app = FastAPI(
 app.include_router(router)
 app.include_router(tools_router)
 app.include_router(tracking_router)
+app.include_router(byok_router)
 
 # =============================================================================
 # MCP Server Integration (setup - mount happens after all routes are defined)
@@ -222,14 +224,18 @@ app.add_middleware(OrganizationContextMiddleware)
 logger.info("🏢 Organization context middleware enabled")
 
 # Authentication middleware - register BEFORE CORS to ensure user is set
-logger.info("🔐 Using Clerk authentication")
-
-app.add_middleware(
-    ClerkAuthMiddleware,
-    jwks_url=config.clerk_jwks_url,  # type: ignore[arg-type]  # Reason: Clerk credentials are required
-    issuer=config.clerk_issuer,  # type: ignore[arg-type]  # Reason: Clerk credentials are required
-    audience=_get_clerk_audience(),
-)
+if config.auth_provider == "clerk":
+    logger.info("🔐 Using Clerk authentication")
+    app.add_middleware(
+        ClerkAuthMiddleware,
+        jwks_url=config.clerk_jwks_url,  # type: ignore[arg-type]  # Reason: Clerk credentials are required when auth_provider=clerk
+        issuer=config.clerk_issuer,  # type: ignore[arg-type]  # Reason: Clerk credentials are required when auth_provider=clerk
+        audience=_get_clerk_audience(),
+    )
+else:
+    from seer.api.core.middleware.auth import LocalAuthMiddleware  # pylint: disable=ungrouped-imports # Reason: Conditional import based on auth_provider
+    logger.info("🔓 Using local auth (no login required)")
+    app.add_middleware(LocalAuthMiddleware)
 
 
 # CORS middleware for development - must be AFTER auth middleware
@@ -364,6 +370,18 @@ async def health_check():
         "status": "ok",
         "server": "Seer API",
         "version": "1.0.0"
+    }
+
+
+@app.get("/api/auth/config", tags=["System"])
+async def auth_config():
+    """Public endpoint returning the auth provider configuration.
+
+    The frontend fetches this at startup to decide whether to use Clerk or local auth,
+    so only AUTH_PROVIDER needs to be set on the backend.
+    """
+    return {
+        "auth_provider": config.auth_provider,
     }
 
 @app.get("/sentry-debug")

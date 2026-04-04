@@ -40,6 +40,7 @@ class StreamingService:
         self._every_nth_frame = every_nth_frame
         self._frame_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=5)
         self._cdp_client = None
+        self._owns_cdp_client = False  # True when we created the CDP client (cross-process mode)
         self._target_session_id: Optional[str] = None
         self._running = False
         self._frame_count = 0
@@ -82,15 +83,53 @@ class StreamingService:
             self._viewport_width = float(self._max_width)
             self._viewport_height = float(self._max_height)
 
+        await self._start_screencast()
+
+    async def start_from_target(self, target_id: str) -> None:
+        """Start screencast by connecting to an existing browser page via its target_id.
+
+        Used for cross-process streaming: the browser session lives in the worker
+        process, but the API process needs to stream from the same page.
+        Both connect to the same Browserless container via CDP.
+
+        Args:
+            target_id: CDP target ID of the page to stream from
+        """
+        from cdp_use import CDPClient  # pylint: disable=import-outside-toplevel  # Reason: Only needed for cross-process streaming
+        from seer.config import config as app_config  # pylint: disable=import-outside-toplevel  # Reason: Avoid shadowing
+
+        cdp_url = app_config.browserless_cdp_url
+        logger.info(f"Connecting to Browserless for HITL streaming: target={target_id}")
+
+        cdp_client = CDPClient(cdp_url)
+        await cdp_client.start()
+        self._cdp_client = cdp_client
+        self._owns_cdp_client = True  # Track that we need to close this
+
+        # Attach to the existing page target
+        result = await cdp_client.send.Target.attachToTarget(
+            params={"targetId": target_id, "flatten": True}
+        )
+        self._target_session_id = result["sessionId"]
+
+        # Use screencast max dimensions as viewport fallback (can't call page.evaluate without Playwright)
+        self._viewport_width = float(self._max_width)
+        self._viewport_height = float(self._max_height)
+
+        await self._start_screencast()
+        logger.info(f"HITL screencast started for target={target_id}")
+
+    async def _start_screencast(self) -> None:
+        """Register frame handler and start CDP screencast."""
         # Register event handler for screencast frames
         # NOTE: cdp_use library exposes _event_registry as the only way to register handlers
         # pylint: disable-next=protected-access
-        browser_session.cdp_client._event_registry.register(
+        self._cdp_client._event_registry.register(
             "Page.screencastFrame", self._on_frame
         )
 
         # Start screencast via raw CDP (not in cdp_use typed lib)
-        await browser_session.cdp_client.send_raw(
+        await self._cdp_client.send_raw(
             "Page.startScreencast",
             {
                 "format": "jpeg",
@@ -99,11 +138,11 @@ class StreamingService:
                 "maxHeight": self._max_height,
                 "everyNthFrame": self._every_nth_frame,
             },
-            session_id=cdp_session.session_id,
+            session_id=self._target_session_id,
         )
         self._running = True
         self._frame_count = 0
-        logger.info(f"Screencast started (quality={self._quality}, session={cdp_session.session_id})")
+        logger.info(f"Screencast started (quality={self._quality}, session={self._target_session_id})")
 
     async def stop(self) -> None:
         """Stop screencast and unregister handler."""
@@ -121,6 +160,13 @@ class StreamingService:
                 )
             except Exception as e:
                 logger.warning(f"Failed to stop screencast: {e}")
+
+        # Close CDP client if we created it (cross-process mode)
+        if self._owns_cdp_client and self._cdp_client:
+            try:
+                await self._cdp_client.stop()
+            except Exception as e:
+                logger.warning(f"Failed to close CDP client: {e}")
 
         logger.info(f"Screencast stopped (total frames: {self._frame_count})")
 
@@ -242,11 +288,13 @@ class StreamingService:
             session_id=self._target_session_id,
         )
 
-    async def dispatch_click_js(self, x: float, y: float, _button: str = "left") -> None:
-        """Dispatch a click using JavaScript - the industry standard approach.
+    async def dispatch_click_js(self, x: float, y: float, button: str = "left") -> None:
+        """Dispatch a click using CDP mousePressed + mouseReleased sequence.
 
-        CDP mousePressed/mouseReleased don't fire the 'click' event. All production
-        tools (Playwright, Puppeteer, browser-use) use JavaScript injection instead.
+        Uses real CDP input events instead of JavaScript injection so that:
+        1. Clicks propagate into cross-origin iframes (e.g. reCAPTCHA)
+        2. Events have isTrusted=true at the browser compositor level
+        3. Bot-detection scripts see authentic input events
 
         Args:
             x: X coordinate in screencast space (will be scaled)
@@ -259,29 +307,43 @@ class StreamingService:
 
         # Scale coordinates from screencast space to viewport space
         scaled_x, scaled_y = self._scale_coordinates(x, y)
-        logger.info(f"JS Click: input=({x:.0f},{y:.0f}) -> viewport=({scaled_x:.0f},{scaled_y:.0f})")
-
-        # Industry standard: use elementFromPoint + click()
-        # This is what Puppeteer and browser-use do
-        js_code = f"""
-        (() => {{
-            const el = document.elementFromPoint({scaled_x}, {scaled_y});
-            if (el) {{
-                el.click();
-                return {{ success: true, tagName: el.tagName, id: el.id }};
-            }}
-            return {{ success: false }};
-        }})()
-        """
+        logger.info(f"CDP Click: input=({x:.0f},{y:.0f}) -> viewport=({scaled_x:.0f},{scaled_y:.0f})")
 
         try:
-            result = await self._cdp_client.send.Runtime.evaluate(
-                params={"expression": js_code, "returnByValue": True},
+            # Move mouse to target first (some sites track mouse movement)
+            await self._cdp_client.send.Input.dispatchMouseEvent(
+                params={
+                    "type": "mouseMoved",
+                    "x": scaled_x,
+                    "y": scaled_y,
+                },
                 session_id=self._target_session_id,
             )
-            logger.info(f"JS Click result: {result}")
+            # mousePressed + mouseReleased = full click at compositor level
+            # This is how Playwright implements .click() under the hood
+            await self._cdp_client.send.Input.dispatchMouseEvent(
+                params={
+                    "type": "mousePressed",
+                    "x": scaled_x,
+                    "y": scaled_y,
+                    "button": button,
+                    "clickCount": 1,
+                },
+                session_id=self._target_session_id,
+            )
+            await self._cdp_client.send.Input.dispatchMouseEvent(
+                params={
+                    "type": "mouseReleased",
+                    "x": scaled_x,
+                    "y": scaled_y,
+                    "button": button,
+                    "clickCount": 1,
+                },
+                session_id=self._target_session_id,
+            )
+            logger.info(f"CDP Click completed at viewport=({scaled_x:.0f},{scaled_y:.0f})")
         except Exception as e:
-            logger.error(f"JS Click failed: {e}")
+            logger.error(f"CDP Click failed: {e}")
 
     async def dispatch_scroll_event(
         self, x: float, y: float, delta_x: float = 0, delta_y: float = -120

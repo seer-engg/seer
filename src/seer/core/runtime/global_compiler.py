@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # Reason: Compiler singleton consolidates all registry + handler factories
 from __future__ import annotations
 
 import asyncio
@@ -482,10 +483,23 @@ class WorkflowCompilerSingleton:
             parameters = invocation.get("parameters") or {}
             file_contents = invocation.get("file_contents", [])
 
-            llm = get_llm(
-                model=model_id,
-                temperature=parameters.get("temperature") or 0.2,
-            )
+            byok_api_key = invocation.get("byok_api_key")
+            byok_base_url = invocation.get("byok_base_url")
+            byok_provider = invocation.get("byok_provider")
+            if byok_api_key:
+                from seer.llm import get_llm_for_byok  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+                llm = get_llm_for_byok(
+                    model=model_id,
+                    temperature=parameters.get("temperature") or 0.2,
+                    api_key=byok_api_key,
+                    provider=byok_provider or "openrouter",
+                    base_url=byok_base_url or "https://openrouter.ai/api/v1",
+                )
+            else:
+                llm = get_llm(
+                    model=model_id,
+                    temperature=parameters.get("temperature") or 0.2,
+                )
             prompt = self._inject_structured_inputs(
                 invocation["prompt"], invocation.get("inputs")
             )
@@ -520,10 +534,23 @@ class WorkflowCompilerSingleton:
             parameters = invocation.get("parameters") or {}
             file_contents = invocation.get("file_contents", [])
 
-            llm = get_llm(
-                model=model_id,
-                temperature=parameters.get("temperature") or 0.2,
-            )
+            byok_api_key = invocation.get("byok_api_key")
+            byok_base_url = invocation.get("byok_base_url")
+            byok_provider = invocation.get("byok_provider")
+            if byok_api_key:
+                from seer.llm import get_llm_for_byok  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+                llm = get_llm_for_byok(
+                    model=model_id,
+                    temperature=parameters.get("temperature") or 0.2,
+                    api_key=byok_api_key,
+                    provider=byok_provider or "openrouter",
+                    base_url=byok_base_url or "https://openrouter.ai/api/v1",
+                )
+            else:
+                llm = get_llm(
+                    model=model_id,
+                    temperature=parameters.get("temperature") or 0.2,
+                )
 
             prompt = self._inject_structured_inputs(
                 invocation["prompt"], invocation.get("inputs")

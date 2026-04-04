@@ -89,6 +89,17 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     )
 
     # ============================================================================
+    # meetingsEA Configuration
+    # ============================================================================
+
+    meetings_ea_api_key: Optional[str] = Field(
+        default=None, description="API key for meetingsEA meeting bot service"
+    )
+    meetings_ea_base_url: Optional[str] = Field(
+        default=None, description="Base URL for meetingsEA service (e.g., https://attendee.example.com)"
+    )
+
+    # ============================================================================
     # LangGraph Checkpointer Configuration
     # ============================================================================
 
@@ -112,17 +123,22 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
 
 
     # ============================================================================
-    # Clerk Authentication Configuration
+    # Authentication Configuration
     # ============================================================================
 
+    auth_provider: str = Field(
+        default="clerk",
+        description="Auth provider: 'clerk' for cloud/Clerk auth, 'local' for self-hosted (no login)"
+    )
+
     clerk_jwks_url: Optional[str] = Field(
-        default=None, description="Clerk JWKS URL for JWT verification"
+        default=None, description="Clerk JWKS URL for JWT verification (required when auth_provider=clerk)"
     )
     clerk_issuer: Optional[str] = Field(
-        default=None, description="Clerk JWT issuer (e.g., https://clerk.your-domain.com)"
+        default=None, description="Clerk JWT issuer (required when auth_provider=clerk)"
     )
     clerk_audience: Optional[str] = Field(
-        default=None, description="Clerk JWT audience (e.g., ['api.your-domain.com'])"
+        default=None, description="Clerk JWT audience (optional, used with auth_provider=clerk)"
     )
 
 
@@ -539,6 +555,17 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     browser_stealth_enabled: bool = Field(
         default=True,
         description="Enable stealth mode (--headless=new) for interactive browser sessions",
+    )
+
+    # Browserless (remote browser service)
+    browserless_url: Optional[str] = Field(
+        default=None,
+        description="WebSocket URL for Browserless service (e.g. ws://browserless:3000). "
+        "When set, browsers are spawned remotely instead of locally.",
+    )
+    browserless_token: Optional[str] = Field(
+        default=None,
+        description="Authentication token for Browserless service",
     )
 
     # ============================================================================

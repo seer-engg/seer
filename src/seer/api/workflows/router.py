@@ -183,7 +183,17 @@ async def generate_trigger_event(
 
 @router.get("/registries/models", response_model=api_models.ModelRegistryResponse)
 async def get_model_registry(request: Request):
-    _require_user(request)
+    user = _require_user(request)
+    if user.active_organization_id:
+        from seer.api.models.router import _get_byok_models  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+        byok_models = await _get_byok_models(user.active_organization_id)
+        if byok_models is not None:
+            return api_models.ModelRegistryResponse(
+                models=[
+                    api_models.ModelDescriptor(id=m.id, title=m.name, supports_json_schema=True)
+                    for m in byok_models
+                ]
+            )
     return await services.list_models()
 
 
@@ -423,6 +433,7 @@ async def get_run_interrupt(request: Request, run_id: str):
     return api_models.HITLInterruptResponse(
         run_id=interrupt_data.get("run_id", run_id),
         status=interrupt_data.get("status", "interrupted"),
+        type=interrupt_payload.get("type", "hitl"),
         node_id=interrupt_data.get("node_id"),
         title=interrupt_payload.get("title"),
         description=interrupt_payload.get("description"),
@@ -437,6 +448,8 @@ async def get_run_interrupt(request: Request, run_id: str):
         timeout_seconds=interrupt_payload.get("timeout_seconds"),
         expires_at=interrupt_data.get("expires_at"),
         is_expired=interrupt_data.get("is_expired") or False,
+        session_id=interrupt_payload.get("session_id"),
+        target_id=interrupt_payload.get("target_id"),
     )
 
 

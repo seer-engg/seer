@@ -446,6 +446,18 @@ class BrowserNode(NodeBase):
         )
     )
 
+    # Human-in-the-loop configuration
+    enable_hitl: bool = Field(
+        default=True,
+        description="When True, the browser agent can pause and ask the human for input via ask_human tool."
+    )
+    hitl_timeout_seconds: int = Field(
+        default=1800,
+        ge=60,
+        le=86400,
+        description="Maximum seconds to wait for human response during HITL. Default 30 min, max 24h."
+    )
+
 
 class AgentNode(NodeBase):
     """
@@ -519,8 +531,23 @@ class AgentNode(NodeBase):
             raise ValueError("AgentNode 'max_iterations' must be a positive integer")
 
 
+class EABotNode(NodeBase):
+    """meetingsEA node — joins a meeting, records, and returns transcript when done.
+
+    Uses LangGraph's interrupt() to pause the workflow while the bot is in the meeting.
+    Automatically resumes when the meeting ends via webhook from the Attendee service.
+    """
+    type: Literal["ea_bot"] = "ea_bot"
+    inputs: Dict[str, JSONValue] = Field(default_factory=dict)
+    # inputs: meeting_url (required), bot_name (optional), recording_mode (optional)
+    timeout_seconds: int = Field(
+        default=14400,
+        description="Max wait time in seconds for the meeting to end (default: 4 hours)",
+    )
+
+
 Node = Annotated[
-    Union[ToolNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode, AgentNode],
+    Union[ToolNode, MCPNode, IfNode, ForEachNode, HITLNode, ImageGenNode, BrowserNode, AgentNode, EABotNode],
     Field(discriminator="type"),
 ]
 

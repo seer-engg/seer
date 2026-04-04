@@ -52,7 +52,7 @@ async def get_user_settings(request: Request):
     user = _require_user(request)
     settings, _ = await UserSettings.get_or_create(user=user)
     result = UserSettingsPublic.model_validate(settings, from_attributes=True)
-    if config.disable_usage_limits:
+    if config.disable_usage_limits or config.auth_provider != "clerk":
         prefs = result.preferences or {}
         prefs.setdefault("onboarding", {})
         prefs["onboarding"]["completed"] = True

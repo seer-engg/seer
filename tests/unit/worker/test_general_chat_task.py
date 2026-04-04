@@ -94,7 +94,7 @@ class TestGeneralChatTask:
         with (
             patch("seer.worker.tasks.general_chat.GeneralChatSession") as mock_session_model,
             patch("seer.worker.tasks.general_chat.GeneralChatMessage") as mock_msg_model,
-            patch("seer.worker.tasks.general_chat.get_llm") as mock_get_llm,
+            patch("seer.services.byok.llm_resolver.resolve_llm", new_callable=AsyncMock) as mock_get_llm,
             patch("seer.api.chat.services.save_message", new_callable=AsyncMock),
         ):
             mock_session_model.get = AsyncMock(return_value=session)
@@ -121,7 +121,7 @@ class TestGeneralChatTask:
         with (
             patch("seer.worker.tasks.general_chat.GeneralChatSession") as mock_session_model,
             patch("seer.worker.tasks.general_chat.GeneralChatMessage") as mock_msg_model,
-            patch("seer.worker.tasks.general_chat.get_llm") as mock_get_llm,
+            patch("seer.services.byok.llm_resolver.resolve_llm", new_callable=AsyncMock) as mock_get_llm,
         ):
             mock_session_model.get = AsyncMock(return_value=session)
             mock_msg_qs = MagicMock()
@@ -152,7 +152,7 @@ class TestGeneralChatTask:
         with (
             patch("seer.worker.tasks.general_chat.GeneralChatSession") as mock_session_model,
             patch("seer.worker.tasks.general_chat.GeneralChatMessage") as mock_msg_model,
-            patch("seer.worker.tasks.general_chat.get_llm") as mock_get_llm,
+            patch("seer.services.byok.llm_resolver.resolve_llm", new_callable=AsyncMock) as mock_get_llm,
             patch("seer.api.chat.services.save_message", new_callable=AsyncMock),
             patch("seer.services.image_gen.generate_image", side_effect=RuntimeError("Image gen down")),
         ):
@@ -193,7 +193,7 @@ class TestGeneralChatTask:
         with (
             patch("seer.worker.tasks.general_chat.GeneralChatSession") as mock_session_model,
             patch("seer.worker.tasks.general_chat.GeneralChatMessage") as mock_msg_model,
-            patch("seer.worker.tasks.general_chat.get_llm") as mock_get_llm,
+            patch("seer.services.byok.llm_resolver.resolve_llm", new_callable=AsyncMock) as mock_get_llm,
             patch("seer.api.chat.services.save_message", new_callable=AsyncMock),
         ):
             mock_session_model.get = AsyncMock(return_value=session)

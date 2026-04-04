@@ -62,7 +62,7 @@ def _require_user(request: Request) -> User:
 
 class CheckoutRequest(BaseModel):
     """Request body for creating a checkout session."""
-    tier: str  # "pro", "pro_plus"
+    tier: str  # "lite", "pro"
     interval: str  # "month", "year"
 
 
@@ -133,7 +133,7 @@ class StripeConfigResponse(BaseModel):
 
 class CreateSubscriptionWithTrialRequest(BaseModel):
     """Request body for creating a subscription with trial period."""
-    tier: str  # "pro", "pro_plus"
+    tier: str  # "lite", "pro"
     interval: str  # "month", "year"
 
 

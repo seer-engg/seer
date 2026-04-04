@@ -1,0 +1,309 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Seer Design System - "Hacker Dark Mode" */
+
+@layer base {
+  :root {
+    --background: 222 47% 97%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 222 47% 11%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 215 20% 95%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 215 20% 95%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 215 20% 90%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 160 84% 39%;
+    --success-foreground: 0 0% 98%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 9%;
+
+    --seer: 239 84% 67%;
+    --seer-foreground: 0 0% 98%;
+
+    --bug: 347 77% 50%;
+    --bug-foreground: 0 0% 98%;
+
+    --border: 215 20% 88%;
+    --input: 215 20% 88%;
+    --ring: 222 47% 11%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 99%;
+    --sidebar-foreground: 215 16% 47%;
+    --sidebar-primary: 222 47% 11%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 215 20% 95%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 215 20% 90%;
+    --sidebar-ring: 222 47% 11%;
+
+    --terminal-background: 222 47% 5%;
+    --terminal-foreground: 160 84% 60%;
+
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  .dark {
+    --background: 222 47% 5%;
+    --foreground: 215 20% 95%;
+
+    --card: 222 41% 8%;
+    --card-foreground: 215 20% 95%;
+
+    --popover: 222 41% 8%;
+    --popover-foreground: 215 20% 95%;
+
+    --primary: 0 0% 98%;
+    --primary-foreground: 222 47% 5%;
+
+    --secondary: 222 41% 12%;
+    --secondary-foreground: 215 20% 95%;
+
+    --muted: 222 41% 12%;
+    --muted-foreground: 215 16% 57%;
+
+    --accent: 222 41% 15%;
+    --accent-foreground: 215 20% 95%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 160 84% 39%;
+    --success-foreground: 0 0% 98%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 9%;
+
+    --seer: 239 84% 67%;
+    --seer-foreground: 0 0% 98%;
+
+    --bug: 347 77% 50%;
+    --bug-foreground: 0 0% 98%;
+
+    --border: 222 41% 15%;
+    --input: 222 41% 15%;
+    --ring: 215 20% 65%;
+
+    --sidebar-background: 222 47% 4%;
+    --sidebar-foreground: 215 16% 57%;
+    --sidebar-primary: 0 0% 98%;
+    --sidebar-primary-foreground: 222 47% 5%;
+    --sidebar-accent: 222 41% 10%;
+    --sidebar-accent-foreground: 215 20% 95%;
+    --sidebar-border: 222 41% 12%;
+    --sidebar-ring: 215 20% 65%;
+
+    --terminal-background: 222 47% 3%;
+    --terminal-foreground: 160 84% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer utilities {
+  .text-gradient-seer {
+    @apply bg-gradient-to-r from-seer via-indigo-400 to-purple-500 bg-clip-text text-transparent;
+  }
+
+  .glow-seer {
+    box-shadow: 0 0 20px hsl(var(--seer) / 0.3);
+  }
+
+  .glow-success {
+    box-shadow: 0 0 20px hsl(var(--success) / 0.3);
+  }
+
+  .glow-bug {
+    box-shadow: 0 0 20px hsl(var(--bug) / 0.3);
+  }
+
+  .animate-pulse-slow {
+    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .animate-typing {
+    animation: typing 1.5s steps(3, end) infinite;
+  }
+
+  @keyframes typing {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 3px;
+  }
+
+  .shadow-inner-right {
+    box-shadow: inset -9px 0 6px -1px rgb(0 0 0 / 0.02);
+  }
+
+  .shadow-inner-left {
+    box-shadow: inset 9px 0 6px -1px rgb(0 0 0 / 0.02);
+  }
+}
+
+/* Remove default React Flow node wrapper styling */
+.react-flow__node {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+.react-flow__node-input,
+.react-flow__node-tool,
+.react-flow__node-code,
+.react-flow__node-llm,
+.react-flow__node-if_else,
+.react-flow__node-for_loop {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Tiptap Rich Text Editor Styles */
+.ProseMirror {
+  outline: none;
+  min-height: 80px;
+  text-align: left;
+  font-size: 16px !important;
+  line-height: 1.6;
+}
+
+.ProseMirror * {
+  font-size: inherit;
+}
+
+.ProseMirror p {
+  margin: 0.5em 0;
+  text-align: left;
+}
+
+.ProseMirror p:first-child {
+  margin-top: 0;
+}
+
+.ProseMirror p:last-child {
+  margin-bottom: 0;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+
+.ProseMirror li {
+  margin: 0.25em 0;
+}
+
+.ProseMirror blockquote {
+  border-left: 3px solid hsl(var(--border));
+  padding-left: 1em;
+  margin: 0.5em 0;
+  color: hsl(var(--muted-foreground));
+}
+
+.ProseMirror code {
+  background: hsl(var(--muted));
+  padding: 0.1em 0.3em;
+  border-radius: 0.25em;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.9em;
+}
+
+.ProseMirror pre {
+  background: hsl(var(--muted));
+  padding: 0.75em 1em;
+  border-radius: 0.5em;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.ProseMirror pre code {
+  background: none;
+  padding: 0;
+}
+
+.ProseMirror a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3 {
+  font-weight: 600;
+  margin: 0.75em 0 0.5em;
+}
+
+.ProseMirror h1 {
+  font-size: 1.5em;
+}
+
+.ProseMirror h2 {
+  font-size: 1.25em;
+}
+
+.ProseMirror h3 {
+  font-size: 1.1em;
+}
+
+/* Tiptap placeholder */
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: hsl(var(--muted-foreground));
+  pointer-events: none;
+  float: left;
+  height: 0;
+}

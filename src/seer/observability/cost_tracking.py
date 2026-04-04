@@ -114,6 +114,9 @@ class CostTracker:
         if context.organization_id:
             organization = await Organization.get_or_none(id=context.organization_id)
 
+        # Determine if this call used the user's own API key (BYOK)
+        is_byok = bool(context.byok_api_key)
+
         # Define async tracking coroutine
         async def do_track():
             try:
@@ -128,6 +131,7 @@ class CostTracker:
                     operation=operation,
                     metadata=tracking_metadata,
                     organization=organization,  # Pass org for team-level tracking
+                    is_byok=is_byok,
                 )
                 logger.debug("Successfully tracked LLM usage to database")
             except Exception as e:  # pylint: disable=broad-exception-caught  # Reason: tracking failures should not break workflow execution

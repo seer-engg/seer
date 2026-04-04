@@ -17,7 +17,7 @@ from seer.logger import get_logger
 logger = get_logger("api.subscriptions.stripe_webhook_controller")
 
 # Tiers eligible for overage pricing
-OVERAGE_ELIGIBLE_TIERS = {SubscriptionTier.PRO, SubscriptionTier.PRO_PLUS}
+OVERAGE_ELIGIBLE_TIERS = {SubscriptionTier.LITE, SubscriptionTier.PRO}
 
 
 class StripeWebhookController:

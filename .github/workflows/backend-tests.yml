@@ -6,14 +6,6 @@ on:
       - dev
       - main
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'scripts/**'
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - '.github/workflows/**'
-      - '.pre-commit-config.yaml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -23,7 +15,30 @@ permissions:
   contents: read
 
 jobs:
-  tests:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.check.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for backend changes
+        id: check
+        run: |
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -qE '^(src/|tests/|scripts/|pyproject\.toml|uv\.lock|\.github/workflows/|\.pre-commit-config\.yaml)'; then
+            echo "backend=true" >> $GITHUB_OUTPUT
+          else
+            echo "backend=false" >> $GITHUB_OUTPUT
+          fi
+
+  run-tests:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -67,3 +82,21 @@ jobs:
         env:
           TESTCONTAINERS_RYUK_DISABLED: "false"
           DOCKER_HOST: "unix:///var/run/docker.sock"
+
+  tests:
+    needs: [changes, run-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ needs.changes.outputs.backend }}" != "true" ]]; then
+            echo "No backend changes — skipping tests"
+            exit 0
+          fi
+          if [[ "${{ needs.run-tests.result }}" == "success" ]]; then
+            echo "Tests passed"
+            exit 0
+          fi
+          echo "Tests failed or were cancelled"
+          exit 1

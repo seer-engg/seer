@@ -174,6 +174,9 @@ class BrowserNodeType(BaseNodeType):
                 workflow_run_id=workflow_run_id,
                 model=node.model,
                 organization_id=ctx.runtime_context.organization_id if ctx.runtime_context else None,
+                enable_hitl=node.enable_hitl,
+                hitl_timeout_seconds=node.hitl_timeout_seconds,
+                node_id=node.id,
             )
         except Exception as exc:
             trace_key = get_trace_key(node.id, ctx.state, ctx.loop_body_map or {}, ctx.nested_loop_parents or {})

@@ -62,7 +62,7 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        if config.disable_usage_limits:
+        if config.disable_usage_limits or config.auth_provider != "clerk":
             return await call_next(request)
 
         # Public paths skip all checks
@@ -184,6 +184,15 @@ class UsageLimitMiddleware(BaseHTTPMiddleware):
         self, user: User, organization: Optional[Organization] = None
     ) -> Optional[JSONResponse]:
         """Check if user/org has exceeded LLM credit limit before chat execution."""
+        # BYOK users bypass credit limits — they bear the LLM cost directly
+        if user.active_organization_id:
+            from seer.database.byok_models import LLMApiKey  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+            has_byok = await LLMApiKey.exists(
+                organization_id=user.active_organization_id, is_active=True, status="active",
+            )
+            if has_byok:
+                return None
+
         try:
             await check_credit_limit(user, organization)
             return None

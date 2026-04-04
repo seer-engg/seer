@@ -40,20 +40,6 @@ class ProfileResponse(BaseModel):
     last_used_at: Optional[str]
 
 
-class LoginRequest(BaseModel):
-    """Request to start interactive login session."""
-    target_url: Optional[str] = Field(
-        default=None,
-        description="Optional starting URL for login (e.g., 'https://slack.com/signin')"
-    )
-
-
-class LoginResponse(BaseModel):
-    """Response from interactive login session."""
-    profile_id: str
-    logged_in_domains: List[str]
-    status: str
-
 
 # ------------------------------------------------------------------
 # Endpoints
@@ -158,54 +144,3 @@ async def delete_profile(
         raise HTTPException(status_code=404, detail="Profile not found")
 
     return {"deleted": True, "profile_id": str(profile_id)}
-
-
-@router.post("/profiles/{profile_id}/login", response_model=LoginResponse)
-async def start_login(
-    request: Request,
-    profile_id: UUID,
-    body: LoginRequest,
-) -> LoginResponse:
-    """
-    Start an interactive login session.
-
-    .. deprecated::
-        Use POST /api/browser/sessions to create a streaming session,
-        connect via WebSocket, then POST /api/browser/sessions/{id}/complete.
-
-    Opens a browser window where the user can log into services.
-    The session (cookies, localStorage) is captured and saved when
-    the browser is closed.
-
-    **Note:** This endpoint is intended for local/development use.
-    The browser window opens on the server machine.
-    """
-    user: User = request.state.db_user
-    logger.info(
-        "Starting interactive login for profile %s, target_url=%s",
-        profile_id, body.target_url
-    )
-
-    manager = BrowserProfileManager()
-
-    # Verify profile exists
-    profile = await manager.get_profile(user, profile_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
-    try:
-        result = await manager.start_interactive_login(
-            user, profile_id, body.target_url
-        )
-    except Exception as e:
-        logger.error("Interactive login failed: %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to start login session: {str(e)}"
-        ) from e
-
-    return LoginResponse(
-        profile_id=result["profile_id"],
-        logged_in_domains=result["logged_in_domains"],
-        status=result["status"],
-    )

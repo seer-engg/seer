@@ -103,6 +103,10 @@ def _create_auth_middleware():
     Returns:
         Middleware instance or None if OAuth authorization server is not configured
     """
+    if config.auth_provider != "clerk":
+        logger.info("MCP server running without authentication (auth_provider=%s)", config.auth_provider)
+        return None
+
     if not config.mcp_oauth_authorization_server:
         logger.info("MCP server running without authentication (mcp_oauth_authorization_server not configured)")
         return None

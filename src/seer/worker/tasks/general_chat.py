@@ -8,7 +8,6 @@ from typing import List, Optional
 from seer.config import config
 from seer.database.chat_models import GeneralChatMessage, GeneralChatSession
 from seer.database.workflow_models import ChatExecutionStatus
-from seer.llm import get_llm
 from seer.logger import get_logger
 from seer.worker.broker_instance import broker
 
@@ -38,6 +37,7 @@ async def general_chat_task(  # pylint: disable=too-many-positional-arguments,to
     image_model: Optional[str] = None,
     image_size: str = "1024x1024",
     user_timezone: Optional[str] = None,
+    organization_id: Optional[int] = None,
 ) -> None:
     """Execute general chat completion in background."""
     logger.info(
@@ -67,7 +67,8 @@ async def general_chat_task(  # pylint: disable=too-many-positional-arguments,to
         ] + _build_langchain_messages(history)
 
         # Simple chat completion (no agent/tools)
-        llm = get_llm(model=model or config.default_llm_model)
+        from seer.services.byok.llm_resolver import resolve_llm  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+        llm = await resolve_llm(model=model or config.default_llm_model, organization_id=organization_id)
         result = await llm.ainvoke(lc_messages)
         response_text = result.content if hasattr(result, "content") else str(result)
 

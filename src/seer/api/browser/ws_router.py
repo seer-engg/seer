@@ -40,8 +40,8 @@ async def _handle_mouse_event(streamer: StreamingService, data: dict) -> None:
     click_count = int(data.get("clickCount", 1))
 
     if action == "click":
-        # Use JavaScript click - industry standard (Playwright, Puppeteer, browser-use)
-        # CDP mousePressed/mouseReleased don't fire the 'click' event
+        # Use CDP mousePressed/mouseReleased sequence for trusted clicks
+        # that propagate into cross-origin iframes (e.g. reCAPTCHA)
         await streamer.dispatch_click_js(x, y, button)
     elif action == "down":
         await streamer.dispatch_mouse_event("mousePressed", x, y, button=button, click_count=click_count)
@@ -121,7 +121,7 @@ async def _validate_ws_session(
 
 
 async def _dispatch_input_event(
-    streamer: StreamingService, managed: ManagedSession, data: dict
+    streamer: StreamingService, managed: Optional[ManagedSession], data: dict
 ) -> None:
     """Dispatch a single input event to the appropriate handler."""
     msg_type = data.get("type")
@@ -131,17 +131,20 @@ async def _dispatch_input_event(
         await _handle_key_event(streamer, data)
     elif msg_type == "scroll":
         await _handle_scroll_event(streamer, data)
-    elif msg_type == "navigate":
+    elif msg_type == "navigate" and managed is not None:
         await _handle_navigate_event(managed, data)
 
 
 async def _run_streaming_loop(
     websocket: WebSocket,
     streamer: StreamingService,
-    managed: ManagedSession,
     session_id: str,
+    managed: Optional[ManagedSession] = None,
 ) -> None:
-    """Run the bidirectional streaming loop for WebSocket communication."""
+    """Run the bidirectional streaming loop for WebSocket communication.
+
+    When managed is None (HITL mode), navigate events are ignored.
+    """
 
     async def send_frames() -> None:
         """Send screencast frames to client."""
@@ -296,11 +299,17 @@ async def complete_session(
 # WebSocket Auth Helper
 # ------------------------------------------------------------------
 async def _verify_ws_token(token: str) -> Optional[str]:
-    """Verify JWT token for WebSocket connection using ClerkJWTVerifier.
+    """Verify JWT token for WebSocket connection.
+
+    In local auth mode, returns the default local user ID without verification.
 
     Returns:
         User ID string, or None if verification fails
     """
+    if config.auth_provider != "clerk":
+        from seer.auth.local_provider import LOCAL_DEFAULT_USER_ID  # pylint: disable=import-outside-toplevel  # Reason: conditional import for local auth
+        return LOCAL_DEFAULT_USER_ID
+
     if not token:
         return None
 
@@ -316,6 +325,53 @@ async def _verify_ws_token(token: str) -> Optional[str]:
 # ------------------------------------------------------------------
 # WebSocket Endpoint
 # ------------------------------------------------------------------
+async def _start_and_stream(
+    websocket: WebSocket,
+    streamer: StreamingService,
+    session_id: str,
+    *,
+    managed: Optional[ManagedSession] = None,
+    target_id: Optional[str] = None,
+) -> None:
+    """Start streaming and run the bidirectional loop, then clean up.
+
+    Exactly one of managed or target_id must be provided.
+    - managed: normal pool session (start via CDP session)
+    - target_id: HITL session (start via raw target ID)
+    """
+    label = "HITL " if target_id else ""
+    try:
+        if managed:
+            await streamer.start(managed.session)
+        else:
+            await streamer.start_from_target(target_id)
+        await websocket.send_json({"type": "status", "status": "connected", "message": f"{label}Streaming started"})
+    except Exception as e:
+        logger.error(f"Failed to start {label}streaming for session {session_id}: {e}")
+        await websocket.send_json({"type": "error", "code": "cdp_error", "message": str(e)})
+        await websocket.close()
+        return
+
+    try:
+        await _run_streaming_loop(websocket, streamer, session_id, managed=managed)
+    finally:
+        await streamer.stop()
+        try:
+            await websocket.send_json({"type": "status", "status": "closed", "message": "Streaming stopped"})
+        except Exception:
+            pass
+
+
+def _new_streamer() -> StreamingService:
+    """Create a StreamingService with standard screencast settings."""
+    return StreamingService(
+        quality=config.browser_screencast_quality,
+        max_width=config.browser_screencast_max_width,
+        max_height=config.browser_screencast_max_height,
+        every_nth_frame=config.browser_screencast_every_nth_frame,
+    )
+
+
 @router.websocket("/{session_id}/stream")
 async def stream_session(
     websocket: WebSocket,
@@ -334,45 +390,63 @@ async def stream_session(
         Client → Server: {"type":"scroll","x":...,"y":...,"deltaY":-120}
         Client → Server: {"type":"navigate","url":"https://..."}
     """
-    managed = await _validate_ws_session(websocket, session_id, token)
-    if not managed:
+    user_id = await _verify_ws_token(token)
+    if not user_id:
+        await websocket.close(code=4001, reason="Authentication failed")
+        return
+
+    # Check if this is a normal pool session or a browser_hitl session
+    pool = await BrowserPoolManager.get_instance()
+    managed = pool.get_session(session_id)
+
+    if managed:
+        if managed.user_id != user_id:
+            await websocket.close(code=4003, reason="Session does not belong to this user")
+            return
+        await websocket.accept()
+        await _start_and_stream(websocket, _new_streamer(), session_id, managed=managed)
+        return
+
+    # HITL path: session is in the worker process
+    target_id = await _get_hitl_target_id(session_id, user_id)
+    if not target_id:
+        await websocket.close(code=4004, reason="Session not found")
         return
 
     await websocket.accept()
+    await _start_and_stream(websocket, _new_streamer(), session_id, target_id=target_id)
 
-    streamer = StreamingService(
-        quality=config.browser_screencast_quality,
-        max_width=config.browser_screencast_max_width,
-        max_height=config.browser_screencast_max_height,
-        every_nth_frame=config.browser_screencast_every_nth_frame,
-    )
 
-    try:
-        await streamer.start(managed.session)
-        await websocket.send_json({
-            "type": "status",
-            "status": "connected",
-            "message": "Streaming started",
-        })
-    except Exception as e:
-        logger.error(f"Failed to start streaming for session {session_id}: {e}")
-        await websocket.send_json({
-            "type": "error",
-            "code": "cdp_error",
-            "message": str(e),
-        })
-        await websocket.close()
-        return
+async def _get_hitl_target_id(session_id: str, user_id: str) -> Optional[str]:
+    """Look up the CDP target_id for a browser_hitl session from the DB.
 
-    try:
-        await _run_streaming_loop(websocket, streamer, managed, session_id)
-    finally:
-        await streamer.stop()
-        try:
-            await websocket.send_json({
-                "type": "status",
-                "status": "closed",
-                "message": "Streaming stopped",
-            })
-        except Exception:
-            pass
+    Finds an interrupted workflow run whose pending_interrupt_data contains
+    the given session_id, then extracts the target_id.
+    """
+    from seer.database.workflow_models import WorkflowRun, WorkflowRunStatus  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+
+    # Find the user by clerk_user_id to get user.id for ownership check
+    user = await User.get_or_none(clerk_user_id=user_id)
+    if not user:
+        return None
+
+    # Find interrupted runs for this user with browser_hitl data
+    runs = await WorkflowRun.filter(
+        user_id=user.id,
+        status=WorkflowRunStatus.INTERRUPTED,
+    ).all()
+
+    for run in runs:
+        interrupt_data = run.pending_interrupt_data
+        if not isinstance(interrupt_data, dict):
+            continue
+        if interrupt_data.get("type") != "browser_hitl":
+            continue
+        if interrupt_data.get("session_id") == session_id:
+            target_id = interrupt_data.get("target_id")
+            if target_id:
+                logger.info(f"Found HITL target_id={target_id} for session={session_id}")
+                return target_id
+
+    logger.warning(f"No HITL target_id found for session={session_id}")
+    return None

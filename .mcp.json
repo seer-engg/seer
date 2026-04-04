@@ -12,6 +12,14 @@
         "LANGFUSE_SECRET_KEY": "sk-lf-176dc3da-211e-421c-80d8-db6a1b9605e0",
         "LANGFUSE_HOST": "https://tracing.getseer.dev"
       }
+    },
+    "metabase-mcp": {
+        "command": "uvx",
+        "args": ["metabase-mcp"],
+        "env": {
+            "METABASE_URL": "https://metabase.getseer.dev",
+            "METABASE_API_KEY": "${METABASE_API_KEY}"
+        }
     }
   }
 }

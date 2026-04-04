@@ -14,8 +14,8 @@ from seer.database.subscription_models import SubscriptionStatus, SubscriptionTi
 # Tier ordering for comparison
 TIER_ORDER = {
     SubscriptionTier.FREE: 0,
-    SubscriptionTier.PRO: 1,
-    SubscriptionTier.PRO_PLUS: 2,
+    SubscriptionTier.LITE: 1,
+    SubscriptionTier.PRO: 2,
 }
 
 
@@ -25,9 +25,9 @@ def require_subscription(min_tier: SubscriptionTier = SubscriptionTier.PRO) -> C
 
     Usage:
         @router.post("/advanced-feature")
-        @require_subscription(min_tier=SubscriptionTier.PRO_PLUS)
+        @require_subscription(min_tier=SubscriptionTier.PRO)
         async def advanced_feature(request: Request):
-            # Only Pro+ users can access this
+            # Only Pro users can access this
             pass
 
     Args:

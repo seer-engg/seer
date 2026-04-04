@@ -530,8 +530,16 @@ async def _get_user_settings_and_context(
         thread_id=thread_id,
         per_run_cost_cap_usd=per_run_cost_cap_usd,
         accumulated_cost_usd=0.0,
+        organization_id=user.active_organization_id,
         mcp_config_resolver=McpServerConfigResolverImpl(user=user),
     )
+
+    # Resolve BYOK credentials if org has an active key
+    from seer.services.byok.llm_resolver import resolve_byok_credentials  # pylint: disable=import-outside-toplevel  # Reason: Avoid circular imports
+    if user.active_organization_id:
+        creds = await resolve_byok_credentials(user.active_organization_id)
+        if creds:
+            runtime_context.byok_api_key, runtime_context.byok_base_url, runtime_context.byok_provider = creds
 
     return max_agent_steps, runtime_context
 
@@ -652,6 +660,7 @@ async def _prepare_chat_execution(
         current_query=request.message,
         workflow_id=workflow.workflow_id,  # Public workflow ID for pre-bound tools
         timezone=request.timezone,
+        organization_id=user.active_organization_id,
     )
     max_agent_steps, runtime_context = await _get_user_settings_and_context(
         user, thread_id
@@ -711,6 +720,7 @@ async def _prepare_chat_resume_execution(
         checkpointer=checkpointer,
         user_id=user.user_id,
         workflow_id=workflow.workflow_id,  # Public workflow ID for pre-bound tools
+        organization_id=user.active_organization_id,
     )
     max_agent_steps, runtime_context = await _get_user_settings_and_context(
         user, thread_id

@@ -4,17 +4,15 @@
 Browser pool manager for concurrent session management.
 
 Provides a singleton pool that limits the number of concurrent browser
-sessions (each ~100-150MB RAM) via asyncio.Semaphore and tracks active
-sessions with automatic reaping of expired ones.
+sessions via asyncio.Semaphore, connecting to a remote Browserless
+service over CDP. Tracks active sessions with automatic reaping of
+expired ones.
 """
 from __future__ import annotations
 
 import asyncio
-import json
-import tempfile
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
@@ -23,7 +21,7 @@ from browser_use import BrowserSession
 
 from seer.config import config
 from seer.logger import get_logger
-from seer.services.browser.stealth_config import get_stealth_profile_kwargs
+from seer.services.browser.stealth_config import get_remote_profile_kwargs
 
 logger = get_logger(__name__)
 
@@ -43,10 +41,12 @@ class ManagedSession:
     timeout: int = 300
     recording_id: Optional[str] = None  # RecordingService recording ID for save_recording()
     start_url: Optional[str] = None  # URL session started on (for recording metadata)
-    storage_state_file: Optional[Path] = None  # Temp file for storage state (cleaned up on release)
+    hitl_paused: bool = False  # Set True during HITL wait to prevent reaping
 
     @property
     def is_expired(self) -> bool:
+        if self.hitl_paused:
+            return False
         return (time.monotonic() - self.created_at) > self.timeout
 
 
@@ -54,7 +54,8 @@ class BrowserPoolManager:
     """
     Async singleton managing a pool of browser sessions.
 
-    Limits concurrency via semaphore to prevent memory exhaustion.
+    Connects to a remote Browserless service via CDP WebSocket.
+    Limits concurrency via semaphore to prevent resource exhaustion.
     Runs a background reaper task to clean up expired sessions.
     """
 
@@ -117,24 +118,11 @@ class BrowserPoolManager:
         """Look up an active managed session by ID without releasing it."""
         return self._sessions.get(session_id)
 
-    def _prepare_storage_state_file(self, storage_state: Dict[str, Any]) -> Path:
-        """Write storage state to a temp JSON file for browser-use.
-
-        browser-use expects a file path for StorageStateWatchdog, not a dict.
-        If we pass a dict directly, it uses str(dict) as filename, causing
-        [Errno 36] File name too long.
-        """
-        fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="browser_state_")
-        storage_state_file = Path(temp_path)
-        with open(fd, "w", encoding="utf-8") as f:
-            json.dump(storage_state, f)
-        logger.debug(f"Wrote storage state to temp file: {storage_state_file}")
-        return storage_state_file
-
     async def _apply_cookies_via_cdp(self, browser_session: BrowserSession, cookies: list) -> None:
-        """Apply cookies to browser session via CDP as backup.
+        """Apply cookies to browser session via CDP.
 
-        Ensures cookies are applied even if StorageStateWatchdog has issues.
+        Primary method for restoring saved session cookies into a
+        remote Browserless browser connected over CDP.
         """
         try:
             # pylint: disable=protected-access
@@ -143,6 +131,29 @@ class BrowserPoolManager:
             logger.info(f"Applied {len(cookies)} cookies to browser context via CDP")
         except Exception as e:
             logger.warning(f"Failed to apply cookies via CDP: {e}")
+
+    async def _export_cookies_via_cdp(self, browser_session: BrowserSession) -> Optional[Dict[str, Any]]:
+        """Export cookies from browser session via CDP.
+
+        Used when export_storage_state() fails on remote Browserless
+        sessions where Playwright context methods may not be available.
+        """
+        try:
+            context = browser_session.browser_context
+            if context is None:
+                return None
+            pages = context.pages
+            if not pages:
+                return None
+            cdp = await pages[0].context.new_cdp_session(pages[0])
+            result = await cdp.send("Network.getAllCookies")
+            cookies = result.get("cookies", [])
+            await cdp.detach()
+            logger.info(f"Exported {len(cookies)} cookies via CDP fallback")
+            return {"cookies": cookies, "origins": []}
+        except Exception as e:
+            logger.warning(f"CDP cookie export failed: {e}")
+            return None
 
     async def create_session(
         self,
@@ -153,16 +164,16 @@ class BrowserPoolManager:
         storage_state: Optional[Dict[str, Any]] = None,
         timeout: Optional[int] = None,
     ) -> ManagedSession:
-        """Create a new managed browser session.
+        """Create a new managed browser session via remote Browserless.
 
-        Acquires a semaphore slot, creates a browser-use BrowserSession,
-        starts the Chromium process, and returns a ManagedSession handle.
+        Acquires a semaphore slot, connects to Browserless over CDP,
+        applies cookies if provided, and returns a ManagedSession handle.
 
         Args:
             user_id: Owning user ID
             profile_id: Optional browser profile ID
             session_type: "workflow" or "interactive"
-            storage_state: Optional Playwright storage_state dict for session restore
+            storage_state: Optional storage_state dict with cookies to restore
             timeout: Session timeout in seconds (defaults to config value)
 
         Returns:
@@ -172,26 +183,26 @@ class BrowserPoolManager:
 
         session_id = str(uuid4())
         effective_timeout = timeout or config.browser_pool_default_timeout_seconds
+        cdp_url = config.browserless_cdp_url
 
-        storage_state_file: Optional[Path] = None
         try:
-            # Always use stealth profile for container compatibility (--disable-dev-shm-usage)
-            # and anti-detection benefits. Critical for ECS/Docker where /dev/shm is limited.
-            profile_kwargs = get_stealth_profile_kwargs()
+            profile_kwargs = get_remote_profile_kwargs()
             profile_kwargs["keep_alive"] = True
 
-            # Log cookie count for debugging persistence issues
             if storage_state:
                 cookie_count = len(storage_state.get("cookies", []))
                 logger.info(f"Creating session with {cookie_count} cookies from storage_state")
-                storage_state_file = self._prepare_storage_state_file(storage_state)
-                profile_kwargs["storage_state"] = str(storage_state_file)
 
             browser_profile = BrowserUseProfile(**profile_kwargs)
-            browser_session = BrowserSession(browser_profile=browser_profile)
+
+            logger.info(f"Connecting to remote Browserless at {config.browserless_url}")
+            browser_session = BrowserSession(
+                cdp_url=cdp_url,
+                browser_profile=browser_profile,
+            )
             await browser_session.start()
 
-            # Apply cookies directly via CDP after session start as backup
+            # Apply cookies via CDP after session start
             if storage_state and storage_state.get("cookies"):
                 await self._apply_cookies_via_cdp(browser_session, storage_state["cookies"])
 
@@ -202,7 +213,6 @@ class BrowserPoolManager:
                 profile_id=profile_id,
                 session_type=session_type,
                 timeout=effective_timeout,
-                storage_state_file=storage_state_file,
             )
             self._sessions[session_id] = managed
 
@@ -213,12 +223,6 @@ class BrowserPoolManager:
             return managed
 
         except Exception:
-            # Clean up temp file on failure
-            if storage_state_file and storage_state_file.exists():
-                try:
-                    storage_state_file.unlink()
-                except Exception as e:
-                    logger.warning(f"Failed to clean up temp storage state file: {e}")
             self._semaphore.release()
             raise
 
@@ -243,19 +247,16 @@ class BrowserPoolManager:
             storage_state = await managed.session.export_storage_state()
         except Exception as e:
             logger.warning(f"Failed to export storage state for session {session_id}: {e}")
+            # Fallback: extract cookies via CDP (works for remote Browserless sessions)
+            try:
+                storage_state = await self._export_cookies_via_cdp(managed.session)
+            except Exception as cdp_err:
+                logger.warning(f"CDP cookie export fallback also failed for {session_id}: {cdp_err}")
 
         try:
             await managed.session.stop()
         except Exception as e:
             logger.warning(f"Failed to stop session {session_id}: {e}")
-
-        # Clean up temp storage state file
-        if managed.storage_state_file and managed.storage_state_file.exists():
-            try:
-                managed.storage_state_file.unlink()
-                logger.debug(f"Cleaned up temp storage state file: {managed.storage_state_file}")
-            except Exception as e:
-                logger.warning(f"Failed to clean up temp storage state file: {e}")
 
         self._semaphore.release()
         logger.info(

@@ -110,6 +110,14 @@ class User(models.Model):
             user.active_organization_id = organization.id
             await user.save(update_fields=["active_organization_id"])
 
+            # In local auth mode, auto-complete onboarding and mark payment as done
+            # so self-hosted users are never blocked by onboarding or payment gates
+            from seer.config import config  # pylint: disable=import-outside-toplevel  # Reason: avoids circular import
+            if config.auth_provider != "clerk":
+                await cls._auto_complete_onboarding(user)
+                organization.has_payment_method = True
+                await organization.save(update_fields=["has_payment_method"])
+
             logger.info(
                 "Set up new user %s with personal org %s",
                 user.user_id,
@@ -124,6 +132,20 @@ class User(models.Model):
                 user.user_id,
                 org_err,
             )
+
+    @classmethod
+    async def _auto_complete_onboarding(cls, user: "User") -> None:
+        """Mark onboarding as completed for local-auth users so they skip onboarding entirely."""
+        settings, _ = await UserSettings.get_or_create(
+            user=user,
+            defaults={"preferences": {}},
+        )
+        prefs = settings.preferences or {}
+        prefs.setdefault("onboarding", {})
+        prefs["onboarding"]["completed"] = True
+        prefs["onboarding"]["payment_method_added"] = True
+        settings.preferences = prefs
+        await settings.save(update_fields=["preferences"])
 
 
 class UserPublic(BaseModel):
