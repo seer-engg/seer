@@ -20,6 +20,10 @@
             "METABASE_URL": "https://metabase.getseer.dev",
             "METABASE_API_KEY": "${METABASE_API_KEY}"
         }
+    },
+    "playwright": {
+      "type": "http",
+      "url": "http://localhost:9000/mcp"
     }
   }
 }
