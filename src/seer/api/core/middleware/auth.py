@@ -11,6 +11,7 @@ from starlette.types import ASGIApp
 from seer.api.core.middleware.path_allowlist import is_public_path, is_payment_exempt_path
 from seer.config import config
 from seer.auth.clerk_verifier import ClerkJWTVerifier, VerifiedClerkToken
+from seer.auth.local_provider import LocalAuthProvider
 from seer.database import User
 from seer.database.models import UserSettings
 from seer.database.organization_models import OrganizationType
@@ -21,7 +22,7 @@ logger = get_logger("api.middleware.auth")
 
 @dataclass
 class AuthenticatedUser:
-    """Represents the authenticated Clerk user attached to a request."""
+    """Represents the authenticated user attached to a request."""
 
     user_id: str
     email: Optional[str]
@@ -239,3 +240,42 @@ class ClerkAuthMiddleware(BaseHTTPMiddleware):
 
         path = request.scope.get("path") or request.url.path
         return is_public_path(path, self._extra_allowed_paths)
+
+
+class LocalAuthMiddleware(BaseHTTPMiddleware):
+    """Auth middleware for self-hosted local mode. No login required.
+
+    All requests are authenticated as a default local user.
+    Supports optional X-User-ID header for multi-user testing.
+    Skips all payment gates.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        super().__init__(app)
+        self._provider = LocalAuthProvider()
+
+    async def dispatch(self, request: Request, call_next):
+        request.state.user = None
+        request.state.db_user = None
+
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        # Check for optional X-User-ID header
+        custom_user_id = request.headers.get("X-User-ID")
+        verified_token = self._provider.authenticate_local(user_id=custom_user_id)
+
+        auth_user = AuthenticatedUser.from_verified_token(verified_token)
+
+        try:
+            db_user = await User.get_or_create_from_auth(auth_user)
+        except Exception:  # pylint: disable=broad-exception-caught # Reason: Defensive catch for database errors
+            logger.exception("Failed to persist local user")
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Unable to persist local user"},
+            )
+
+        request.state.user = auth_user
+        request.state.db_user = db_user
+        return await call_next(request)

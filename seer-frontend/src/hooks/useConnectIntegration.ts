@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useUser } from '@clerk/clerk-react';
+import { useCurrentUser } from '@/hooks/useAuthProvider';
 
 import { initiateConnection } from '@/lib/api-client';
 import { IntegrationType, formatScopes } from '@/lib/integrations/client';
@@ -12,7 +12,7 @@ import {
 import { useToolingData } from './useToolingData';
 
 export function useConnectIntegration() {
-  const { user } = useUser();
+  const { user } = useCurrentUser();
   const userEmail = user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null;
   const { tools, integrationProviderMap, integrationScopesMap } = useToolingData();
 

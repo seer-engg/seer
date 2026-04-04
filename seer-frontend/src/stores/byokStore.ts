@@ -1,4 +1,6 @@
 import { byokApi, type LLMApiKey, type LLMProvider, type TestConnectionResult } from "@/lib/byok-api";
+import { queryClient } from "@/lib/query-client";
+import { modelKeys } from "@/lib/query-keys";
 import { createStore } from "./createStore";
 
 export interface BYOKState {
@@ -30,12 +32,14 @@ export const useBYOKStore = createStore<BYOKState>((set) => ({
     await byokApi.addKey(label, apiKey, provider, baseUrl);
     const keys = await byokApi.listKeys();
     set({ keys });
+    queryClient.invalidateQueries({ queryKey: modelKeys.all });
   },
 
   deleteKey: async (keyId) => {
     await byokApi.deleteKey(keyId);
     const keys = await byokApi.listKeys();
     set({ keys });
+    queryClient.invalidateQueries({ queryKey: modelKeys.all });
   },
 
   testConnection: async (apiKey, baseUrl) => {

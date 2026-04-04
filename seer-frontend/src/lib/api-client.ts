@@ -147,7 +147,7 @@ export const getBackendBaseUrl = (): string => {
       return storedUrl;
     }
   }
-  
+
   const defaultUrl = getDefaultBackendBaseUrl();
 
   if (!import.meta.env.VITE_BACKEND_API_URL && defaultUrl === FALLBACK_BACKEND_URL && typeof window !== "undefined") {
@@ -161,6 +161,10 @@ export const getBackendBaseUrl = (): string => {
 };
 
 const defaultTokenProvider: TokenProvider = async () => {
+  // In local auth mode, no token is needed — backend accepts unauthenticated requests
+  const { isLocalAuth } = await import("@/hooks/useAuthProvider");
+  if (isLocalAuth()) return null;
+
   if (typeof window === "undefined") return null;
   const clerk = (window as WindowWithClerk).Clerk;
   if (!clerk?.session?.getToken) return null;
@@ -199,8 +203,8 @@ export class BackendAPIClient {
 
   constructor(options: BackendAPIClientOptions) {
     // Support both static URL and dynamic getter function
-    this.baseUrl = typeof options.baseUrl === "function" 
-      ? options.baseUrl 
+    this.baseUrl = typeof options.baseUrl === "function"
+      ? options.baseUrl
       : ensureAbsoluteUrl(options.baseUrl);
     this.tokenProvider = options.tokenProvider;
   }
@@ -209,8 +213,8 @@ export class BackendAPIClient {
    * Gets the current base URL, resolving it dynamically if it's a function
    */
   private getBaseUrl(): string {
-    return typeof this.baseUrl === "function" 
-      ? this.baseUrl() 
+    return typeof this.baseUrl === "function"
+      ? this.baseUrl()
       : this.baseUrl;
   }
 
@@ -642,7 +646,7 @@ export async function getToolStatusForConnection(
  * Builds OAuth redirect URL with JWT token for authentication.
  * OAuth flows require browser navigation (not fetch) because the backend
  * redirects to the OAuth provider, which doesn't allow cross-origin requests.
- * 
+ *
  * The caller should navigate using: window.location.href = response.redirectUrl
  */
 export async function initiateConnection(params: {

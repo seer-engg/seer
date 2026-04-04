@@ -20,7 +20,7 @@ import {
 import { LayoutDashboard, LayoutTemplate, Settings, PanelLeftOpen, FileText, Zap, Database, MessageSquare, Globe, Moon, Sun, Monitor, Building2, User, SmilePlus, Video } from 'lucide-react';
 import { SHOW_MEETINGS } from '@/lib/feature-flags';
 import { useTheme } from 'next-themes';
-import { useUser } from '@clerk/clerk-react';
+import { useCurrentUser } from '@/hooks/useAuthProvider';
 import { SeerLogo } from '@/components/icons/seer-logo';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { useOrganizationStore } from '@/stores/organizationStore';
@@ -112,7 +112,7 @@ const navItems = [
 ];
 
 function CollapsedOrgIcon({ onClick, onMouseEnter, onMouseLeave, showExpandIcon }: { onClick: () => void; onMouseEnter: () => void; onMouseLeave: () => void; showExpandIcon: boolean }) {
-  const { user } = useUser();
+  const { user } = useCurrentUser();
   const currentOrganization = useOrganizationStore((s) => s.currentOrganization);
 
   if (showExpandIcon) {

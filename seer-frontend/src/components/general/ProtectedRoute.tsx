@@ -1,4 +1,4 @@
-import { useAuth, RedirectToSignIn } from "@clerk/clerk-react";
+import { RedirectToSignIn } from "@clerk/clerk-react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useEffect } from "react";
@@ -8,6 +8,7 @@ import { clearSignupSource } from "../../utils/utm-tracker";
 import { backendApiClient } from "@/lib/api-client";
 import { userKeys } from "@/lib/query-keys";
 import type { UserSettingsResponse } from "@/types/user";
+import { useAuthStatus, isLocalAuth } from "@/hooks/useAuthProvider";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -44,7 +45,7 @@ function getOnboardingRedirect(
 }
 
 const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAuthStatus();
   const location = useLocation();
   const navigate = useNavigate();
 

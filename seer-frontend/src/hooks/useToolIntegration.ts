@@ -8,7 +8,7 @@
  * When connectionId is provided, fetches status for that specific OAuth connection.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useUser } from '@clerk/clerk-react';
+import { useCurrentUser } from '@/hooks/useAuthProvider';
 import { getToolStatusForConnection, type SingleToolStatusResponse } from '@/lib/api-client';
 import type { ToolIntegrationStatus } from '@/stores/toolsStore';
 import { useConnectIntegration } from './useConnectIntegration';
@@ -26,7 +26,7 @@ export function useToolIntegration(
   toolName: string,
   connectionId?: number | null,
 ): UseToolIntegrationResult {
-  const { user } = useUser();
+  const { user } = useCurrentUser();
   const userEmail = user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null;
 
   // FIXED: Individual selectors instead of useShallow

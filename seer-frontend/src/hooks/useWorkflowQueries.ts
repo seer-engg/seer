@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuthStatus } from '@/hooks/useAuthProvider';
 import { useQuery } from '@tanstack/react-query';
 
 import { workflowKeys } from '@/lib/query-keys';
@@ -13,7 +13,7 @@ import {
 } from '@/lib/workflows-api';
 
 function useWorkflowQueryEnabled() {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAuthStatus();
   return isLoaded && isSignedIn;
 }
 

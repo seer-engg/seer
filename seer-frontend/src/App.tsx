@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { ThemeProvider } from "next-themes";
 import { AnimatePresence } from "framer-motion";
 import Settings from "./pages/Settings";
@@ -28,8 +28,9 @@ import EmbedWorkflow from "./pages/EmbedWorkflow";
 import InvitationAccept from "./pages/InvitationAccept";
 import { BillingSettings } from "./pages/settings/BillingSettings";
 import './App.css'
-import { SignIn, SignUp, useClerk } from "@clerk/clerk-react";
+import { SignIn, SignUp } from "@clerk/clerk-react";
 import { getStoredSignupSource } from "./utils/utm-tracker";
+import { useSignOut, isLocalAuth } from "@/hooks/useAuthProvider";
 import { KeyboardShortcutProvider } from "@/hooks/utility/useKeyboardShortcuts";
 import { StoreInitializer } from "@/components/general/StoreInitializer";
 import { PaymentRequiredModal } from "@/components/error/PaymentRequiredModal";
@@ -41,8 +42,14 @@ import { OrgCollaborationProvider } from "@/components/general/OrgCollaborationP
 import { queryClient } from "@/lib/query-client";
 
 function SignOutPage() {
-  const { signOut } = useClerk();
-  useEffect(() => { signOut({ redirectUrl: "/sign-in" }); }, [signOut]);
+  const signOut = useSignOut();
+  useEffect(() => {
+    if (isLocalAuth()) {
+      window.location.href = "/";
+    } else {
+      (signOut as any)({ redirectUrl: "/sign-in" });
+    }
+  }, [signOut]);
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
       <p className="text-muted-foreground">Signing out...</p>
@@ -72,7 +79,7 @@ function AnimatedRoutes() {
   return (
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.pathname}>
-        
+
         <Route
           path="/"
           element={
@@ -177,22 +184,26 @@ function AnimatedRoutes() {
         <Route
           path="/sign-in/*"
           element={
-            <div className="min-h-screen flex items-center justify-center bg-background p-4">
-              <SignIn routing="path" path="/sign-in" />
-            </div>
+            isLocalAuth() ? <Navigate to="/" replace /> : (
+              <div className="min-h-screen flex items-center justify-center bg-background p-4">
+                <SignIn routing="path" path="/sign-in" />
+              </div>
+            )
           }
         />
-        <Route path="/sign-out" element={<SignOutPage />} />
+        <Route path="/sign-out" element={isLocalAuth() ? <Navigate to="/" replace /> : <SignOutPage />} />
         <Route
           path="/sign-up/*"
           element={
-            <div className="min-h-screen flex items-center justify-center bg-background p-4">
-              <SignUp
-                routing="path"
-                path="/sign-up"
-                afterSignUpUrl={`/onboarding?signup_source=${getStoredSignupSource() || 'Direct'}`}
-              />
-            </div>
+            isLocalAuth() ? <Navigate to="/" replace /> : (
+              <div className="min-h-screen flex items-center justify-center bg-background p-4">
+                <SignUp
+                  routing="path"
+                  path="/sign-up"
+                  afterSignUpUrl={`/onboarding?signup_source=${getStoredSignupSource() || 'Direct'}`}
+                />
+              </div>
+            )
           }
         />
         <Route

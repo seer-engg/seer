@@ -6,6 +6,7 @@ from typing import Iterable, Optional, Set
 # Paths that should always be accessible without authentication/usage checks.
 DEFAULT_PUBLIC_PATHS = {
     "/health",
+    "/api/auth/config",
     "/api/subscriptions/webhooks/stripe",
     "/api/integrations/google/callback",
     "/api/integrations/github/callback",

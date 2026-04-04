@@ -4,7 +4,7 @@
  * Syncs user identification with Clerk authentication
  */
 import { useEffect } from 'react'
-import { useAuth, useUser } from '@clerk/clerk-react'
+import { useAuthStatus, useCurrentUser } from '@/hooks/useAuthProvider'
 import { initGoogleAnalytics, setUserId, setUserProperties } from '@/lib/google-analytics'
 
 interface GoogleAnalyticsProviderProps {
@@ -12,8 +12,8 @@ interface GoogleAnalyticsProviderProps {
 }
 
 export const GoogleAnalyticsProvider = ({ children }: GoogleAnalyticsProviderProps) => {
-  const { isSignedIn, isLoaded } = useAuth()
-  const { user } = useUser()
+  const { isSignedIn, isLoaded } = useAuthStatus()
+  const { user } = useCurrentUser()
 
   // Initialize Google Analytics once on mount
   useEffect(() => {

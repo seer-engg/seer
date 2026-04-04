@@ -7,7 +7,8 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { useUser, SignIn } from '@clerk/clerk-react';
+import { SignIn } from '@clerk/clerk-react';
+import { useCurrentUser } from '@/hooks/useAuthProvider';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -25,7 +26,7 @@ type PageState = 'loading' | 'show_invitation' | 'need_auth' | 'accepting' | 'ac
 export default function InvitationAccept() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
-  const { isSignedIn, isLoaded: isUserLoaded } = useUser();
+  const { isSignedIn, isLoaded: isUserLoaded } = useCurrentUser();
 
   const [pageState, setPageState] = useState<PageState>('loading');
   const [invitation, setInvitation] = useState<InvitationDetailsResponse | null>(null);

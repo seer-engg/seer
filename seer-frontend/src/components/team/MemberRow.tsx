@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react';
-import { useUser } from '@clerk/clerk-react';
+import { useCurrentUser } from '@/hooks/useAuthProvider';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
@@ -41,7 +41,7 @@ interface MemberRowProps {
 
 /* eslint-disable max-lines-per-function */
 export function MemberRow({ member, canManage, currentUserRole }: MemberRowProps) {
-  const { user } = useUser();
+  const { user } = useCurrentUser();
   const [isUpdating, setIsUpdating] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [showRemoveDialog, setShowRemoveDialog] = useState(false);

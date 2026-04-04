@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuthStatus } from '@/hooks/useAuthProvider';
 import { useQuery } from '@tanstack/react-query';
 
 import type { FunctionBlockSchema } from '@/components/workflows/types';
@@ -9,7 +9,7 @@ import { listFunctionBlocks } from '@/lib/tools-api';
 const EMPTY_FUNCTION_BLOCKS: FunctionBlockSchema[] = [];
 
 export function useFunctionBlocksQuery() {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAuthStatus();
   const query = useQuery<FunctionBlockSchema[]>({
     queryKey: toolKeys.functionBlocks(),
     queryFn: listFunctionBlocks,

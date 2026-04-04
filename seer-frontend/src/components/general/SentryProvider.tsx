@@ -5,7 +5,7 @@
  * Sets Sentry user context on sign-in and clears on sign-out.
  */
 import { useEffect } from 'react';
-import { useAuth, useUser } from '@clerk/clerk-react';
+import { useAuthStatus, useCurrentUser } from '@/hooks/useAuthProvider';
 import { Sentry } from '@/lib/sentry';
 
 interface SentryProviderProps {
@@ -13,8 +13,8 @@ interface SentryProviderProps {
 }
 
 export const SentryProvider = ({ children }: SentryProviderProps) => {
-  const { isSignedIn, isLoaded } = useAuth();
-  const { user } = useUser();
+  const { isSignedIn, isLoaded } = useAuthStatus();
+  const { user } = useCurrentUser();
 
   // Handle user identification
   useEffect(() => {

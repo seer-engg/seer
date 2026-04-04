@@ -6,7 +6,7 @@
  * https://clerk.com/blog/posthog-events-with-clerk
  */
 import { useEffect } from 'react'
-import { useAuth, useUser } from '@clerk/clerk-react'
+import { useAuthStatus, useCurrentUser } from '@/hooks/useAuthProvider'
 import { posthog, initPostHog } from '@/lib/posthog'
 
 interface PostHogProviderProps {
@@ -14,8 +14,8 @@ interface PostHogProviderProps {
 }
 
 export const PostHogProvider = ({ children }: PostHogProviderProps) => {
-  const { isSignedIn, isLoaded } = useAuth()
-  const { user } = useUser()
+  const { isSignedIn, isLoaded } = useAuthStatus()
+  const { user } = useCurrentUser()
 
   // Initialize PostHog once on mount
   useEffect(() => {

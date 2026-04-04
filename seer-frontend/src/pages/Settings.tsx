@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { useUser } from "@clerk/clerk-react";
+import { useCurrentUser } from "@/hooks/useAuthProvider";
 import { useQueryState } from "@/hooks/utility/useQueryState";
 import { ProfileCard, BackendUrlCard, LogoutCard } from "@/components/settings/SettingsCards";
 import { GroupedConnectionsCard } from "@/components/settings/GroupedConnectionsCard";
@@ -111,7 +111,7 @@ function CreateTeamPrompt() {
 
 /* eslint-disable max-lines-per-function */
 export default function Settings() {
-  const { user } = useUser();
+  const { user } = useCurrentUser();
   const [activeTab, setActiveTab] = useQueryState("tab", { defaultValue: "profile" });
   const currentOrganization = useOrganizationStore((s) => s.currentOrganization);
   const isSwitchingOrg = useOrganizationStore((s) => s.isSwitching);
@@ -208,7 +208,7 @@ export default function Settings() {
                 <MemoryCard />
               </motion.div>
             </TabsContent>
-           
+
 
             <TabsContent value="variables" className="mt-0">
               <motion.div key="variables" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="space-y-6">

@@ -1,4 +1,4 @@
-import { useAuth } from '@clerk/clerk-react';
+import { useAuthStatus } from '@/hooks/useAuthProvider';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -119,7 +119,7 @@ async function processOrgSseResponse(
 }
 
 export function OrgCollaborationProvider() {
-  const { isLoaded, isSignedIn, userId } = useAuth();
+  const { isLoaded, isSignedIn, userId } = useAuthStatus();
   const currentOrganization = useOrganizationStore((state) => state.currentOrganization);
   const selectedWorkflowId = useWorkflowStore((state) => state.selectedWorkflowId);
   const clearCollaborationState = useWorkflowCollaborationStore((state) => state.clearAll);

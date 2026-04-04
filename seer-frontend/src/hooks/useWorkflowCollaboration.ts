@@ -1,4 +1,4 @@
-import { useAuth } from '@clerk/clerk-react';
+import { useAuthStatus } from '@/hooks/useAuthProvider';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import {
@@ -34,7 +34,7 @@ function isLockHeldByTab(
 }
 
 export function useWorkflowCollaboration(workflowId: string | null | undefined) {
-  const { isLoaded, isSignedIn, userId } = useAuth();
+  const { isLoaded, isSignedIn, userId } = useAuthStatus();
   const tabId = useMemo(() => getOrgCollaborationTabId(), []);
   const isAcquiringRef = useRef(false);
 

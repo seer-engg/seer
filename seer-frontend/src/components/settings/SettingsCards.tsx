@@ -21,7 +21,7 @@ import {
   setStoredBackendBaseUrl,
 } from "@/lib/api-client";
 import type { User } from "@clerk/clerk-react";
-import { useClerk } from "@clerk/clerk-react";
+import { useSignOut } from "@/hooks/useAuthProvider";
 
 type BackendSource = "query-param" | "custom" | "default";
 
@@ -279,7 +279,7 @@ export function ConnectionsCard({
 }
 
 export function LogoutCard() {
-  const { signOut } = useClerk();
+  const signOut = useSignOut();
   const { toast } = useToast();
 
   const handleSignOut = async () => {

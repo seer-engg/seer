@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import { getToolAccounts, initiateConnection, type ToolAccountInfo, type ToolAccountsResponse } from '@/lib/api-client';
 import type { ClarificationQuestion } from '@/types/discovery';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuthStatus } from '@/hooks/useAuthProvider';
 
 export interface AccountPickerQuestionProps {
   question: ClarificationQuestion;
@@ -124,7 +124,7 @@ export function AccountPickerQuestion({
   isLoading = false,
 }: AccountPickerQuestionProps) {
   const [open, setOpen] = useState(false);
-  const { userId } = useAuth();
+  const { userId } = useAuthStatus();
   const toolName = question.tool_name;
   const { loading, refreshing, accountsData, fetchError, refresh, handleConnectAccount } = useAccountPicker(toolName, userId, value, onChange);
 

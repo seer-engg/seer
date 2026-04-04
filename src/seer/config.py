@@ -123,17 +123,22 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
 
 
     # ============================================================================
-    # Clerk Authentication Configuration
+    # Authentication Configuration
     # ============================================================================
 
+    auth_provider: str = Field(
+        default="clerk",
+        description="Auth provider: 'clerk' for cloud/Clerk auth, 'local' for self-hosted (no login)"
+    )
+
     clerk_jwks_url: Optional[str] = Field(
-        default=None, description="Clerk JWKS URL for JWT verification"
+        default=None, description="Clerk JWKS URL for JWT verification (required when auth_provider=clerk)"
     )
     clerk_issuer: Optional[str] = Field(
-        default=None, description="Clerk JWT issuer (e.g., https://clerk.your-domain.com)"
+        default=None, description="Clerk JWT issuer (required when auth_provider=clerk)"
     )
     clerk_audience: Optional[str] = Field(
-        default=None, description="Clerk JWT audience (e.g., ['api.your-domain.com'])"
+        default=None, description="Clerk JWT audience (optional, used with auth_provider=clerk)"
     )
 
 

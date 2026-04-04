@@ -1,4 +1,4 @@
-import { useAuth } from '@clerk/clerk-react';
+import { useAuthStatus } from '@/hooks/useAuthProvider';
 import { useQuery } from '@tanstack/react-query';
 
 import { toolKeys } from '@/lib/query-keys';
@@ -9,7 +9,7 @@ import { SHOW_MEETINGS } from '@/lib/feature-flags';
 const HIDDEN_TOOL_PREFIXES = SHOW_MEETINGS ? [] : ['meetings_ea_'];
 
 export function useToolCatalogQuery() {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAuthStatus();
 
   return useQuery<ToolMetadata[]>({
     queryKey: toolKeys.catalog(),

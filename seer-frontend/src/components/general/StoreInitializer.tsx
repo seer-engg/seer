@@ -8,13 +8,13 @@
  * to ensure bearer token is available for API requests.
  */
 import { useEffect } from 'react';
-import { useUser } from '@clerk/clerk-react';
+import { useCurrentUser } from '@/hooks/useAuthProvider';
 import { useIntegrationMetadataStore } from '@/stores/integrationMetadataStore';
 import { useOrganizationStore } from '@/stores/organizationStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 export function StoreInitializer() {
-  const { user, isLoaded } = useUser();
+  const { user, isLoaded } = useCurrentUser();
   const isAuthenticated = isLoaded && !!user;
 
   // Initialize integration metadata store (requires auth - wait for Clerk)

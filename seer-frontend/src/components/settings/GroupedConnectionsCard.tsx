@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useUser } from '@clerk/clerk-react';
+import { useCurrentUser } from '@/hooks/useAuthProvider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -232,7 +232,7 @@ function CardContentArea({ isLoading, error, providers, data, deletingId, onDele
 
 export function GroupedConnectionsCard() {
   const { toast } = useToast();
-  const { user } = useUser();
+  const { user } = useCurrentUser();
   const queryClient = useQueryClient();
 
   const [deletingId, setDeletingId] = useState<number | null>(null);

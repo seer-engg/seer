@@ -7,7 +7,7 @@
 
 import { useState, forwardRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useUser } from '@clerk/clerk-react';
+import { useCurrentUser } from '@/hooks/useAuthProvider';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -76,7 +76,7 @@ interface Organization {
 
 export function OrganizationSwitcher() {
   const navigate = useNavigate();
-  const { user } = useUser();
+  const { user } = useCurrentUser();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
   const organizations = useOrganizationStore((s) => s.organizations);

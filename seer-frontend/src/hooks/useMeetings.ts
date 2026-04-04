@@ -1,10 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { useAuth } from '@clerk/clerk-react';
+import { useAuthStatus } from '@/hooks/useAuthProvider';
 import { meetingsApi } from '@/lib/meetings-api';
 import { meetingKeys } from '@/lib/query-keys';
 
 function useQueryEnabled() {
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAuthStatus();
   return isLoaded && isSignedIn;
 }
 
