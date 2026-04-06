@@ -21,7 +21,7 @@ from browser_use import BrowserSession
 
 from seer.config import config
 from seer.logger import get_logger
-from seer.services.browser.stealth_config import get_remote_profile_kwargs
+from seer.services.browser.stealth_config import get_local_profile_kwargs, get_remote_profile_kwargs
 
 logger = get_logger(__name__)
 
@@ -186,7 +186,15 @@ class BrowserPoolManager:
         cdp_url = config.browserless_cdp_url
 
         try:
-            profile_kwargs = get_remote_profile_kwargs()
+            if cdp_url:
+                profile_kwargs = get_remote_profile_kwargs()
+                logger.info(f"Connecting to remote Browserless at {config.browserless_url}")
+            else:
+                profile_kwargs = get_local_profile_kwargs()
+                logger.info(
+                    "No Browserless URL configured \u2014 launching local browser"
+                    " (executable_path=%s)", profile_kwargs.get("executable_path"),
+                )
             profile_kwargs["keep_alive"] = True
 
             if storage_state:
@@ -195,7 +203,6 @@ class BrowserPoolManager:
 
             browser_profile = BrowserUseProfile(**profile_kwargs)
 
-            logger.info(f"Connecting to remote Browserless at {config.browserless_url}")
             browser_session = BrowserSession(
                 cdp_url=cdp_url,
                 browser_profile=browser_profile,
