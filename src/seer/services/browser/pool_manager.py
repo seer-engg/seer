@@ -179,11 +179,17 @@ class BrowserPoolManager:
         Returns:
             ManagedSession with started browser session
         """
+        cdp_url = config.browserless_cdp_url
+        if not cdp_url:
+            raise RuntimeError(
+                "Browser automation requires a Browserless service. "
+                "BROWSERLESS_URL is not configured — set it in SSM or environment variables."
+            )
+
         await self._semaphore.acquire()
 
         session_id = str(uuid4())
         effective_timeout = timeout or config.browser_pool_default_timeout_seconds
-        cdp_url = config.browserless_cdp_url
 
         try:
             profile_kwargs = get_remote_profile_kwargs()
