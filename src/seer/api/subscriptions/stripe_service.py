@@ -130,11 +130,15 @@ def _maybe_fetch_subscription(stripe_subscription: Union[dict, str, stripe.Subsc
     needs_fetch = isinstance(stripe_subscription, str)
     if not needs_fetch and hasattr(stripe_subscription, "get"):
         items = stripe_subscription.get("items", {}).get("data", [])
-        missing_periods = (
-            stripe_subscription.get("current_period_start") is None
-            or stripe_subscription.get("current_period_end") is None
+        # Period dates may be at top level or on items (newer Stripe API versions).
+        has_periods_top = (
+            stripe_subscription.get("current_period_start") is not None
+            and stripe_subscription.get("current_period_end") is not None
         )
-        needs_fetch = missing_periods or not items
+        has_periods_item = bool(
+            items and items[0].get("current_period_start") is not None
+        )
+        needs_fetch = (not has_periods_top and not has_periods_item) or not items
 
     if needs_fetch and subscription_id:
         try:
@@ -221,6 +225,15 @@ def _update_subscription_fields(
 
     current_period_start_ts = stripe_obj.get("current_period_start")
     current_period_end_ts = stripe_obj.get("current_period_end")
+
+    # Newer Stripe API versions moved period dates to subscription items.
+    # Fall back to the first item's period dates when top-level fields are absent.
+    if current_period_start_ts is None or current_period_end_ts is None:
+        items = stripe_obj.get("items", {}).get("data", [])
+        if items:
+            first_item = items[0]
+            current_period_start_ts = current_period_start_ts or first_item.get("current_period_start")
+            current_period_end_ts = current_period_end_ts or first_item.get("current_period_end")
 
     if current_period_start_ts is not None:
         subscription.current_period_start = _timestamp_to_datetime(current_period_start_ts)
