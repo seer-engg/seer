@@ -9,7 +9,6 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-
     "utm": "node scripts/generate-utm-links.js",
     "test": "vitest",
     "test:ui": "vitest --ui",
@@ -146,7 +145,11 @@
   },
   "lint-staged": {
     "*.{ts,tsx}": [
-      "eslint --max-warnings=0"
+      "eslint --max-warnings=0",
+      "prettier --write"
+    ],
+    "*.{css,json,md,html}": [
+      "prettier --write"
     ]
   }
 }
