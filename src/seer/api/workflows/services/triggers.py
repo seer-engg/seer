@@ -973,6 +973,22 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
             if not skip_validation and trigger_spec.key == "webhook.supabase.db_changes" and webhook_slug:
                 await _create_supabase_webhook(subscription)
 
+    # Safety net: ensure every webhook trigger subscription has a slug.
+    # If the upsert path somehow produced a NULL slug (e.g. after a DB column reset),
+    # force-regenerate here so publish never ships a dead subscription.
+    for trigger_spec in spec.triggers or []:
+        if _should_emit_webhook_url(trigger_spec.key):
+            sub = await TriggerSubscription.filter(
+                workflow=workflow, trigger_id=trigger_spec.id
+            ).first()
+            if sub and not sub.webhook_slug:
+                logger.error(
+                    "webhook subscription missing slug after sync — forcing regeneration",
+                    extra={"subscription_id": sub.id, "trigger_key": trigger_spec.key},
+                )
+                sub.webhook_slug = _generate_webhook_slug()
+                await sub.save(update_fields=["webhook_slug"])
+
 
 async def _provision_form_listening(
     user: User,
