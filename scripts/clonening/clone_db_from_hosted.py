@@ -10,7 +10,7 @@ Both can be overridden with explicit CLI flags.
 Usage:
     uv run scripts/clone_db_from_hosted.py --source-env dev
     uv run scripts/clone_db_from_hosted.py --source-env main --dry-run
-    uv run scripts/clone_db_from_hosted.py --source-env dev --drop-existing --yes
+    uv run scripts/clonening/clone_db_from_hosted.py --source-env main --drop-existing --yes
 
     # Override URLs directly instead of using SSM / .env
     uv run scripts/clone_db_from_hosted.py \\
@@ -390,8 +390,8 @@ def main(args: argparse.Namespace) -> int:
     print(f"\n{'=' * 70}")
     print("DATABASE CLONE CONFIGURATION")
     print(f"{'=' * 70}")
-    print(f"Source:      {source_conn.display_safe()}")
-    print(f"Destination: {local_conn.display_safe()}")
+    print(f"Source:      {source_url}")
+    print(f"Destination: {local_url}")
     print(f"Source env:  {args.source_env}")
     if exclude_tables:
         print(f"Excluded:    {', '.join(exclude_tables)}")
