@@ -28,6 +28,8 @@ services:
 
   browserless:
     image: ghcr.io/browserless/chromium
+    profiles:
+      - browserless
     ports:
       - "${BROWSERLESS_PORT:-3000}:3000"
     environment:
@@ -72,8 +74,6 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
-      browserless:
-        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -85,7 +85,7 @@ services:
       # MLFLOW_TRACKING_URI: "http://mlflow:5000"
       # MLFLOW_EXPERIMENT_NAME: "seer-workflow-agent"
       # MLFLOW_ENABLED: "${MLFLOW_ENABLED:-true}"
-      BROWSERLESS_URL: "ws://browserless:3000"
+      BROWSERLESS_URL: "${BROWSERLESS_URL:-ws://browserless:3000}"
       BROWSERLESS_TOKEN: "${BROWSERLESS_TOKEN:-}"
       FRONTEND_URL: "${FRONTEND_URL:-http://localhost:${FRONTEND_PORT:-5173}}"
       BACKEND_API_URL: "${BACKEND_API_URL:-localhost:${API_PORT:-8000}}"
@@ -126,8 +126,6 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
-      browserless:
-        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -136,7 +134,7 @@ services:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-seer}"
       REDIS_URL: "redis://valkey:6379/0"
       UV_LINK_MODE: "copy"
-      BROWSERLESS_URL: "ws://browserless:3000"
+      BROWSERLESS_URL: "${BROWSERLESS_URL:-ws://browserless:3000}"
       BROWSERLESS_TOKEN: "${BROWSERLESS_TOKEN:-}"
       # MLFLOW_TRACKING_URI: "http://mlflow:5000"
       # MLFLOW_EXPERIMENT_NAME: "seer-worker"

@@ -41,7 +41,9 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^seer-frontend/
       - id: end-of-file-fixer
+        exclude: ^seer-frontend/
       - id: check-yaml
       - id: check-added-large-files
         args: ['--maxkb=1000']
@@ -62,3 +64,13 @@ repos:
         entry: .pylintrc is forbidden - use pyproject.toml for pylint config
         language: fail
         files: ^\.pylintrc$
+
+  # Frontend linting via lint-staged (ESLint + Prettier)
+  - repo: local
+    hooks:
+      - id: frontend-lint-staged
+        name: Frontend lint-staged (ESLint + Prettier)
+        entry: bash -c 'cd seer-frontend && PATH="./node_modules/.bin:$PATH" npx lint-staged'
+        language: system
+        files: ^seer-frontend/.*\.(ts|tsx|css|json|md|html)$
+        pass_filenames: false
