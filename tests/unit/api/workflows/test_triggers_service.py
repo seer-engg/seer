@@ -6,8 +6,8 @@ Heavy mock tests for DB operations have been moved to E2E tests.
 """
 # pylint: disable=redefined-outer-name
 # Reason: pytest fixture pattern requires name reuse
-from datetime import datetime
-from unittest.mock import MagicMock, patch
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -607,7 +607,8 @@ class TestApplySubscriptionUpdatesReenableCursorReset:
 
     def test_reenable_polling_subscription_resets_cursor(self):
         """Re-enabling a disabled polling subscription should clear poll_cursor_json
-        to force bootstrap_cursor() on next poll, preventing catchup storms."""
+        to force bootstrap_cursor() on next poll, preventing catchup storms.
+        next_poll_at must be set to current time (not None) to satisfy NOT NULL constraint."""
         from seer.api.workflows.services.triggers import _apply_subscription_updates
 
         subscription = MagicMock()
@@ -615,6 +616,8 @@ class TestApplySubscriptionUpdatesReenableCursorReset:
         subscription.is_polling = True
         subscription.poll_cursor_json = {"last_execution_utc": "2026-03-27T18:30:00+00:00"}
         subscription.next_poll_at = datetime(2026, 3, 27, 18, 45)
+        subscription.poll_status = "disabled"
+        subscription.poll_error_json = {"reason": "oauth_error"}
         subscription.trigger_key = "schedule.cron"
 
         payload = MagicMock()
@@ -628,7 +631,11 @@ class TestApplySubscriptionUpdatesReenableCursorReset:
         _apply_subscription_updates(subscription, payload, definition)
 
         assert subscription.poll_cursor_json is None
-        assert subscription.next_poll_at is None
+        # next_poll_at must never be None (NOT NULL column) — should be reset to ~now
+        assert subscription.next_poll_at is not None
+        assert isinstance(subscription.next_poll_at, datetime)
+        assert subscription.poll_status == "ok"
+        assert subscription.poll_error_json is None
         assert subscription.enabled is True
 
     def test_reenable_non_polling_subscription_preserves_cursor(self):
@@ -702,3 +709,89 @@ class TestApplySubscriptionUpdatesReenableCursorReset:
 
         # Cursor should be preserved — subscription was already enabled
         assert subscription.poll_cursor_json == original_cursor
+
+
+class TestUpdateExistingSubscriptionReenableCursorReset:
+    """Tests for _update_existing_subscription cursor/status reset when re-enabling."""
+
+    async def test_reenable_disabled_polling_subscription_resets_state(self):
+        """Re-enabling a disabled polling subscription via sync should reset cursor,
+        next_poll_at (to non-None), poll_status, and poll_error_json."""
+        from seer.api.workflows.services.triggers import _update_existing_subscription
+
+        subscription = MagicMock()
+        subscription.enabled = False
+        subscription.is_polling = True
+        subscription.poll_cursor_json = {"last_execution_utc": "2026-03-27T18:30:00+00:00"}
+        subscription.next_poll_at = datetime(2026, 3, 27, 18, 45, tzinfo=timezone.utc)
+        subscription.poll_status = "disabled"
+        subscription.poll_error_json = {"reason": "adapter_permanent_error", "detail": {"status": 403}}
+        subscription.trigger_key = "poll.gmail.email_received"
+        subscription.webhook_slug = None
+        subscription.provider_connection_id = "conn-1"
+        subscription.form_suffix = None
+        subscription.save = AsyncMock()
+
+        trigger_spec = MagicMock()
+        trigger_spec.key = "poll.gmail.email_received"
+        trigger_spec.filters = {}
+        trigger_spec.provider_config = {"provider_connection_id": "conn-1"}
+
+        definition = MagicMock()
+        definition.title = "Gmail Trigger"
+
+        await _update_existing_subscription(
+            subscription,
+            trigger_spec,
+            definition,
+            webhook_slug=None,
+            adjusted_interval=60,
+            skip_validation=True,
+        )
+
+        assert subscription.poll_cursor_json is None
+        assert subscription.next_poll_at is not None
+        assert isinstance(subscription.next_poll_at, datetime)
+        assert subscription.poll_status == "ok"
+        assert subscription.poll_error_json is None
+        assert subscription.enabled is True
+        subscription.save.assert_awaited_once()
+
+    async def test_already_enabled_subscription_preserves_poll_state(self):
+        """Syncing an already-enabled subscription should NOT reset cursor or poll_status."""
+        from seer.api.workflows.services.triggers import _update_existing_subscription
+
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = True
+        subscription.poll_cursor_json = {"last_execution_utc": "2026-04-07T10:00:00+00:00"}
+        original_next_poll = datetime(2026, 4, 7, 10, 1, tzinfo=timezone.utc)
+        subscription.next_poll_at = original_next_poll
+        subscription.poll_status = "ok"
+        subscription.poll_error_json = None
+        subscription.trigger_key = "poll.gmail.email_received"
+        subscription.webhook_slug = None
+        subscription.provider_connection_id = "conn-1"
+        subscription.form_suffix = None
+        subscription.save = AsyncMock()
+
+        trigger_spec = MagicMock()
+        trigger_spec.key = "poll.gmail.email_received"
+        trigger_spec.filters = {}
+        trigger_spec.provider_config = {"provider_connection_id": "conn-1"}
+
+        definition = MagicMock()
+        definition.title = "Gmail Trigger"
+
+        await _update_existing_subscription(
+            subscription,
+            trigger_spec,
+            definition,
+            webhook_slug=None,
+            adjusted_interval=60,
+            skip_validation=True,
+        )
+
+        # Cursor and poll state should be preserved for already-enabled subscriptions
+        assert subscription.poll_cursor_json == {"last_execution_utc": "2026-04-07T10:00:00+00:00"}
+        assert subscription.poll_status == "ok"

@@ -587,7 +587,9 @@ def _apply_subscription_updates(
         # to prevent catchup storms from stale cursor positions
         if payload.enabled and not subscription.enabled and subscription.is_polling:
             subscription.poll_cursor_json = None
-            subscription.next_poll_at = None
+            subscription.next_poll_at = datetime.now(timezone.utc)
+            subscription.poll_status = "ok"
+            subscription.poll_error_json = None
         subscription.enabled = payload.enabled
     if _should_emit_webhook_url(subscription.trigger_key) and not subscription.webhook_slug:
         subscription.webhook_slug = _generate_webhook_slug()
@@ -827,7 +829,9 @@ async def _update_existing_subscription(
     # to prevent catchup storms from stale cursor positions
     if not subscription.enabled and subscription.is_polling:
         subscription.poll_cursor_json = None
-        subscription.next_poll_at = None
+        subscription.next_poll_at = datetime.now(timezone.utc)
+        subscription.poll_status = "ok"
+        subscription.poll_error_json = None
     subscription.enabled = True
     subscription.filters = filters
     subscription.provider_config = provider_config
