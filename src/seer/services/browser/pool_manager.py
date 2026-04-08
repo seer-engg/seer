@@ -137,23 +137,49 @@ class BrowserPoolManager:
 
         Used when export_storage_state() fails on remote Browserless
         sessions where Playwright context methods may not be available.
+
+        Tries two approaches:
+        1. Direct CDP client (works for CDP-only remote sessions)
+        2. Playwright BrowserContext fallback (works when context exists)
         """
+        # Approach 1: Use the existing CDP client directly.
+        # This works for remote Browserless sessions that were connected
+        # via cdp_url and never have a Playwright BrowserContext.
+        try:
+            cdp_client = browser_session.cdp_client
+            if cdp_client is not None:
+                # Get the target session ID for the current page
+                page = await browser_session.must_get_current_page()
+                # pylint: disable=protected-access
+                # Reason: browser-use stores target_id as private _target_id
+                cdp_session = await browser_session.get_or_create_cdp_session(page._target_id)
+                result = await cdp_client.send_raw(
+                    "Network.getAllCookies",
+                    {},
+                    session_id=cdp_session.session_id,
+                )
+                cookies = result.get("cookies", [])
+                logger.info(f"Exported {len(cookies)} cookies via CDP client fallback")
+                return {"cookies": cookies, "origins": []}
+        except Exception as e:
+            logger.warning(f"CDP client cookie export failed: {e}")
+
+        # Approach 2: Playwright BrowserContext (if available)
         try:
             context = browser_session.browser_context
-            if context is None:
-                return None
-            pages = context.pages
-            if not pages:
-                return None
-            cdp = await pages[0].context.new_cdp_session(pages[0])
-            result = await cdp.send("Network.getAllCookies")
-            cookies = result.get("cookies", [])
-            await cdp.detach()
-            logger.info(f"Exported {len(cookies)} cookies via CDP fallback")
-            return {"cookies": cookies, "origins": []}
+            if context is not None:
+                pages = context.pages
+                if pages:
+                    cdp = await pages[0].context.new_cdp_session(pages[0])
+                    result = await cdp.send("Network.getAllCookies")
+                    cookies = result.get("cookies", [])
+                    await cdp.detach()
+                    logger.info(f"Exported {len(cookies)} cookies via Playwright CDP fallback")
+                    return {"cookies": cookies, "origins": []}
         except Exception as e:
-            logger.warning(f"CDP cookie export failed: {e}")
-            return None
+            logger.warning(f"Playwright CDP cookie export failed: {e}")
+
+        return None
 
     async def create_session(
         self,
