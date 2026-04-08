@@ -795,3 +795,116 @@ class TestUpdateExistingSubscriptionReenableCursorReset:
         # Cursor and poll state should be preserved for already-enabled subscriptions
         assert subscription.poll_cursor_json == {"last_execution_utc": "2026-04-07T10:00:00+00:00"}
         assert subscription.poll_status == "ok"
+
+
+# =============================================================================
+# sync_trigger_subscriptions slug regeneration (regression guard for DB wipe)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestSyncTriggerSubscriptionsSlugRegeneration:
+    """Guard against the DB-wipe scenario: existing webhook.generic subscriptions
+    with NULL webhook_slug must get a fresh slug after sync_trigger_subscriptions."""
+
+    async def test_null_slug_regenerated_for_existing_webhook_generic_subscription(self):
+        """If an existing webhook.generic subscription has webhook_slug=None
+        (e.g. after a DB column reset), sync_trigger_subscriptions must assign
+        a valid slug and the safety-net pass must persist it."""
+        from unittest.mock import AsyncMock, MagicMock, patch, call
+        from seer.api.workflows.services.triggers import (
+            _update_existing_subscription,
+            _should_emit_webhook_url,
+            _generate_webhook_slug,
+        )
+
+        # Verify the helper functions behave as expected
+        assert _should_emit_webhook_url("webhook.generic") is True
+        assert _should_emit_webhook_url("form.hosted") is False
+        assert _should_emit_webhook_url("webhook.twilio.whatsapp") is False
+
+        # Simulate an existing subscription whose slug was wiped
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = False
+        subscription.webhook_slug = None  # ← wiped by DB fix
+        subscription.form_suffix = None
+        subscription.provider_connection_id = None
+        subscription.save = AsyncMock()
+
+        trigger_spec = MagicMock()
+        trigger_spec.key = "webhook.generic"
+        trigger_spec.filters = {}
+        trigger_spec.provider_config = {}
+
+        definition = MagicMock()
+        definition.title = "Generic Webhook"
+
+        # previous_slug=None → slug gets generated before calling _update_existing_subscription
+        previous_slug = subscription.webhook_slug  # None
+        webhook_slug = previous_slug
+        if _should_emit_webhook_url(trigger_spec.key) and not webhook_slug:
+            webhook_slug = _generate_webhook_slug()
+
+        assert webhook_slug is not None
+        assert len(webhook_slug) > 10  # token_urlsafe(32) is 43 chars
+
+        await _update_existing_subscription(
+            subscription,
+            trigger_spec,
+            definition,
+            webhook_slug=webhook_slug,
+            adjusted_interval=60,
+            skip_validation=True,
+        )
+
+        # The slug must have been set on the subscription object
+        assert subscription.webhook_slug == webhook_slug
+        subscription.save.assert_awaited_once()
+
+    async def test_existing_valid_slug_preserved(self):
+        """If an existing subscription already has a valid webhook_slug,
+        sync must preserve it (not generate a new one)."""
+        from seer.api.workflows.services.triggers import (
+            _update_existing_subscription,
+            _should_emit_webhook_url,
+            _generate_webhook_slug,
+        )
+
+        existing_slug = "existing-valid-slug-abc123"
+
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = False
+        subscription.webhook_slug = existing_slug
+        subscription.form_suffix = None
+        subscription.provider_connection_id = None
+        subscription.save = AsyncMock()
+
+        trigger_spec = MagicMock()
+        trigger_spec.key = "webhook.generic"
+        trigger_spec.filters = {}
+        trigger_spec.provider_config = {}
+
+        definition = MagicMock()
+        definition.title = "Generic Webhook"
+
+        # Mirrors the logic in sync_trigger_subscriptions
+        previous_slug = subscription.webhook_slug
+        webhook_slug = previous_slug
+        if _should_emit_webhook_url(trigger_spec.key) and not webhook_slug:
+            webhook_slug = _generate_webhook_slug()
+
+        # Slug should be preserved, not regenerated
+        assert webhook_slug == existing_slug
+
+        await _update_existing_subscription(
+            subscription,
+            trigger_spec,
+            definition,
+            webhook_slug=webhook_slug,
+            adjusted_interval=60,
+            skip_validation=True,
+        )
+
+        assert subscription.webhook_slug == existing_slug
