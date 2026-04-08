@@ -29,7 +29,7 @@ services:
   browserless:
     image: ghcr.io/browserless/chromium
     profiles:
-      - browserless
+      - browser
     ports:
       - "${BROWSERLESS_PORT:-3000}:3000"
     environment:

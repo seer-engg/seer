@@ -21,7 +21,11 @@ from browser_use import BrowserSession
 
 from seer.config import config
 from seer.logger import get_logger
-from seer.services.browser.stealth_config import get_remote_profile_kwargs
+from seer.services.browser.stealth_config import (
+    get_platform_user_agent,
+    get_remote_profile_kwargs,
+    get_stealth_scripts_combined,
+)
 
 logger = get_logger(__name__)
 
@@ -117,6 +121,52 @@ class BrowserPoolManager:
     def get_session(self, session_id: str) -> Optional[ManagedSession]:
         """Look up an active managed session by ID without releasing it."""
         return self._sessions.get(session_id)
+
+    async def _inject_stealth_scripts(self, browser_session: BrowserSession) -> None:
+        """Inject anti-detection stealth scripts and UA override into the browser session.
+
+        - Forces user-agent via CDP Emulation.setUserAgentOverride (Browserless
+          ignores BrowserProfile.user_agent for remote CDP connections).
+        - Uses Page.addScriptToEvaluateOnNewDocument so JS stealth scripts run
+          before any page JS on every navigation.
+        """
+        try:
+            page = await browser_session.must_get_current_page()
+            # pylint: disable=protected-access
+            # Reason: browser-use stores target_id as private _target_id
+            cdp_session = await browser_session.get_or_create_cdp_session(page._target_id)
+            cdp_client = browser_session.cdp_client
+            sid = cdp_session.session_id
+
+            # Override User-Agent at the CDP level — Browserless defaults to
+            # "HeadlessChrome/..." which is an instant detection signal.
+            ua = get_platform_user_agent()
+            await cdp_client.send.Emulation.setUserAgentOverride(
+                params={
+                    "userAgent": ua,
+                    "acceptLanguage": "en-US,en;q=0.9",
+                    "platform": "Linux x86_64",
+                },
+                session_id=sid,
+            )
+
+            stealth_js = get_stealth_scripts_combined()
+
+            # Inject into all future navigations
+            await cdp_client.send.Page.addScriptToEvaluateOnNewDocument(
+                params={"source": stealth_js},
+                session_id=sid,
+            )
+
+            # Inject into current page
+            await cdp_client.send.Runtime.evaluate(
+                params={"expression": stealth_js, "awaitPromise": False},
+                session_id=sid,
+            )
+
+            logger.info("Stealth scripts injected into browser session")
+        except Exception as e:
+            logger.warning(f"Failed to inject stealth scripts: {e}")
 
     async def _apply_cookies_via_cdp(self, browser_session: BrowserSession, cookies: list) -> None:
         """Apply cookies to browser session via CDP.
@@ -227,6 +277,10 @@ class BrowserPoolManager:
                 browser_profile=browser_profile,
             )
             await browser_session.start()
+
+            # Inject stealth scripts before any page interaction
+            if config.browser_stealth_enabled:
+                await self._inject_stealth_scripts(browser_session)
 
             # Apply cookies via CDP after session start
             if storage_state and storage_state.get("cookies"):
