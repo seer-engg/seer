@@ -16,12 +16,22 @@ from io import BytesIO
 from typing import Optional
 
 from PIL import Image
+from websockets.exceptions import ConnectionClosed
 
 from browser_use import BrowserSession
 
 from seer.logger import get_logger
 
 logger = get_logger(__name__)
+
+# WebSocket close codes / error fragments that indicate the CDP connection is dead
+_CDP_DEAD_INDICATORS = (
+    "reserved bits must be 0",
+    "no close frame received",
+    "websocket connection closed",
+    "connection is closed",
+    "client is not started",
+)
 
 
 class StreamingService:
@@ -44,6 +54,8 @@ class StreamingService:
         self._target_session_id: Optional[str] = None
         self._running = False
         self._frame_count = 0
+        # Signalled when the CDP WebSocket is detected as dead
+        self._cdp_dead_event: asyncio.Event = asyncio.Event()
         # Viewport dimensions for coordinate scaling
         self._viewport_width: float = 0
         self._viewport_height: float = 0
@@ -253,6 +265,8 @@ class StreamingService:
             )
         except Exception as e:
             logger.error(f"CDP dispatchMouseEvent failed: {e}")
+            if self._is_connection_error(e):
+                self._mark_cdp_dead(str(e))
 
     async def dispatch_key_event(
         self,
@@ -344,6 +358,8 @@ class StreamingService:
             logger.info(f"CDP Click completed at viewport=({scaled_x:.0f},{scaled_y:.0f})")
         except Exception as e:
             logger.error(f"CDP Click failed: {e}")
+            if self._is_connection_error(e):
+                self._mark_cdp_dead(str(e))
 
     async def dispatch_scroll_event(
         self, x: float, y: float, delta_x: float = 0, delta_y: float = -120
@@ -376,6 +392,8 @@ class StreamingService:
             )
         except Exception as e:
             logger.error(f"CDP scroll event failed: {e}")
+            if self._is_connection_error(e):
+                self._mark_cdp_dead(str(e))
 
     def _on_frame(self, params: dict, session_id: str = None) -> None:  # pylint: disable=unused-argument  # Reason: CDP callback signature requires session_id parameter
         """CDP callback for screencast frames. Decodes and queues frame data."""
@@ -419,11 +437,50 @@ class StreamingService:
                 )
         except Exception as e:
             logger.warning(f"Error processing screencast frame: {e}")
+            if self._is_connection_error(e):
+                self._mark_cdp_dead(str(e))
 
     @property
     def is_running(self) -> bool:
         """Whether screencast is currently active."""
         return self._running
+
+    @property
+    def is_cdp_dead(self) -> bool:
+        """Whether the CDP WebSocket connection has been detected as dead."""
+        return self._cdp_dead_event.is_set()
+
+    async def wait_until_dead(self) -> None:
+        """Block until the CDP connection is detected as dead.
+
+        Used by the streaming loop to know when to stop sending frames
+        and notify the client.
+        """
+        await self._cdp_dead_event.wait()
+
+    def _mark_cdp_dead(self, reason: str) -> None:
+        """Mark the CDP connection as dead and stop the screencast.
+
+        Called when a CDP send operation raises an error that indicates the
+        underlying WebSocket is no longer usable (close-code 1002, connection
+        closed, etc.).  Sets the event so the streaming loop can break out
+        and notify the frontend.
+        """
+        if self._cdp_dead_event.is_set():
+            return  # Already flagged
+        logger.error(f"CDP connection lost: {reason}")
+        self._running = False
+        self._cdp_dead_event.set()
+
+    @staticmethod
+    def _is_connection_error(exc: Exception) -> bool:
+        """Return True if the exception indicates a dead CDP WebSocket."""
+        msg = str(exc).lower()
+        if any(indicator in msg for indicator in _CDP_DEAD_INDICATORS):
+            return True
+        if isinstance(exc, (ConnectionError, ConnectionClosed)):
+            return True
+        return False
 
     @property
     def frame_count(self) -> int:

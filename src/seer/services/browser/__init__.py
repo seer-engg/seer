@@ -1,4 +1,6 @@
 """Browser automation services for workflow execution."""
+import seer.services.browser.cdp_patch  # noqa: F401 — patches CDPClient before any use
+
 from seer.services.browser.browser_service import BrowserService
 from seer.services.browser.encryption import SessionEncryptor
 from seer.services.browser.pool_manager import BrowserPoolManager

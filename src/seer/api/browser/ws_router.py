@@ -135,6 +135,45 @@ async def _dispatch_input_event(
         await _handle_navigate_event(managed, data)
 
 
+async def _send_frames(websocket: WebSocket, streamer: StreamingService) -> None:
+    """Send screencast frames to client. Exits when CDP dies."""
+    while streamer.is_running:
+        frame = await streamer.get_frame(timeout=5.0)
+        if frame is not None:
+            b64_data = base64.b64encode(frame).decode("ascii")
+            await websocket.send_json({
+                "type": "frame",
+                "data": b64_data,
+                "timestamp": time.time(),
+            })
+
+
+async def _receive_input(
+    websocket: WebSocket,
+    streamer: StreamingService,
+    managed: Optional[ManagedSession],
+) -> None:
+    """Receive and dispatch input events from client."""
+    while True:
+        data = await websocket.receive_json()
+        if not streamer.is_running:
+            break
+        await _dispatch_input_event(streamer, managed, data)
+
+
+async def _notify_cdp_dead(websocket: WebSocket, streamer: StreamingService) -> None:
+    """If CDP died, notify the client so the UI can show feedback."""
+    if streamer.is_cdp_dead:
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "code": "cdp_disconnected",
+                "message": "Browser connection lost. Please retry or complete the session.",
+            })
+        except Exception:
+            pass  # Client may already be gone
+
+
 async def _run_streaming_loop(
     websocket: WebSocket,
     streamer: StreamingService,
@@ -144,35 +183,19 @@ async def _run_streaming_loop(
     """Run the bidirectional streaming loop for WebSocket communication.
 
     When managed is None (HITL mode), navigate events are ignored.
+    Terminates when the client disconnects OR the CDP connection dies.
     """
-
-    async def send_frames() -> None:
-        """Send screencast frames to client."""
-        while True:
-            frame = await streamer.get_frame(timeout=5.0)
-            if frame is not None:
-                b64_data = base64.b64encode(frame).decode("ascii")
-                await websocket.send_json({
-                    "type": "frame",
-                    "data": b64_data,
-                    "timestamp": time.time(),
-                })
-
-    async def receive_input() -> None:
-        """Receive and dispatch input events from client."""
-        while True:
-            data = await websocket.receive_json()
-            await _dispatch_input_event(streamer, managed, data)
-
     try:
-        send_task = asyncio.create_task(send_frames())
-        receive_task = asyncio.create_task(receive_input())
+        send_task = asyncio.create_task(_send_frames(websocket, streamer))
+        receive_task = asyncio.create_task(_receive_input(websocket, streamer, managed))
+        health_task = asyncio.create_task(streamer.wait_until_dead())
         _done, pending = await asyncio.wait(
-            [send_task, receive_task],
+            [send_task, receive_task, health_task],
             return_when=asyncio.FIRST_COMPLETED,
         )
         for task in pending:
             task.cancel()
+        await _notify_cdp_dead(websocket, streamer)
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session {session_id}")
     except Exception as e:
