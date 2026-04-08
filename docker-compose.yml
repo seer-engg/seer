@@ -107,6 +107,7 @@ services:
       MEM0_EMBEDDER_MODEL: "${MEM0_EMBEDDER_MODEL:-text-embedding-3-small}"
       MEM0_EMBEDDING_DIMS: "${MEM0_EMBEDDING_DIMS:-1536}"
       AUTH_PROVIDER: "${AUTH_PROVIDER:-local}"
+      ENABLE_USER_EMULATION: "${ENABLE_USER_EMULATION:-true}"
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -169,6 +170,7 @@ services:
     environment:
       VITE_BACKEND_API_URL: "${VITE_BACKEND_API_URL:-http://localhost:8000}"
       VITE_CLERK_PUBLISHABLE_KEY: "${VITE_CLERK_PUBLISHABLE_KEY:-}"
+      VITE_ENABLE_USER_EMULATION: "${VITE_ENABLE_USER_EMULATION:-true}"
     volumes:
       - ./seer-frontend:/app
       - frontend_node_modules:/app/node_modules

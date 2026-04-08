@@ -266,6 +266,33 @@ def drop_schema_cascade(conn: DbConnectionInfo, dry_run: bool) -> int:
     return result.returncode
 
 
+def disable_trigger_subscriptions(conn: DbConnectionInfo, dry_run: bool) -> int:
+    """Disable all trigger subscriptions to prevent cloned workflows from firing."""
+    sql = "UPDATE trigger_subscriptions SET enabled = false;"
+    cmd = [
+        "psql",
+        f"--dbname={conn.database}",
+        "--no-password",
+        "-c",
+        sql,
+    ]
+    env = {**os.environ, **conn.to_env_dict()}
+
+    print("\nDisabling all trigger subscriptions...")
+
+    if dry_run:
+        print("[DRY RUN] Would execute: " + sql)
+        return 0
+
+    result = subprocess.run(cmd, env=env, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"WARNING: Failed to disable trigger subscriptions: {result.stderr}", file=sys.stderr)
+    else:
+        print(f"Trigger subscriptions disabled. {result.stdout.strip()}")
+
+    return result.returncode
+
+
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
@@ -461,6 +488,10 @@ def main(args: argparse.Namespace) -> int:
             schema_only=args.schema_only,
             dry_run=args.dry_run,
         )
+
+        # Step 4: Disable trigger subscriptions so cloned workflows don't fire
+        if exit_code == 0 or args.dry_run:
+            disable_trigger_subscriptions(local_conn, dry_run=args.dry_run)
 
         # Summary
         print(f"\n{'=' * 70}")
