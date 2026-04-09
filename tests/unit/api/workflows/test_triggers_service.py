@@ -757,9 +757,11 @@ class TestUpdateExistingSubscriptionReenableCursorReset:
         assert subscription.enabled is True
         subscription.save.assert_awaited_once()
 
-    async def test_already_enabled_subscription_preserves_poll_state(self):
-        """Syncing an already-enabled subscription should NOT reset cursor or poll_status."""
+    async def test_already_enabled_subscription_preserves_poll_state_when_config_unchanged(self):
+        """Syncing an already-enabled subscription with unchanged config should NOT reset cursor."""
         from seer.api.workflows.services.triggers import _update_existing_subscription
+
+        provider_config = {"provider_connection_id": "conn-1"}
 
         subscription = MagicMock()
         subscription.enabled = True
@@ -772,13 +774,14 @@ class TestUpdateExistingSubscriptionReenableCursorReset:
         subscription.trigger_key = "poll.gmail.email_received"
         subscription.webhook_slug = None
         subscription.provider_connection_id = "conn-1"
+        subscription.provider_config = provider_config
         subscription.form_suffix = None
         subscription.save = AsyncMock()
 
         trigger_spec = MagicMock()
         trigger_spec.key = "poll.gmail.email_received"
         trigger_spec.filters = {}
-        trigger_spec.provider_config = {"provider_connection_id": "conn-1"}
+        trigger_spec.provider_config = provider_config
 
         definition = MagicMock()
         definition.title = "Gmail Trigger"
@@ -792,9 +795,51 @@ class TestUpdateExistingSubscriptionReenableCursorReset:
             skip_validation=True,
         )
 
-        # Cursor and poll state should be preserved for already-enabled subscriptions
+        # Cursor and poll state should be preserved when config hasn't changed
         assert subscription.poll_cursor_json == {"last_execution_utc": "2026-04-07T10:00:00+00:00"}
         assert subscription.poll_status == "ok"
+
+    async def test_already_enabled_subscription_resets_cursor_when_config_changes(self):
+        """Syncing an already-enabled subscription with changed config should reset cursor."""
+        from seer.api.workflows.services.triggers import _update_existing_subscription
+
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = True
+        subscription.poll_cursor_json = {"cron_expression": "0 7 * * *", "last_execution_utc": "2026-04-07T12:00:00+00:00"}
+        subscription.next_poll_at = datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc)
+        subscription.poll_status = "ok"
+        subscription.poll_error_json = None
+        subscription.trigger_key = "schedule.cron"
+        subscription.webhook_slug = None
+        subscription.provider_connection_id = None
+        subscription.provider_config = {"cron_expression": "0 7 * * *", "timezone": "America/Chicago"}
+        subscription.form_suffix = None
+        subscription.save = AsyncMock()
+
+        trigger_spec = MagicMock()
+        trigger_spec.key = "schedule.cron"
+        trigger_spec.filters = {}
+        trigger_spec.provider_config = {"cron_expression": "0 6 * * *", "timezone": "America/Chicago"}
+
+        definition = MagicMock()
+        definition.title = "Cron Trigger"
+
+        await _update_existing_subscription(
+            subscription,
+            trigger_spec,
+            definition,
+            webhook_slug=None,
+            adjusted_interval=60,
+            skip_validation=True,
+        )
+
+        # Cursor should be reset when provider_config changes
+        assert subscription.poll_cursor_json is None
+        assert subscription.next_poll_at is not None
+        assert isinstance(subscription.next_poll_at, datetime)
+        assert subscription.poll_status == "ok"
+        assert subscription.poll_error_json is None
 
 
 # =============================================================================
