@@ -49,6 +49,34 @@ logger = get_logger(__name__)
 # ===== Helper Functions =====
 
 
+def _enrich_single_trigger(trigger, subscription, webhook_base_url: str) -> None:
+    """Enrich a single trigger spec's ui_meta with subscription data."""
+    # pylint: disable=import-outside-toplevel  # avoid circular dependency
+    from seer.api.workflows.services.triggers import (
+        _build_webhook_url,
+        _build_form_url,
+        _should_emit_webhook_url,
+    )
+
+    trigger.ui_meta["subscription_id"] = subscription.id
+    trigger.ui_meta["secret_token"] = subscription.secret_token
+
+    if _should_emit_webhook_url(subscription.trigger_key) and subscription.webhook_slug:
+        webhook_path = _build_webhook_url(subscription.webhook_slug, subscription.trigger_key)
+        if webhook_path:
+            trigger.ui_meta["webhook_url"] = f"{webhook_base_url.rstrip('/')}{webhook_path}"
+
+    if subscription.trigger_key == "form.hosted":
+        form_url = _build_form_url(subscription)
+        if form_url:
+            trigger.ui_meta["form_url"] = form_url
+
+    if subscription.created_at:
+        trigger.ui_meta["created_at"] = subscription.created_at.isoformat()
+    if subscription.updated_at:
+        trigger.ui_meta["updated_at"] = subscription.updated_at.isoformat()
+
+
 async def _enrich_trigger_specs_with_subscriptions(workflow: Workflow, spec: WorkflowSpec) -> None:
     """
     Enrich trigger specs with subscription data in ui_meta field.
@@ -59,47 +87,20 @@ async def _enrich_trigger_specs_with_subscriptions(workflow: Workflow, spec: Wor
     if not spec.triggers:
         return
 
-    # Import here to avoid circular dependency
-    # pylint: disable=import-outside-toplevel
-    from seer.api.workflows.services.triggers import (
-        _build_webhook_url,
-        _build_form_url,
-        _should_emit_webhook_url,
-    )
+    # pylint: disable=import-outside-toplevel  # avoid circular dependency
+    from seer.config import config as shared_config
+
+    webhook_base_url = shared_config.webhook_base_url or "http://localhost:8000"
 
     # Fetch all subscriptions for this workflow in one query (efficient)
     subscriptions = await TriggerSubscription.filter(workflow=workflow).all()
     subscription_map = {sub.trigger_id: sub for sub in subscriptions}
 
-    # Enrich each trigger spec's ui_meta
     for trigger in spec.triggers:
         subscription = subscription_map.get(trigger.id)
-
-        # If no subscription exists (e.g., draft only), skip enrichment
         if not subscription:
             continue
-
-        # Build webhook URL if applicable
-        webhook_url = None
-        if _should_emit_webhook_url(subscription.trigger_key):
-            webhook_url = _build_webhook_url(subscription.id, subscription.trigger_key)
-
-        # Build form URL if applicable
-        form_url = None
-        if subscription.trigger_key == "form.hosted":
-            form_url = _build_form_url(subscription)
-
-        # Add enrichment data to ui_meta
-        trigger.ui_meta["subscription_id"] = subscription.id
-        trigger.ui_meta["secret_token"] = subscription.secret_token
-        if webhook_url:
-            trigger.ui_meta["webhook_url"] = webhook_url
-        if form_url:
-            trigger.ui_meta["form_url"] = form_url
-        if subscription.created_at:
-            trigger.ui_meta["created_at"] = subscription.created_at.isoformat()
-        if subscription.updated_at:
-            trigger.ui_meta["updated_at"] = subscription.updated_at.isoformat()
+        _enrich_single_trigger(trigger, subscription, webhook_base_url)
 
 
 def _extract_integrations(spec_dict: Optional[Dict[str, Any]]) -> list[str]:
