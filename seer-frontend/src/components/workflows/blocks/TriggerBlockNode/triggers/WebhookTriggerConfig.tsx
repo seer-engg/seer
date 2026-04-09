@@ -1,18 +1,18 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Button } from '@/components/ui/button';
-import { useActiveWorkflowId } from '@/hooks/useActiveWorkflowId';
-import { Copy, Link, Play, Square, ChevronDown, ChevronRight } from 'lucide-react';
-import type { WorkflowNodeData } from '../../../types';
-import { copyToClipboard } from '../components/handlers';
-import { startListening, getPendingEvents } from '@/lib/api-client';
-import type { PendingEventItem } from '@/lib/api-client';
-import { useTriggersStore } from '@/stores/triggersStore';
-import { useCanvasStore } from '@/stores/canvasStore';
-import type { JsonObject } from '@/types/workflow-spec';
-import { inferSchemaFromPayload } from './utils';
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Button } from "@/components/ui/button";
+import { useActiveWorkflowId } from "@/hooks/useActiveWorkflowId";
+import { Copy, Link, Play, Square, ChevronDown, ChevronRight } from "lucide-react";
+import type { WorkflowNodeData } from "../../../types";
+import { copyToClipboard } from "../components/handlers";
+import { startListening, getPendingEvents } from "@/lib/api-client";
+import type { PendingEventItem } from "@/lib/api-client";
+import { useTriggersStore } from "@/stores/triggersStore";
+import { useCanvasStore } from "@/stores/canvasStore";
+import type { JsonObject } from "@/types/workflow-spec";
+import { inferSchemaFromPayload } from "./utils";
 
 export interface WebhookDetailsSectionProps {
-  subscription: WorkflowNodeData['triggerMeta']['subscription'];
+  subscription: WorkflowNodeData["triggerMeta"]["subscription"];
   setDataSchema?: (schema: JsonObject) => void;
 }
 
@@ -56,21 +56,14 @@ export const EventCard: React.FC<EventCardProps> = ({
         <pre className="text-xs bg-muted/60 rounded p-2 overflow-auto max-h-32 whitespace-pre-wrap">
           {JSON.stringify(event.data, null, 2)}
         </pre>
-        {setDataSchema && (
-          schemaApplied ? (
-            <p className="text-xs text-center text-green-600 py-1">
-              Schema applied — saving...
-            </p>
+        {setDataSchema &&
+          (schemaApplied ? (
+            <p className="text-xs text-center text-green-600 py-1">Schema applied — saving...</p>
           ) : (
-            <Button
-              size="sm"
-              className="h-6 px-2 w-full"
-              onClick={() => onUseSchema(event.data)}
-            >
+            <Button size="sm" className="h-6 px-2 w-full" onClick={() => onUseSchema(event.data)}>
               Use this schema
             </Button>
-          )
-        )}
+          ))}
       </div>
     )}
   </div>
@@ -88,12 +81,12 @@ const WebhookUrlSection: React.FC<WebhookUrlSectionProps> = ({ webhookUrl, secre
         <Link className="h-4 w-4" />
         Webhook endpoint
       </div>
-      <code className="text-xs break-all">{webhookUrl}</code>
+      <code className="block text-xs break-all bg-background px-2 py-1 rounded">{webhookUrl}</code>
       <Button
         variant="outline"
         size="sm"
         className="h-7 px-3"
-        onClick={() => copyToClipboard(webhookUrl, 'Webhook URL')}
+        onClick={() => copyToClipboard(webhookUrl, "Webhook URL")}
       >
         <Copy className="mr-2 h-3.5 w-3.5" />
         Copy URL
@@ -108,7 +101,7 @@ const WebhookUrlSection: React.FC<WebhookUrlSectionProps> = ({ webhookUrl, secre
           variant="outline"
           size="sm"
           className="h-7 px-3"
-          onClick={() => copyToClipboard(secretToken, 'Signing secret')}
+          onClick={() => copyToClipboard(secretToken, "Signing secret")}
         >
           <Copy className="mr-2 h-3.5 w-3.5" />
           Copy secret
@@ -146,7 +139,7 @@ export const ListeningSection: React.FC<ListeningSectionProps> = ({
   <div className="pt-2 border-t border-dashed border-border/60 space-y-2">
     <div className="flex items-center justify-between">
       <p className="text-xs font-medium">
-        {isListening ? 'Listening for events...' : 'Not listening'}
+        {isListening ? "Listening for events..." : "Not listening"}
       </p>
       {isListening ? (
         <Button variant="outline" size="sm" className="h-6 px-2" onClick={onStopListening}>
@@ -156,7 +149,7 @@ export const ListeningSection: React.FC<ListeningSectionProps> = ({
       ) : (
         <Button size="sm" className="h-6 px-2" onClick={onStartListening} disabled={isStarting}>
           <Play className="mr-1 h-3 w-3" />
-          {isStarting ? 'Starting...' : 'Listen'}
+          {isStarting ? "Starting..." : "Listen"}
         </Button>
       )}
     </div>
@@ -174,7 +167,9 @@ export const ListeningSection: React.FC<ListeningSectionProps> = ({
             key={event.event_id}
             event={event}
             isExpanded={expandedEvent === event.event_id}
-            onToggle={() => setExpandedEvent(expandedEvent === event.event_id ? null : event.event_id)}
+            onToggle={() =>
+              setExpandedEvent(expandedEvent === event.event_id ? null : event.event_id)
+            }
             setDataSchema={setDataSchema}
             schemaApplied={schemaApplied}
             onUseSchema={onUseSchema}
@@ -185,7 +180,11 @@ export const ListeningSection: React.FC<ListeningSectionProps> = ({
   </div>
 );
 
-function useWebhookPolling(workflowId: string | null, triggerId: string | undefined, subscription: WebhookDetailsSectionProps['subscription']) {
+function useWebhookPolling(
+  workflowId: string | null,
+  triggerId: string | undefined,
+  subscription: WebhookDetailsSectionProps["subscription"]
+) {
   const [isStarting, setIsStarting] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [events, setEvents] = useState<PendingEventItem[]>([]);
@@ -200,7 +199,11 @@ function useWebhookPolling(workflowId: string | null, triggerId: string | undefi
 
     const poll = async () => {
       try {
-        const response = await getPendingEvents(workflowId, triggerId, latestEventIdRef.current ?? undefined);
+        const response = await getPendingEvents(
+          workflowId,
+          triggerId,
+          latestEventIdRef.current ?? undefined
+        );
         if (response.events.length > 0) {
           setEvents((prev) => {
             const existingIds = new Set(prev.map((e) => e.event_id));
@@ -227,9 +230,15 @@ function useWebhookPolling(workflowId: string | null, triggerId: string | undefi
     }
   }, []);
 
-  const absoluteWebhookUrl = localWebhookUrl;
+  const absoluteWebhookUrl =
+    localWebhookUrl ||
+    ((subscription?.ui_meta as Record<string, unknown>)?.webhook_url as string | undefined) ||
+    null;
 
-  const secretToken = localSecretToken || undefined;
+  const secretToken =
+    localSecretToken ||
+    ((subscription?.ui_meta as Record<string, unknown>)?.secret_token as string | undefined) ||
+    undefined;
 
   useEffect(() => {
     if (absoluteWebhookUrl) {
@@ -248,7 +257,7 @@ function useWebhookPolling(workflowId: string | null, triggerId: string | undefi
       setLocalSecretToken(response.secret_token);
       useTriggersStore.getState().updateTrigger(workflowId, triggerId, {
         ui_meta: {
-          ...(subscription?.ui_meta as Record<string, unknown> || {}),
+          ...((subscription?.ui_meta as Record<string, unknown>) || {}),
           webhook_url: response.webhook_url,
           secret_token: response.secret_token,
         },
@@ -257,7 +266,7 @@ function useWebhookPolling(workflowId: string | null, triggerId: string | undefi
       setIsListening(true);
       startPolling();
     } catch (error) {
-      console.error('Failed to start listening', error);
+      console.error("Failed to start listening", error);
     } finally {
       setIsStarting(false);
     }
@@ -279,7 +288,10 @@ function useWebhookPolling(workflowId: string | null, triggerId: string | undefi
   };
 }
 
-export const WebhookDetailsSection: React.FC<WebhookDetailsSectionProps> = ({ subscription, setDataSchema }) => {
+export const WebhookDetailsSection: React.FC<WebhookDetailsSectionProps> = ({
+  subscription,
+  setDataSchema,
+}) => {
   const workflowId = useActiveWorkflowId();
   const [expandedEvent, setExpandedEvent] = useState<number | null>(null);
   const [schemaApplied, setSchemaApplied] = useState(false);
@@ -336,7 +348,7 @@ export const WebhookDetailsSection: React.FC<WebhookDetailsSectionProps> = ({ su
           disabled={isStarting || !workflowId}
         >
           <Play className="mr-2 h-3.5 w-3.5" />
-          {isStarting ? 'Starting...' : 'Start Listening'}
+          {isStarting ? "Starting..." : "Start Listening"}
         </Button>
       </div>
     );
