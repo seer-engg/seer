@@ -147,8 +147,9 @@ class TestBootstrapCursor:
 
         last_exec = datetime.fromisoformat(cursor["last_execution_utc"])
         assert (datetime.now(timezone.utc) - last_exec).total_seconds() < 5
-        assert cursor["cron_expression"] == "*/15 * * * *"
-        assert cursor["timezone"] == "America/Chicago"
+        # Cursor should only store execution state, not config echo
+        assert "cron_expression" not in cursor
+        assert "timezone" not in cursor
 
 
 class TestNormalPollBehavior:

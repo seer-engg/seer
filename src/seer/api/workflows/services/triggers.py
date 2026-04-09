@@ -581,6 +581,11 @@ def _apply_subscription_updates(
     if payload.provider_config is not None:
         new_provider_config = dict(payload.provider_config or {})
         _validate_provider_config(new_provider_config, definition)
+        # Reset polling cursor when config changes so adapter re-bootstraps
+        # with fresh cron_expression/timezone from provider_config
+        if subscription.is_polling and subscription.provider_config != new_provider_config:
+            subscription.poll_cursor_json = None
+            subscription.next_poll_at = datetime.now(timezone.utc)
         subscription.provider_config = new_provider_config
     if payload.enabled is not None:
         # Reset polling cursor when re-enabling a previously disabled subscription
@@ -828,6 +833,13 @@ async def _update_existing_subscription(
     # Reset polling cursor when re-enabling a previously disabled subscription
     # to prevent catchup storms from stale cursor positions
     if not subscription.enabled and subscription.is_polling:
+        subscription.poll_cursor_json = None
+        subscription.next_poll_at = datetime.now(timezone.utc)
+        subscription.poll_status = "ok"
+        subscription.poll_error_json = None
+    # Reset polling cursor when provider_config changes (e.g. cron_expression or timezone)
+    # so adapter re-bootstraps with fresh config instead of using stale cursor values
+    elif subscription.is_polling and subscription.provider_config != provider_config:
         subscription.poll_cursor_json = None
         subscription.next_poll_at = datetime.now(timezone.utc)
         subscription.poll_status = "ok"

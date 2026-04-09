@@ -71,10 +71,10 @@ class CronScheduleAdapter(PollAdapter):
             ) from exc
 
         # Start from now - we don't want to backfill missed runs
+        # Only store execution state; cron_expression and timezone are always
+        # read from provider_config so config changes take effect immediately.
         return {
             "last_execution_utc": now_utc.isoformat(),
-            "cron_expression": cron_expr,
-            "timezone": tz_name,
         }
 
     # pylint: disable=too-complex,too-many-locals,broad-exception-caught
@@ -88,9 +88,12 @@ class CronScheduleAdapter(PollAdapter):
         - Single event if schedule has triggered
         - Updates cursor with next execution time
         """
+        # Always read cron_expression and timezone from provider_config (source of truth).
+        # Cursor only stores execution state (last_execution_utc). This ensures config
+        # changes (e.g. new cron schedule) take effect immediately without cursor resets.
         config = ctx.subscription.provider_config or {}
-        cron_expr = cursor.get("cron_expression") or config.get("cron_expression")
-        tz_name = (cursor.get("timezone") or config.get("timezone", DEFAULT_TIMEZONE)).strip()
+        cron_expr = config.get("cron_expression") or cursor.get("cron_expression")
+        tz_name = (config.get("timezone") or cursor.get("timezone", DEFAULT_TIMEZONE)).strip()
         last_exec_str = cursor.get("last_execution_utc")
 
         if not cron_expr:
@@ -155,8 +158,6 @@ class CronScheduleAdapter(PollAdapter):
                 events=[],
                 cursor={
                     "last_execution_utc": now_utc.isoformat(),
-                    "cron_expression": cron_expr,
-                    "timezone": tz_name,
                 },
                 has_more=False,
                 rate_limit_hint=max(1, int((next_future - now_utc).total_seconds())),
@@ -174,8 +175,6 @@ class CronScheduleAdapter(PollAdapter):
                 events=[],
                 cursor={
                     "last_execution_utc": last_exec_utc.isoformat(),
-                    "cron_expression": cron_expr,
-                    "timezone": tz_name,
                 },
                 has_more=False,
                 rate_limit_hint=seconds_until_next,
@@ -209,8 +208,6 @@ class CronScheduleAdapter(PollAdapter):
         # This ensures we don't skip or duplicate executions
         new_cursor = {
             "last_execution_utc": next_exec_utc.isoformat(),
-            "cron_expression": cron_expr,
-            "timezone": tz_name,
         }
 
         # Hint when to poll again by computing the following execution
