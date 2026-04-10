@@ -57,6 +57,15 @@ repos:
       - id: python-check-blanket-noqa
       - id: text-unicode-replacement-char
 
+  # Block eval data from being committed (contains PII / is gitignored)
+  - repo: local
+    hooks:
+      - id: forbid-eval-data
+        name: Forbid eval data files (PII / gitignored)
+        entry: "Eval data files must not be committed (contains PII). See .gitignore."
+        language: fail
+        files: ^tests/eval/nexus/(raw_sessions|ground_truth)\.json$|^tests/eval/baselines/.*\.json$
+
   - repo: local
     hooks:
       - id: forbid-pylintrc
