@@ -1,5 +1,5 @@
 """
-Web search tool for Nexus agent using Brave Search API.
+Web search tool for Nexus agent using Exa Search API.
 
 Provides real-time web search capability to fetch current information
 that may not be available in the LLM's training data.
@@ -27,7 +27,7 @@ async def web_search(
     include_raw_content: bool = False,
 ) -> str:
     """
-    Search the web using Brave Search API for current information.
+    Search the web using Exa Search API for current information.
 
     Use this tool when you need up-to-date information that may not be in your training data,
     such as recent events, current documentation, or real-time data.
@@ -48,17 +48,17 @@ async def web_search(
         - "how to use Supabase edge functions"
         - "Gmail API rate limits"
     """
-    if not config.brave_search_api_key:
+    if not config.exa_api_key:
         return json.dumps({
-            "error": "Brave Search API key not configured",
+            "error": "Exa API key not configured",
             "query": query,
-            "suggestion": "Set BRAVE_SEARCH_API_KEY environment variable to enable web search",
+            "suggestion": "Set EXA_API_KEY environment variable to enable web search",
         })
 
     try:
-        from seer.tools.websearch.brave_client import brave_search  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+        from seer.tools.websearch.exa_client import exa_search  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
 
-        result = await brave_search(
+        result = await exa_search(
             query=query,
             max_results=max_results,
             search_depth=search_depth,
@@ -72,5 +72,5 @@ async def web_search(
         return json.dumps({
             "error": str(e),
             "query": query,
-            "suggestion": "Check your Brave Search API key and try again",
+            "suggestion": "Check your Exa API key and try again",
         })
