@@ -68,6 +68,7 @@ Thumbs.db
 *.log
 
 generated_evals/
+tests/eval/baselines/*.json
 
 data/*
 data/seer.db

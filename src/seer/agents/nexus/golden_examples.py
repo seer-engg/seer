@@ -316,7 +316,7 @@ GOLDEN_EXAMPLES: List[GoldenExample] = [
     GoldenExample(
         prompt="Query new orders from Supabase and create a Notion page for each one",
         expected_tools=["supabase_table_query", "notion_create_page"],
-        expected_triggers=["schedule.cron"],
+        expected_triggers=["schedule.cron", "webhook.supabase.db_changes"],
         tags=["supabase", "notion", "for_each", "sync"],
         spec={
             "version": "2",
