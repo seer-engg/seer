@@ -365,6 +365,77 @@ GOLDEN_EXAMPLES: List[GoldenExample] = [
             ],
         },
     ),
+
+    # 7. Gmail incoming → KB lookup → draft reply
+    GoldenExample(
+        prompt=(
+            "Create an automated email responder that reads incoming Gmail messages,"
+            " looks up answers in my knowledge base, and drafts helpful replies."
+        ),
+        expected_tools=["gmail_get_message", "kb_query", "gmail_create_draft"],
+        expected_triggers=["poll.gmail.email_received"],
+        tags=["gmail", "knowledge", "email", "auto-reply", "draft"],
+        spec={
+            "version": "2",
+            "triggers": [
+                {
+                    "id": "new_email",
+                    "key": "poll.gmail.email_received",
+                    "mode": "polling",
+                    "provider_config": {},
+                    "event_schema": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "threadId": {"type": "string"},
+                            "from": {"type": "string"},
+                            "subject": {"type": "string"},
+                            "snippet": {"type": "string"},
+                        },
+                    },
+                    "meta": {},
+                    "filters": {},
+                    "ui_meta": {},
+                }
+            ],
+            "nodes": [
+                {
+                    "id": "get_email",
+                    "type": "tool",
+                    "tool": "gmail_get_message",
+                    "inputs": {
+                        "message_id": "${new_email.event.id}",
+                    },
+                },
+                {
+                    "id": "search_kb",
+                    "type": "tool",
+                    "tool": "kb_query",
+                    "inputs": {
+                        "kb_id": "${variables.KB_ID}",
+                        "query": "${get_email.body.snippet}",
+                        "top_k": 3,
+                    },
+                },
+                {
+                    "id": "draft_reply",
+                    "type": "tool",
+                    "tool": "gmail_create_draft",
+                    "inputs": {
+                        "to": "${get_email.body.from}",
+                        "subject": "Re: ${get_email.body.subject}",
+                        "body": "Based on your question: ${search_kb.results[0].content}",
+                        "thread_id": "${get_email.body.threadId}",
+                    },
+                },
+            ],
+            "edges": [
+                {"source": "new_email", "target": "get_email", "type": "trigger"},
+                {"source": "get_email", "target": "search_kb", "type": "default"},
+                {"source": "search_kb", "target": "draft_reply", "type": "default"},
+            ],
+        },
+    ),
 ]
 
 

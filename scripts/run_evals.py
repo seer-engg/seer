@@ -9,6 +9,7 @@ Usage:
     python scripts/run_evals.py --only tool  # run only tool call eval
     python scripts/run_evals.py --only mcp   # run only MCP response eval
     python scripts/run_evals.py --only retrieval  # run only retrieval eval (needs OPENAI_API_KEY)
+    python scripts/run_evals.py --only nexus     # run only nexus prod eval (needs OPENAI_API_KEY + ground_truth.json)
 """
 from __future__ import annotations
 
@@ -43,6 +44,16 @@ EVAL_SUITES = {
     "retrieval": {
         "file": "test_retrieval_eval.py",
         "desc": "Tool/trigger retrieval accuracy (needs OPENAI_API_KEY)",
+        "needs_key": True,
+    },
+    "bfcl": {
+        "file": "test_bfcl_eval.py",
+        "desc": "BFCL v3 function calling benchmark (needs OPENAI_API_KEY)",
+        "needs_key": True,
+    },
+    "nexus": {
+        "file": "test_nexus_prod_eval.py",
+        "desc": "Nexus prod eval — real prompts, tool/trigger recall (needs OPENAI_API_KEY + ground_truth.json)",
         "needs_key": True,
     },
 }
@@ -209,6 +220,30 @@ def _extract_metrics(output: str) -> Dict[str, Any]:
             except (IndexError, ValueError):
                 pass
 
+        # BFCL accuracy: "OVERALL                    45        50       90.0%"
+        if "OVERALL" in line and "%" in line:
+            try:
+                metrics["bfcl_accuracy"] = float(line.split("%")[0].rsplit(" ", 1)[1])
+            except (IndexError, ValueError):
+                pass
+
+        # Nexus prod eval metrics
+        if "Tool recall:" in line and "%" in line:
+            try:
+                metrics["nexus_tool_recall"] = float(line.split(":")[1].strip().rstrip("%"))
+            except (IndexError, ValueError):
+                pass
+        if "Trigger recall:" in line and "%" in line:
+            try:
+                metrics["nexus_trigger_recall"] = float(line.split(":")[1].strip().rstrip("%"))
+            except (IndexError, ValueError):
+                pass
+        if "Discriminator pass rate:" in line and "%" in line:
+            try:
+                metrics["nexus_discriminator_rate"] = float(line.split(":")[1].strip().rstrip("%"))
+            except (IndexError, ValueError):
+                pass
+
     return metrics
 
 
@@ -267,6 +302,22 @@ def _print_dashboard(results: List[Dict[str, Any]]) -> None:
             rate = metrics["golden_pass_rate"]
             color = _green if rate == 100 else _red
             print(f"  golden examples        {color(f'{rate:.0f}%'):>13}")
+        if "bfcl_accuracy" in metrics:
+            rate = metrics["bfcl_accuracy"]
+            color = _green if rate >= 80 else _yellow if rate >= 60 else _red
+            print(f"  BFCL v3 accuracy       {color(f'{rate:.0f}%'):>13}")
+        if "nexus_tool_recall" in metrics:
+            rate = metrics["nexus_tool_recall"]
+            color = _green if rate >= 70 else _yellow if rate >= 50 else _red
+            print(f"  Nexus tool recall      {color(f'{rate:.0f}%'):>13}")
+        if "nexus_trigger_recall" in metrics:
+            rate = metrics["nexus_trigger_recall"]
+            color = _green if rate >= 70 else _yellow if rate >= 50 else _red
+            print(f"  Nexus trigger recall   {color(f'{rate:.0f}%'):>13}")
+        if "nexus_discriminator_rate" in metrics:
+            rate = metrics["nexus_discriminator_rate"]
+            color = _green if rate >= 70 else _yellow if rate >= 50 else _red
+            print(f"  Nexus discriminator    {color(f'{rate:.0f}%'):>13}")
 
     # Summary
     print()
@@ -348,7 +399,8 @@ def _print_comparison(results: List[Dict[str, Any]]) -> None:
             continue
 
         # Determine if higher is better
-        higher_better = key in ("retrieval_pass_rate", "golden_pass_rate")
+        higher_better = key in ("retrieval_pass_rate", "golden_pass_rate", "bfcl_accuracy",
+                                "nexus_tool_recall", "nexus_trigger_recall", "nexus_discriminator_rate")
         lower_better = key in ("list_tools_bytes", "list_tools_tokens", "list_triggers_bytes",
                                "search_latency_ms")
 
