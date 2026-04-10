@@ -90,3 +90,10 @@ seer-frontend/dist/
 seer-frontend/.env
 seer-frontend/.env.local
 seer-frontend/.env.test
+
+# BFCL v3 dataset files (too large for repo)
+tests/eval/bfcl/data/*.json
+
+# Nexus prod eval data (contains real user content)
+tests/eval/nexus/raw_sessions.json
+tests/eval/nexus/ground_truth.json
