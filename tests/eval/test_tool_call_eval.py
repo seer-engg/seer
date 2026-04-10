@@ -10,6 +10,7 @@ No LLM required. Run with:
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
@@ -26,7 +27,13 @@ from seer.tools.unified_tools import (
     search_triggers_impl,
 )
 
-pytestmark = pytest.mark.eval
+pytestmark = [
+    pytest.mark.eval,
+    pytest.mark.skipif(
+        not os.environ.get("OPENAI_API_KEY"),
+        reason="OPENAI_API_KEY required for embedding-based search tests",
+    ),
+]
 
 # ---------------------------------------------------------------------------
 # Timing / size tracking
