@@ -323,18 +323,31 @@ class _EmbeddingToolIndex:
             tool["confidence_score"] = float(sims[idx])
             tool.pop("keywords", None)
             tool.pop("capabilities", None)
+            tool.pop("parameters", None)
+            tool.pop("resource_pickers", None)
             results.append(tool)
             if len(results) >= top_k:
                 break
         return results
 
     async def search_triggers(self, query: str, top_k: int = 10, provider_filter: str | None = None) -> List[Dict]:
-        """Search triggers by embedding similarity."""
+        """Search triggers by embedding similarity with keyword boost."""
         await self._ensure_triggers()
         svc = get_embedding_service()
         q_vec = np.array(await svc.embed_query(query))
         norms = np.linalg.norm(self._trigger_embeddings, axis=1) * np.linalg.norm(q_vec)
         sims = (self._trigger_embeddings @ q_vec) / np.where(norms == 0, 1, norms)
+
+        # Keyword boost: if query contains time-pattern words, boost schedule triggers
+        query_lower = query.lower()
+        time_signals = ["every", "daily", "morning", "hourly", "weekly", "schedule",
+                        "cron", "recurring", "periodic", "at \\d", "am", "pm",
+                        "each day", "each week", "each month", "run at"]
+        has_time_signal = any(re.search(s, query_lower) for s in time_signals)
+        if has_time_signal:
+            for i, trig in enumerate(self._trigger_data):
+                if trig.get("provider") == "schedule":
+                    sims[i] += 0.3  # Boost schedule triggers for time-pattern queries
 
         indices = np.argsort(sims)[::-1]
         results = []
@@ -355,6 +368,16 @@ class _EmbeddingToolIndex:
 
 
 _embedding_index = _EmbeddingToolIndex()
+
+
+async def warm_embedding_index() -> None:
+    """Pre-compute tool and trigger embeddings. Call at server startup to avoid first-request latency."""
+    # pylint: disable=protected-access # Reason: warming index requires accessing private members
+    await _embedding_index._ensure_tools()
+    await _embedding_index._ensure_triggers()
+    logger.info("Embedding index warmed: %d tools, %d triggers",
+                len(_embedding_index._tool_catalog),
+                len(_embedding_index._trigger_data))
 
 
 async def async_search_triggers_intent(

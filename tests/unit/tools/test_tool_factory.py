@@ -379,7 +379,8 @@ class TestSearchToolsImpl:
 
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.async_search_tools_intent")
-    async def test_includes_resource_pickers(self, mock_search):
+    async def test_excludes_resource_pickers(self, mock_search):
+        """Resource pickers are UI metadata — should NOT appear in search results."""
         mock_search.return_value = [
             {
                 "name": "gmail_create_draft", "description": "Create a Gmail draft",
@@ -392,7 +393,7 @@ class TestSearchToolsImpl:
         from seer.tools.unified_tools import search_tools_impl
         result = await search_tools_impl("create draft")
         data = json.loads(result)
-        assert "resource_pickers" in data["top_match"]
+        assert "resource_pickers" not in data["top_match"]
 
     @pytest.mark.asyncio
     @patch("seer.tools.discovery_shared.async_search_tools_intent")
