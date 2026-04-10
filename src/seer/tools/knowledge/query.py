@@ -25,9 +25,9 @@ class KnowledgeBaseQueryTool(BaseTool):
 
     name = "kb_query"
     description = (
-        "Search your knowledge base to find relevant documents and look up answers."
-        " Use when the user wants to search uploaded documents, find information,"
-        " or query their knowledge base. Returns text chunks ranked by relevance."
+        "Semantic search your knowledge base to find relevant documents."
+        " Use when the user wants to search uploaded documents, find info,"
+        " or query their knowledge base. Returns chunks ranked by relevance."
     )
     integration_type = "knowledge"
 
