@@ -1,7 +1,7 @@
 """
 Web search tools package.
 
-Provides web search capability using Brave Search API.
+Provides web search capability using Exa Search API.
 """
 from seer.tools.base import register_tool
 from seer.tools.websearch.web_search import WebSearchTool
