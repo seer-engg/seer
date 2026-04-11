@@ -9,11 +9,21 @@ from fastapi import HTTPException
 from seer.tools.websearch.web_search import WebSearchTool
 
 
-def _brave_response(results=None, summary=None):
-    """Build a mock Brave API response."""
-    data = {"web": {"results": results or []}}
-    if summary:
-        data["summarizer"] = {"results": [{"summary": summary}]}
+def _exa_response(results=None, highlights=None):
+    """Build a mock Exa API response."""
+    exa_results = []
+    for i, r in enumerate(results or []):
+        item = {
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+        }
+        if highlights and i < len(highlights):
+            item["highlights"] = highlights[i]
+        if "text" in r:
+            item["text"] = r["text"]
+        exa_results.append(item)
+
+    data = {"results": exa_results}
     return data
 
 
@@ -31,7 +41,7 @@ class TestWebSearchToolMetadata:
     def test_tool_description(self, tool):
         assert tool.description
         assert "search" in tool.description.lower()
-        assert "brave" in tool.description.lower()
+        assert "exa" in tool.description.lower()
 
     def test_tool_integration_type(self, tool):
         assert tool.integration_type == "websearch"
@@ -99,7 +109,7 @@ class TestWebSearchToolExecution:
     @pytest.mark.asyncio
     async def test_error_when_api_key_not_configured(self, tool):
         with patch("seer.tools.websearch.web_search.config") as mock_config:
-            mock_config.brave_search_api_key = None
+            mock_config.exa_api_key = None
 
             with pytest.raises(HTTPException) as exc_info:
                 await tool.execute(
@@ -108,33 +118,33 @@ class TestWebSearchToolExecution:
                 )
 
             assert exc_info.value.status_code == 503
-            assert "Brave Search API key not configured" in str(exc_info.value.detail)
+            assert "Exa API key not configured" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_successful_search_execution(self, tool):
-        brave_resp = _brave_response(
+        exa_resp = _exa_response(
             results=[
-                {"title": "Test Result 1", "url": "https://example.com/1", "description": "This is the content snippet."},
-                {"title": "Test Result 2", "url": "https://example.com/2", "description": "Another content snippet."},
+                {"title": "Test Result 1", "url": "https://example.com/1"},
+                {"title": "Test Result 2", "url": "https://example.com/2"},
             ],
-            summary="This is the AI-generated answer.",
+            highlights=[["This is the content snippet."], ["Another content snippet."]],
         )
 
         mock_response = AsyncMock(spec=httpx.Response)
         mock_response.status_code = 200
-        mock_response.json.return_value = brave_resp
+        mock_response.json.return_value = exa_resp
         mock_response.raise_for_status = lambda: None
 
         with patch("seer.tools.websearch.web_search.config") as mock_config, \
-             patch("seer.tools.websearch.brave_client.config") as mock_bc_config, \
+             patch("seer.tools.websearch.exa_client.config") as mock_exa_config, \
              patch("httpx.AsyncClient") as mock_client_cls:
-            mock_config.brave_search_api_key = "test-api-key"
-            mock_bc_config.brave_search_api_key = "test-api-key"
+            mock_config.exa_api_key = "test-api-key"
+            mock_exa_config.exa_api_key = "test-api-key"
 
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get.return_value = mock_response
+            mock_client.post.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
             result = await tool.execute(
@@ -144,68 +154,35 @@ class TestWebSearchToolExecution:
 
             assert result["query"] == "test query"
             assert result["search_depth"] == "basic"
-            assert result["answer"] == "This is the AI-generated answer."
             assert result["result_count"] == 2
             assert len(result["results"]) == 2
             assert result["results"][0]["title"] == "Test Result 1"
             assert result["results"][0]["url"] == "https://example.com/1"
             assert result["results"][0]["content"] == "This is the content snippet."
 
-            # Verify Brave API was called with correct params
-            call_kwargs = mock_client.get.call_args
-            assert call_kwargs[1]["params"]["q"] == "test query"
-            assert call_kwargs[1]["params"]["count"] == 5
+            # Verify Exa API was called with POST
+            call_kwargs = mock_client.post.call_args
+            body = call_kwargs[1]["json"]
+            assert body["query"] == "test query"
+            assert body["numResults"] == 5
 
     @pytest.mark.asyncio
-    async def test_max_results_clamping(self, tool):
+    async def test_advanced_search_uses_neural(self, tool):
         mock_response = AsyncMock(spec=httpx.Response)
         mock_response.status_code = 200
-        mock_response.json.return_value = _brave_response()
+        mock_response.json.return_value = _exa_response()
         mock_response.raise_for_status = lambda: None
 
         with patch("seer.tools.websearch.web_search.config") as mock_config, \
-             patch("seer.tools.websearch.brave_client.config") as mock_bc_config, \
+             patch("seer.tools.websearch.exa_client.config") as mock_exa_config, \
              patch("httpx.AsyncClient") as mock_client_cls:
-            mock_config.brave_search_api_key = "test-api-key"
-            mock_bc_config.brave_search_api_key = "test-api-key"
+            mock_config.exa_api_key = "test-api-key"
+            mock_exa_config.exa_api_key = "test-api-key"
 
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
-            # Test clamping to minimum (1)
-            await tool.execute(
-                access_token=None,
-                arguments={"query": "test", "max_results": 0},
-            )
-            assert mock_client.get.call_args[1]["params"]["count"] == 1
-
-            # Test clamping to maximum (10)
-            await tool.execute(
-                access_token=None,
-                arguments={"query": "test", "max_results": 20},
-            )
-            assert mock_client.get.call_args[1]["params"]["count"] == 10
-
-    @pytest.mark.asyncio
-    async def test_advanced_search_depth(self, tool):
-        mock_response = AsyncMock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = _brave_response()
-        mock_response.raise_for_status = lambda: None
-
-        with patch("seer.tools.websearch.web_search.config") as mock_config, \
-             patch("seer.tools.websearch.brave_client.config") as mock_bc_config, \
-             patch("httpx.AsyncClient") as mock_client_cls:
-            mock_config.brave_search_api_key = "test-api-key"
-            mock_bc_config.brave_search_api_key = "test-api-key"
-
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get.return_value = mock_response
+            mock_client.post.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
             await tool.execute(
@@ -213,34 +190,62 @@ class TestWebSearchToolExecution:
                 arguments={"query": "test", "search_depth": "advanced"},
             )
 
-            assert mock_client.get.call_args[1]["params"]["summary"] == 1
+            body = mock_client.post.call_args[1]["json"]
+            assert body["type"] == "neural"
 
     @pytest.mark.asyncio
-    async def test_include_raw_content(self, tool):
-        brave_resp = _brave_response(
-            results=[{
-                "title": "Test Result",
-                "url": "https://example.com/1",
-                "description": "Snippet",
-                "extra_snippets": ["Full page content here..."],
-            }],
-        )
-
+    async def test_basic_search_uses_auto(self, tool):
         mock_response = AsyncMock(spec=httpx.Response)
         mock_response.status_code = 200
-        mock_response.json.return_value = brave_resp
+        mock_response.json.return_value = _exa_response()
         mock_response.raise_for_status = lambda: None
 
         with patch("seer.tools.websearch.web_search.config") as mock_config, \
-             patch("seer.tools.websearch.brave_client.config") as mock_bc_config, \
+             patch("seer.tools.websearch.exa_client.config") as mock_exa_config, \
              patch("httpx.AsyncClient") as mock_client_cls:
-            mock_config.brave_search_api_key = "test-api-key"
-            mock_bc_config.brave_search_api_key = "test-api-key"
+            mock_config.exa_api_key = "test-api-key"
+            mock_exa_config.exa_api_key = "test-api-key"
 
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get.return_value = mock_response
+            mock_client.post.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            await tool.execute(
+                access_token=None,
+                arguments={"query": "test", "search_depth": "basic"},
+            )
+
+            body = mock_client.post.call_args[1]["json"]
+            assert body["type"] == "auto"
+
+    @pytest.mark.asyncio
+    async def test_include_raw_content(self, tool):
+        exa_resp = _exa_response(
+            results=[{
+                "title": "Test Result",
+                "url": "https://example.com/1",
+                "text": "Full page content here...",
+            }],
+            highlights=[["Snippet"]],
+        )
+
+        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.json.return_value = exa_resp
+        mock_response.raise_for_status = lambda: None
+
+        with patch("seer.tools.websearch.web_search.config") as mock_config, \
+             patch("seer.tools.websearch.exa_client.config") as mock_exa_config, \
+             patch("httpx.AsyncClient") as mock_client_cls:
+            mock_config.exa_api_key = "test-api-key"
+            mock_exa_config.exa_api_key = "test-api-key"
+
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
             result = await tool.execute(
@@ -254,19 +259,19 @@ class TestWebSearchToolExecution:
     async def test_no_answer_when_disabled(self, tool):
         mock_response = AsyncMock(spec=httpx.Response)
         mock_response.status_code = 200
-        mock_response.json.return_value = _brave_response()
+        mock_response.json.return_value = _exa_response()
         mock_response.raise_for_status = lambda: None
 
         with patch("seer.tools.websearch.web_search.config") as mock_config, \
-             patch("seer.tools.websearch.brave_client.config") as mock_bc_config, \
+             patch("seer.tools.websearch.exa_client.config") as mock_exa_config, \
              patch("httpx.AsyncClient") as mock_client_cls:
-            mock_config.brave_search_api_key = "test-api-key"
-            mock_bc_config.brave_search_api_key = "test-api-key"
+            mock_config.exa_api_key = "test-api-key"
+            mock_exa_config.exa_api_key = "test-api-key"
 
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get.return_value = mock_response
+            mock_client.post.return_value = mock_response
             mock_client_cls.return_value = mock_client
 
             result = await tool.execute(
@@ -277,18 +282,18 @@ class TestWebSearchToolExecution:
             assert "answer" not in result
 
     @pytest.mark.asyncio
-    async def test_brave_api_error(self, tool):
+    async def test_exa_api_error(self, tool):
         with patch("seer.tools.websearch.web_search.config") as mock_config, \
-             patch("seer.tools.websearch.brave_client.config") as mock_bc_config, \
+             patch("seer.tools.websearch.exa_client.config") as mock_exa_config, \
              patch("httpx.AsyncClient") as mock_client_cls:
-            mock_config.brave_search_api_key = "test-api-key"
-            mock_bc_config.brave_search_api_key = "test-api-key"
+            mock_config.exa_api_key = "test-api-key"
+            mock_exa_config.exa_api_key = "test-api-key"
 
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get.side_effect = httpx.HTTPStatusError(
-                "429 Too Many Requests", request=httpx.Request("GET", "https://example.com"), response=httpx.Response(429)
+            mock_client.post.side_effect = httpx.HTTPStatusError(
+                "429 Too Many Requests", request=httpx.Request("POST", "https://api.exa.ai/search"), response=httpx.Response(429)
             )
             mock_client_cls.return_value = mock_client
 

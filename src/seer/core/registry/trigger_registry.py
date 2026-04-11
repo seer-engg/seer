@@ -449,7 +449,14 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             title="Scheduled / Recurring Timer",
             provider="schedule",
             mode="polling",
-            description="Run workflow on a recurring schedule — daily, hourly, weekly, every N minutes. Uses cron expressions with timezone support.",
+            description=(
+                "Run workflow on a recurring schedule. Supports: every morning, "
+                "every day at a specific time, hourly, weekly, every N minutes, "
+                "cron schedule, timer, periodic, interval. Uses cron expressions "
+                "with timezone support. Use this when the user mentions time "
+                "patterns like 'at 9am', 'every morning', 'daily', 'hourly', "
+                "'every Monday', 'each week', or any recurring schedule."
+            ),
             schemas=TriggerSchemas(
                 event=_enveloped_event_schema(_cron_schedule_payload_schema()),
                 config=_cron_schedule_config_schema(),

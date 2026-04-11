@@ -145,7 +145,7 @@ def search_tools_intent(
 async def async_search_tools_intent(
     query: str,
     integration_filter: Optional[str] = None,
-    top_k: int = 5,
+    top_k: int = 10,
 ) -> List[Dict[str, Any]]:
     """Embedding-based tool search via _EmbeddingToolIndex."""
     return await _embedding_index.search_tools(query, top_k=top_k, integration_filter=integration_filter)
@@ -268,13 +268,22 @@ def get_available_providers() -> List[str]:
 
 
 class _EmbeddingToolIndex:
-    """Lazy-init embedding index for tool and trigger search."""
+    """Lazy-init embedding index for tool and trigger search.
+
+    Uses hybrid scoring: alpha * embedding_similarity + (1-alpha) * tfidf_score.
+    TF-IDF catches exact keyword matches that pure embeddings miss.
+    """
+
+    # Weight for embeddings vs TF-IDF (0.7 = 70% embeddings, 30% TF-IDF)
+    ALPHA = 0.7
 
     def __init__(self):
         self._tool_embeddings: np.ndarray | None = None
         self._tool_catalog: List[Dict[str, Any]] = []
+        self._tool_tfidf: _ToolIndex | None = None
         self._trigger_embeddings: np.ndarray | None = None
         self._trigger_data: List[Dict[str, Any]] = []
+        self._trigger_tfidf: _ToolIndex | None = None
 
     async def _ensure_tools(self):
         if self._tool_embeddings is not None:
@@ -284,6 +293,8 @@ class _EmbeddingToolIndex:
         svc = get_embedding_service()
         vecs = await svc.embed_texts(texts)
         self._tool_embeddings = np.array(vecs)
+        # Build TF-IDF index from same catalog
+        self._tool_tfidf = _ToolIndex(self._tool_catalog)
 
     async def _ensure_triggers(self):
         if self._trigger_embeddings is not None:
@@ -291,6 +302,7 @@ class _EmbeddingToolIndex:
         all_triggers = trigger_registry.all()
         self._trigger_data = []
         texts = []
+        trigger_catalog = []
         for t in all_triggers:
             text = f"{t.key} {t.title}: {t.description or ''}"
             texts.append(text)
@@ -302,47 +314,77 @@ class _EmbeddingToolIndex:
                 "sample_event": t.meta.sample_event if t.meta.sample_event else None,
                 "requires_connection": t.meta.requires_connection,
             })
+            trigger_catalog.append({"name": t.key, "description": f"{t.title} {t.description or ''}"})
         svc = get_embedding_service()
         vecs = await svc.embed_texts(texts)
         self._trigger_embeddings = np.array(vecs)
+        self._trigger_tfidf = _ToolIndex(trigger_catalog)
 
-    async def search_tools(self, query: str, top_k: int = 5, integration_filter: str | None = None) -> List[Dict]:
-        """Search tools by embedding similarity."""
+    @staticmethod
+    def _merge_scores(embedding_sims: np.ndarray, tfidf_indices: List[int], alpha: float) -> np.ndarray:
+        """Merge embedding similarity with TF-IDF scores using weighted combination."""
+        n = len(embedding_sims)
+        tfidf_scores = np.zeros(n)
+        if tfidf_indices:
+            # TF-IDF returns ranked indices — assign descending scores
+            max_rank = len(tfidf_indices)
+            for rank, idx in enumerate(tfidf_indices):
+                tfidf_scores[idx] = (max_rank - rank) / max_rank
+        # Normalize embedding sims to 0-1
+        e_min, e_max = embedding_sims.min(), embedding_sims.max()
+        if e_max > e_min:
+            normed_emb = (embedding_sims - e_min) / (e_max - e_min)
+        else:
+            normed_emb = np.zeros_like(embedding_sims)
+        return alpha * normed_emb + (1 - alpha) * tfidf_scores
+
+    async def search_tools(self, query: str, top_k: int = 10, integration_filter: str | None = None) -> List[Dict]:
+        """Search tools by hybrid embedding + TF-IDF similarity."""
         await self._ensure_tools()
         svc = get_embedding_service()
         q_vec = np.array(await svc.embed_query(query))
         norms = np.linalg.norm(self._tool_embeddings, axis=1) * np.linalg.norm(q_vec)
-        sims = (self._tool_embeddings @ q_vec) / np.where(norms == 0, 1, norms)
+        emb_sims = (self._tool_embeddings @ q_vec) / np.where(norms == 0, 1, norms)
 
-        indices = np.argsort(sims)[::-1]
+        # Get TF-IDF scores (request more than top_k to have full ranking)
+        tfidf_indices = self._tool_tfidf.search(query, top_k=len(self._tool_catalog)) if self._tool_tfidf else []
+        scores = self._merge_scores(emb_sims, tfidf_indices, self.ALPHA)
+
+        indices = np.argsort(scores)[::-1]
         results = []
         for idx in indices:
             tool = {**self._tool_catalog[int(idx)]}
             if integration_filter and tool.get("integration", "") != integration_filter.lower():
                 continue
-            tool["confidence_score"] = float(sims[idx])
+            tool["confidence_score"] = float(scores[idx])
             tool.pop("keywords", None)
             tool.pop("capabilities", None)
+            tool.pop("parameters", None)
+            tool.pop("resource_pickers", None)
             results.append(tool)
             if len(results) >= top_k:
                 break
         return results
 
     async def search_triggers(self, query: str, top_k: int = 10, provider_filter: str | None = None) -> List[Dict]:
-        """Search triggers by embedding similarity."""
+        """Search triggers by hybrid embedding + TF-IDF similarity."""
         await self._ensure_triggers()
         svc = get_embedding_service()
         q_vec = np.array(await svc.embed_query(query))
         norms = np.linalg.norm(self._trigger_embeddings, axis=1) * np.linalg.norm(q_vec)
-        sims = (self._trigger_embeddings @ q_vec) / np.where(norms == 0, 1, norms)
+        emb_sims = (self._trigger_embeddings @ q_vec) / np.where(norms == 0, 1, norms)
 
-        indices = np.argsort(sims)[::-1]
+        # Get TF-IDF scores
+        tfidf_indices = self._trigger_tfidf.search(query, top_k=len(self._trigger_data)) if self._trigger_tfidf else []
+        scores = self._merge_scores(emb_sims, tfidf_indices, self.ALPHA)
+
+        indices = np.argsort(scores)[::-1]
         results = []
         for idx in indices:
             trig = {**self._trigger_data[int(idx)]}
             if provider_filter and provider_filter.lower() not in trig["provider"].lower():
                 continue
-            trig["confidence_score"] = float(sims[idx])
+            trig["confidence_score"] = float(scores[idx])
             results.append(trig)
             if len(results) >= top_k:
                 break
@@ -351,10 +393,22 @@ class _EmbeddingToolIndex:
     def invalidate(self):
         """Reset cache (for testing or after tool registry changes)."""
         self._tool_embeddings = None
+        self._tool_tfidf = None
         self._trigger_embeddings = None
+        self._trigger_tfidf = None
 
 
 _embedding_index = _EmbeddingToolIndex()
+
+
+async def warm_embedding_index() -> None:
+    """Pre-compute tool and trigger embeddings. Call at server startup to avoid first-request latency."""
+    # pylint: disable=protected-access # Reason: warming index requires accessing private members
+    await _embedding_index._ensure_tools()
+    await _embedding_index._ensure_triggers()
+    logger.info("Embedding index warmed: %d tools, %d triggers",
+                len(_embedding_index._tool_catalog),
+                len(_embedding_index._trigger_data))
 
 
 async def async_search_triggers_intent(

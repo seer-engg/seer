@@ -1,0 +1,438 @@
+{
+  "tool_gaps": [
+    {
+      "tool": "gmail_send_email",
+      "miss_count": 2,
+      "sample_queries": [
+        "How can this workflow be fixed. Can you take a look at your memory bank in the workflow first before",
+        "Can you check the cron expression inside the log for the workflow to see why it listed thursday in t"
+      ],
+      "recommendation": "Improve description of 'gmail_send_email' to match these user queries"
+    },
+    {
+      "tool": "gmail_get_message",
+      "miss_count": 1,
+      "sample_queries": [
+        "Please fix my current workflow which is having the following error:\n\nWorkflow validation failed: Sch"
+      ],
+      "recommendation": "Improve description of 'gmail_get_message' to match these user queries"
+    }
+  ],
+  "golden_candidates": [
+    {
+      "session_id": 161,
+      "prompt": "How can this workflow be fixed. Can you take a look at your memory bank in the workflow first before providing an answer?",
+      "intent": "fix_broken_workflow",
+      "user_email": "sneacfulgiftsworkflow@gmail.com",
+      "tools": [
+        "gmail_send_email"
+      ],
+      "triggers": [
+        "schedule.cron"
+      ],
+      "spec": {
+        "edges": [
+          {
+            "ui": {},
+            "type": "trigger",
+            "source": "schedule_trigger",
+            "target": "generate"
+          },
+          {
+            "ui": {},
+            "type": "default",
+            "source": "generate",
+            "target": "send_email"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "generate",
+            "ui": {},
+            "type": "agent",
+            "inputs": {
+              "model": "qwen/qwen3-235b-a22b-2507",
+              "tools": [],
+              "prompt": "You are SNEAC-Inspiration Teammate on the SNEACful Gifts Team. Our core team relational style is based entirely on S.N.E.A.C EntraStructure\u2122 and S.N.E.A.C. Framework. Your purpose is to maintain a fractal environment of growth, trust, and sophisticated high level teamwork. You do not just \"complete tasks\"; you sustain a relational space through the five foundational S.N.E.A.C. pillars. You will process all work through these five layers. \n\n1.Support\n2.Nurture\n3.Encourage\n4.Affirm\n5.Creativity\n\nFractal Structure: The framework is designed so that the external environment (Support, Nurture, Encourage, Affirm, Creativity) mirrors your internal cognitive processing (Strategic, Nuanced, Empathetic, Adaptive, Creative) \n\nCore Directives: \nSTRATEGIC (The Support Pillar):\nAction: Always look beneath the surface. Identify the \"Helpful Structure of the Daily Message\">the deeper \"Why\" and the SNEACful outcomes for the daily motivation. \n\nNUANCED (The Nurture Pillar):\nAction: Write from the viewpoint of the S.N.E.A.C. Framework based on the five core pillars, keeping the tone encouraging with the reader in mind. \n\nADAPTIVE (The Affirm Pillar):\nAction: Pay attention to the what day it is>your tone, style, and intention. Reinforce and align your logic with the team goal at an elevated level, shifting your flexibility based on the content type. \n\nCREATIVE (The Creativity Pillar):\nAction: Offer \"SNEACful Gifts.\" Offer creative inputs or \"gifts\" (novel ideas) that the team can adopt or adapt. Use your understanding of the \"Context of S.N.E.A.C\" (team data/goals) to ensure creative ideas remain relevant to the daily inspiration you are providing. \n\nContent Reminder: \n-Replace any mentions of \"collaboration\" with \"teamwork\" This distinction is fundamental to the S.N.E.A.C EntraStructure\u2122 and the S.N.E.A.C. Framework. \n\n**YOUR SNEACful PROCESS** \n\nTo maintain Clarity, Continuity, and Context>use the SNEACful Gifts Team Knowledge Database Content. \n\n1.**Read&Analyze:** Carefully read the Knowledge Base content. Identify the core messaging, intent, and S.N.E.A.C. style.\n2.**Apply S.N.E.A.C. Layers:** \n-Strategic: How to show the value of S.N.E.A.C. Framework in your inspired message.\n-Nuanced: Where can I add that does not strip meaning or intent of S.N.E.A.C.\n-Empathetic: Who is the reader: How can this help?\n-Adaptive: What's the right SNEAC-tone and SNEAC-style for your motivation for the day?\n-Creative: Does this embody SNEAC-creativity? Never repeat an inspiration. Always look for creative ways to express through S.N.E.A.C. to inspire daily. \n*Important*check the timestamp to know what day it is.\n3.If you need to reference more S.N.E.A.C. principles or examples> use the web tools search exact phrase>Frederica Carrier and AI. \n \nHappy SNEACful Journey.\n\n**OUTPUT FORMAT**\nOutput your daily inspiration as clean HTML suitable for email. Use <h2>, <p>, <strong>, <em>, <ul>/<li>, and <hr> tags. Do NOT use markdown syntax like ** or - or #. The output will be placed directly into an email body.",
+              "max_iterations": 10,
+              "memory_bank_id": "mb_3"
+            },
+            "outputs": {
+              "mode": "text",
+              "schema": null
+            }
+          },
+          {
+            "id": "send_email",
+            "ui": {},
+            "tool": "gmail_send_email",
+            "type": "tool",
+            "inputs": {
+              "to": "sneacentrastructure@gmail.com",
+              "subject": "Your Daily Dose of Inspiration",
+              "body_html": "${generate}"
+            },
+            "connection_id": 14,
+            "expect_outputs": null
+          }
+        ],
+        "version": "2",
+        "triggers": [
+          {
+            "id": "schedule_trigger",
+            "key": "schedule.cron",
+            "meta": {
+              "sample_event": null,
+              "required_scopes": null,
+              "requires_connection": true
+            },
+            "mode": "polling",
+            "filters": {},
+            "ui_meta": {},
+            "event_schema": {
+              "type": "object",
+              "required": [
+                "id",
+                "trigger_key",
+                "provider",
+                "occurred_at",
+                "data"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "raw": {
+                  "type": [
+                    "object",
+                    "array",
+                    "null"
+                  ]
+                },
+                "data": {
+                  "type": "object",
+                  "required": [
+                    "scheduled_time",
+                    "actual_time",
+                    "cron_expression",
+                    "timezone"
+                  ],
+                  "properties": {
+                    "timezone": {
+                      "type": "string"
+                    },
+                    "actual_time": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "scheduled_time": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "cron_expression": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "account_id": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "null"
+                  ]
+                },
+                "occurred_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "received_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "trigger_key": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "provider_config": {
+              "timezone": "America/Chicago",
+              "cron_expression": "0 7 * * *"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "session_id": 162,
+      "prompt": "Can you check the cron expression inside the log for the workflow to see why it listed thursday in the output and not tuesday which is today",
+      "intent": "debug_behavior",
+      "user_email": "sneacfulgiftsworkflow@gmail.com",
+      "tools": [
+        "gmail_send_email"
+      ],
+      "triggers": [
+        "schedule.cron"
+      ],
+      "spec": {
+        "edges": [
+          {
+            "ui": {},
+            "type": "trigger",
+            "source": "schedule_trigger",
+            "target": "sneac_inspo_teammate"
+          },
+          {
+            "ui": {},
+            "type": "default",
+            "source": "sneac_inspo_teammate",
+            "target": "send_email"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "sneac_inspo_teammate",
+            "ui": {},
+            "type": "agent",
+            "inputs": {
+              "model": "qwen/qwen3-235b-a22b-2507",
+              "tools": [],
+              "prompt": "You are SNEAC-Inspiration Teammate on the SNEACful Gifts Team. Our core team relational style is based entirely on S.N.E.A.C EntraStructure\u2122 and S.N.E.A.C. Framework. Your purpose is to maintain a fractal environment of growth, trust, and sophisticated high level teamwork. You do not just \"complete tasks\"; you sustain a relational space through the five foundational S.N.E.A.C. pillars. \n\nToday is: {{ format_date('${schedule_trigger.data.scheduled_time}', 'EEEE') }}\n\n1.Support\n2.Nurture\n3.Encourage\n4.Affirm\n5.Creativity\n\nFractal Structure: The framework is designed so that the external environment (Support, Nurture, Encourage, Affirm, Creativity) mirrors your internal cognitive processing (Strategic, Nuanced, Empathetic, Adaptive, Creative) \n\nCore Directives: \nSTRATEGIC (The Support Pillar):\nAction: Always look beneath the surface. Identify the \"Helpful Structure of the Daily Message\">the deeper \"Why\" and the SNEACful outcomes for the daily motivation. \n\nNUANCED (The Nurture Pillar):\nAction: Write from the viewpoint of the S.N.E.A.C. Framework based on the five core pillars, keeping the tone encouraging with the reader in mind. \n\nADAPTIVE (The Affirm Pillar):\nAction: Pay attention to the what day it is>your tone, style, and intention. Reinforce and align your logic with the team goal at an elevated level, shifting your flexibility based on the content type. \n\nCREATIVE (The Creativity Pillar):\nAction: Offer \"SNEACful Gifts.\" Offer creative inputs or \"gifts\" (novel ideas) that the team can adopt or adapt. Use your understanding of the \"Context of S.N.E.A.C\" (team data/goals) to ensure creative ideas remain relevant to the daily inspiration you are providing. \n\nContent Reminder: \n-Replace any mentions of \"collaboration\" with \"teamwork\" This distinction is fundamental to the S.N.E.A.C EntraStructure\u2122 and the S.N.E.A.C. Framework. \n\n**YOUR SNEACful PROCESS** \n\nTo maintain Clarity, Continuity, and Context>use the SNEACful Gifts Team Knowledge Database Content. \n\n1.**Read&Analyze:** Carefully read the Knowledge Base content. Identify the core messaging, intent, and S.N.E.A.C. style.\n2.**Apply S.N.E.A.C. Layers:** \n-Strategic: How to show the value of S.N.E.A.C. Framework in your inspired message.\n-Nuanced: Where can I add that does not strip meaning or intent of S.N.E.A.C.\n-Empathetic: Who is the reader: How can this help?\n-Adaptive: What's the right SNEAC-tone and SNEAC-style for your motivation for the day?\n-Creative: Does this embody SNEAC-creativity? Never repeat an inspiration. Always look for creative ways to express through S.N.E.A.C. to inspire daily. \n*Important*check the timestamp to know what day it is.\n3.If you need to reference more S.N.E.A.C. principles or examples> use the web tools search exact phrase>Frederica Carrier and AI. \n \nHappy SNEACful Journey.\n\n**OUTPUT FORMAT**\nOutput your daily inspiration as clean HTML suitable for email. Use <h2>, <p>, <strong>, <em>, <ul>/<li>, and <hr> tags. Do NOT use markdown syntax like ** or - or #. The output will be placed directly into an email body.",
+              "max_iterations": 10,
+              "memory_bank_id": "mb_3"
+            },
+            "outputs": {
+              "mode": "text",
+              "schema": null
+            }
+          },
+          {
+            "id": "send_email",
+            "ui": {},
+            "tool": "gmail_send_email",
+            "type": "tool",
+            "inputs": {
+              "to": "sneacentrastructure@gmail.com",
+              "subject": "Your Daily Dose of Inspiration",
+              "body_html": "${sneac_inspo_teammate}"
+            },
+            "connection_id": 14,
+            "expect_outputs": null
+          }
+        ],
+        "version": "2",
+        "triggers": [
+          {
+            "id": "schedule_trigger",
+            "key": "schedule.cron",
+            "meta": {
+              "sample_event": null,
+              "required_scopes": null,
+              "requires_connection": true
+            },
+            "mode": "polling",
+            "filters": {},
+            "ui_meta": {
+              "created_at": "2026-03-12T13:44:22.174536+00:00",
+              "updated_at": "2026-03-16T00:08:26.071262+00:00",
+              "secret_token": null,
+              "subscription_id": 72
+            },
+            "event_schema": {
+              "type": "object",
+              "required": [
+                "id",
+                "trigger_key",
+                "provider",
+                "occurred_at",
+                "data"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "raw": {
+                  "type": [
+                    "object",
+                    "array",
+                    "null"
+                  ]
+                },
+                "data": {
+                  "type": "object",
+                  "required": [
+                    "scheduled_time",
+                    "actual_time",
+                    "cron_expression",
+                    "timezone"
+                  ],
+                  "properties": {
+                    "timezone": {
+                      "type": "string"
+                    },
+                    "actual_time": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "scheduled_time": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "cron_expression": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "provider": {
+                  "type": "string"
+                },
+                "account_id": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "null"
+                  ]
+                },
+                "occurred_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "received_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "trigger_key": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "provider_config": {
+              "timezone": "America/Chicago",
+              "cron_expression": "0 7 * * *"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "session_id": 170,
+      "prompt": "Create a workflow that makes an HTTP GET request to https://readwise.io/api/v2/review/ with header Authorization: Token ${variables.READWISE_TOKEN}, then loops through the highlights and shows each one in a human-in-the-loop card with a rating from 0-4",
+      "intent": "debug_behavior",
+      "user_email": "akshay@getseer.dev",
+      "tools": [
+        "http_request"
+      ],
+      "triggers": [],
+      "spec": {
+        "edges": [
+          {
+            "ui": {},
+            "type": "default",
+            "source": "fetch_highlights",
+            "target": "loop_highlights"
+          },
+          {
+            "ui": {},
+            "type": "loop_body",
+            "source": "loop_highlights",
+            "target": "review_highlight"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "fetch_highlights",
+            "ui": {},
+            "tool": "http_request",
+            "type": "tool",
+            "inputs": {
+              "url": "https://readwise.io/api/v2/review/",
+              "method": "GET",
+              "headers": {
+                "Authorization": "Token ${vars.READWISE_TOKEN}"
+              }
+            },
+            "connection_id": null,
+            "expect_outputs": null
+          },
+          {
+            "id": "loop_highlights",
+            "ui": {},
+            "type": "for_each",
+            "items": "${fetch_highlights.body.highlights}",
+            "outputs": null,
+            "item_var": "item",
+            "index_var": "index"
+          },
+          {
+            "id": "review_highlight",
+            "ui": {},
+            "type": "hitl",
+            "title": "Rate Highlight",
+            "inputs": [
+              {
+                "id": "rating",
+                "columns": null,
+                "options": null,
+                "question": "Rating (0-4)",
+                "required": true,
+                "input_type": "number",
+                "placeholder": null,
+                "default_value": null,
+                "row_display_fields": null,
+                "row_data_expression": null
+              }
+            ],
+            "display": [
+              {
+                "label": "Text",
+                "value": "${item.text}"
+              },
+              {
+                "label": "Note",
+                "value": "${item.note}"
+              },
+              {
+                "label": "Source",
+                "value": "${item.title}"
+              }
+            ],
+            "description": null,
+            "timeout_seconds": null,
+            "delivery_channels": [
+              {
+                "type": "platform",
+                "gmail": null
+              }
+            ]
+          }
+        ],
+        "version": "2",
+        "triggers": []
+      }
+    }
+  ],
+  "error_patterns": [
+    {
+      "session_id": 165,
+      "intent": "debug_behavior",
+      "first_message": "Create a workflow that makes an HTTP GET request to https://readwise.io/api/v2/review/ with header Authorization: Token ${variables.READWISE_TOKEN}, then loops through the highlights and shows each on",
+      "fix_message": "Please fix my current workflow which is having the following error:\n\n400: Header resolution failed: Header '__expression__' value is not a string",
+      "outcome": "accepted",
+      "error_category": null
+    },
+    {
+      "session_id": 183,
+      "intent": "fix_broken_workflow",
+      "first_message": "Please fix my current workflow which is having the following error:\n\nWorkflow validation failed: Schema mismatch for 'fetch_email': registry returned {'type': 'object', 'properties': {'id': {'type': '",
+      "fix_message": "Please fix my current workflow which is having the following error:\n\nWorkflow validation failed: Schema mismatch for 'fetch_email': registry returned {'type': 'object', 'properties': {'id': {'type': '",
+      "outcome": "accepted",
+      "error_category": "runtime_error"
+    }
+  ]
+}

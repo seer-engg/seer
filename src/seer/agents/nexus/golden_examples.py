@@ -316,7 +316,7 @@ GOLDEN_EXAMPLES: List[GoldenExample] = [
     GoldenExample(
         prompt="Query new orders from Supabase and create a Notion page for each one",
         expected_tools=["supabase_table_query", "notion_create_page"],
-        expected_triggers=["schedule.cron"],
+        expected_triggers=["schedule.cron", "webhook.supabase.db_changes"],
         tags=["supabase", "notion", "for_each", "sync"],
         spec={
             "version": "2",
@@ -362,6 +362,77 @@ GOLDEN_EXAMPLES: List[GoldenExample] = [
                 {"source": "query_orders", "target": "loop_orders", "type": "default"},
                 {"source": "loop_orders", "target": "create_notion_page", "type": "loop_body"},
                 {"source": "loop_orders", "target": "loop_orders", "type": "loop_exit"},
+            ],
+        },
+    ),
+
+    # 7. Gmail incoming → KB lookup → draft reply
+    GoldenExample(
+        prompt=(
+            "Create an automated email responder that reads incoming Gmail messages,"
+            " looks up answers in my knowledge base, and drafts helpful replies."
+        ),
+        expected_tools=["gmail_get_message", "kb_query", "gmail_create_draft"],
+        expected_triggers=["poll.gmail.email_received"],
+        tags=["gmail", "knowledge", "email", "auto-reply", "draft"],
+        spec={
+            "version": "2",
+            "triggers": [
+                {
+                    "id": "new_email",
+                    "key": "poll.gmail.email_received",
+                    "mode": "polling",
+                    "provider_config": {},
+                    "event_schema": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "threadId": {"type": "string"},
+                            "from": {"type": "string"},
+                            "subject": {"type": "string"},
+                            "snippet": {"type": "string"},
+                        },
+                    },
+                    "meta": {},
+                    "filters": {},
+                    "ui_meta": {},
+                }
+            ],
+            "nodes": [
+                {
+                    "id": "get_email",
+                    "type": "tool",
+                    "tool": "gmail_get_message",
+                    "inputs": {
+                        "message_id": "${new_email.event.id}",
+                    },
+                },
+                {
+                    "id": "search_kb",
+                    "type": "tool",
+                    "tool": "kb_query",
+                    "inputs": {
+                        "kb_id": "${variables.KB_ID}",
+                        "query": "${get_email.body.snippet}",
+                        "top_k": 3,
+                    },
+                },
+                {
+                    "id": "draft_reply",
+                    "type": "tool",
+                    "tool": "gmail_create_draft",
+                    "inputs": {
+                        "to": "${get_email.body.from}",
+                        "subject": "Re: ${get_email.body.subject}",
+                        "body": "Based on your question: ${search_kb.results[0].content}",
+                        "thread_id": "${get_email.body.threadId}",
+                    },
+                },
+            ],
+            "edges": [
+                {"source": "new_email", "target": "get_email", "type": "trigger"},
+                {"source": "get_email", "target": "search_kb", "type": "default"},
+                {"source": "search_kb", "target": "draft_reply", "type": "default"},
             ],
         },
     ),

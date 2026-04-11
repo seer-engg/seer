@@ -136,7 +136,7 @@ async def search_tools_impl(
                 "suggestion": "Try rephrasing with action verbs (create, send, list, search, etc.)"
             })
 
-        # Format top match with rich details including resource_pickers
+        # Format top match with rich details
         top_tool = results[0]
         top_match = {
             "tool": top_tool.get("name"),
@@ -144,7 +144,6 @@ async def search_tools_impl(
             "confidence": top_tool.get("confidence_score", 0),
             "description": top_tool.get("description", ""),
             "parameters": top_tool.get("parameters", {}),
-            "resource_pickers": top_tool.get("resource_pickers", {}),
         }
 
         # Format alternatives

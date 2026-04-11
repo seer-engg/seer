@@ -1,5 +1,5 @@
 """
-Web search tool using Brave Search API.
+Web search tool using Exa Search API.
 
 Provides real-time web search capability for agent nodes to fetch
 current information that may not be available in the LLM's training data.
@@ -22,11 +22,11 @@ logger = get_logger("tools.websearch")
 
 
 class WebSearchTool(BaseTool):
-    """Search the web using Brave Search API for current information."""
+    """Search the web using Exa Search API for current information."""
 
     name = "web_search"
     description = (
-        "Search the web for current information using Brave Search API. "
+        "Search the web for current information using Exa Search API. "
         "Use this when you need up-to-date information that may not be in your training data, "
         "such as recent events, current documentation, or real-time data."
     )
@@ -109,17 +109,17 @@ class WebSearchTool(BaseTool):
         include_answer: bool = arguments.get("include_answer", True)
         include_raw_content: bool = arguments.get("include_raw_content", False)
 
-        if not config.brave_search_api_key:
+        if not config.exa_api_key:
             raise HTTPException(
                 status_code=503,
-                detail="Web search is not available: Brave Search API key not configured. "
-                "Set BRAVE_SEARCH_API_KEY environment variable to enable web search.",
+                detail="Web search is not available: Exa API key not configured. "
+                "Set EXA_API_KEY environment variable to enable web search.",
             )
 
         try:
-            from seer.tools.websearch.brave_client import brave_search  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
+            from seer.tools.websearch.exa_client import exa_search  # pylint: disable=import-outside-toplevel # Reason: Avoid circular imports
 
-            return await brave_search(
+            return await exa_search(
                 query=query,
                 max_results=max_results,
                 search_depth=search_depth,
@@ -130,7 +130,7 @@ class WebSearchTool(BaseTool):
             logger.exception("Web search failed: %s", e)
             raise HTTPException(
                 status_code=502,
-                detail=f"Web search failed: {e}. Check your Brave Search API key and try again.",
+                detail=f"Web search failed: {e}. Check your Exa API key and try again.",
             ) from e
 
 
