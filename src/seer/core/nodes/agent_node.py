@@ -1155,6 +1155,8 @@ class AgentNodeType(BaseNodeType):
         schema = services.type_env.get(node.id)
         if schema is None:
             return None
+        if not schema.get("properties"):
+            return None
         return ToolStrategy(_create_output_model_from_schema(node.id, schema))
 
     async def _build_bound_tools(
@@ -1366,6 +1368,8 @@ class AgentNodeType(BaseNodeType):
             return final_output
         schema = services.type_env.get(node.id)
         if schema is None:
+            return final_output
+        if not schema.get("properties"):
             return final_output
         structured_response = result.get("structured_response")
         if structured_response is not None:
