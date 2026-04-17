@@ -1,0 +1,90 @@
+name: Deploy Frontend to AWS
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'seer-frontend/**'
+
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - main
+
+concurrency:
+  group: deploy-frontend-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-24.04
+    environment: ${{ github.ref == 'refs/heads/main' && 'fe-main' || 'fe-dev' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: seer-frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: seer-frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: seer-frontend
+        env:
+          VITE_BACKEND_API_URL: ${{ secrets.VITE_BACKEND_API_URL }}
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          VITE_POSTHOG_API_KEY: ${{ secrets.VITE_POSTHOG_API_KEY }}
+          VITE_POSTHOG_HOST: "https://us.i.posthog.com"
+          VITE_GA_MEASUREMENT_ID: ${{ secrets.VITE_GA_MEASUREMENT_ID }}
+          VITE_SUPERVISOR_URL: ${{ secrets.VITE_SUPERVISOR_URL }}
+          VITE_EVALS_URL: ${{ secrets.VITE_EVALS_URL }}
+          VITE_LOGO_DEV_TOKEN: ${{ secrets.VITE_LOGO_DEV_TOKEN }}
+          VITE_APP_VERSION: ${{ github.sha }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: npm run build
+
+      - name: Deploy to S3
+        working-directory: seer-frontend
+        run: |
+          # Sync all files except index.html with long cache (Vite hashes filenames)
+          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_FRONTEND }}/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "*.map"
+
+          # Upload index.html with no-cache (entry point must always be fresh)
+          aws s3 cp dist/index.html s3://${{ secrets.S3_BUCKET_FRONTEND }}/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/index.html"
