@@ -332,6 +332,8 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
             ),
             meta=TriggerMetadata(
                 sample_event=_gmail_email_received_sample_event(),
+                # RCA(wf_70): Gmail trigger requires readonly scope for polling.
+                # Without this, a connection with only gmail.send silently 403s at runtime.
                 required_scopes=["https://www.googleapis.com/auth/gmail.readonly"],
             ),
         )

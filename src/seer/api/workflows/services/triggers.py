@@ -212,6 +212,11 @@ async def _validate_trigger_scopes(
 
     Raises a validation problem if the connection is missing required scopes,
     preventing silent trigger failures at poll time.
+
+    RCA(wf_70): Added after a Gmail trigger was published with a connection that
+    only had gmail.send scope — the trigger silently 403'd at runtime for 13 days.
+    This check catches scope mismatches at publish time instead.
+    See rca.md (2026-04-22) for full investigation.
     """
     required_scopes = definition.meta.required_scopes
     if not required_scopes or provider_connection_id is None:
@@ -630,7 +635,9 @@ def _apply_subscription_updates(
     if payload.provider_connection_id is not None:
         old_connection_id = subscription.provider_connection_id
         subscription.provider_connection_id = payload.provider_connection_id
-        # Reset polling state when connection changes (user reconnected with different account)
+        # RCA(wf_70): Reset polling state when connection changes (user reconnected
+        # with different account). Without this, a disabled subscription stays dead
+        # even after the user switches to a valid OAuth connection.
         if (subscription.is_polling
                 and old_connection_id is not None
                 and old_connection_id != payload.provider_connection_id):
@@ -896,16 +903,17 @@ async def _update_existing_subscription(
     )
     if new_connection_id is not None or not subscription.provider_connection_id:
         subscription.provider_connection_id = new_connection_id
-    # Reset polling state (cursor, next_poll_at, status, error) when any of these
-    # conditions indicate the subscription needs a fresh start:
+    # RCA(wf_70): Reset polling state when the subscription needs a fresh start.
+    # Before this fix, only re-enable (enabled: false->true) and config changes
+    # triggered a reset. A subscription with poll_status="disabled" (set by the
+    # polling engine on permanent errors like 401/403) was never recovered on
+    # republish, leaving the trigger silently dead. Now we also reset when:
+    # - poll_status is "disabled" (engine-disabled, user is republishing to recover)
+    # - provider_connection_id changed (user reconnected with different account)
     if subscription.is_polling and (
-        # Engine-disabled subscription being republished (permanent error recovery)
         subscription.poll_status == "disabled"
-        # User re-enabling a manually disabled subscription
         or not subscription.enabled
-        # User reconnected with a different OAuth account
         or connection_changed
-        # Config changed (e.g. cron expression, timezone, query filter)
         or subscription.provider_config != provider_config
     ):
         subscription.poll_cursor_json = None
@@ -995,6 +1003,7 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
         _validate_filters_payload(filters, definition)
         if not skip_validation:
             _validate_provider_config(provider_config, definition)
+            # RCA(wf_70): Validate scopes at publish time to catch mismatches early
             await _validate_trigger_scopes(provider_connection_id, definition)
 
         # Extract form configuration from ui_meta (for form triggers)
