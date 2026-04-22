@@ -48,7 +48,7 @@ from seer.core.schema.models import (
     WorkflowSpec,
 )
 from seer.services.integrations.auth.oauth import get_oauth_provider
-from seer.services.integrations.auth.helpers import get_connection_display_name
+from seer.services.integrations.auth.helpers import get_connection_display_name, has_required_scopes, parse_scopes
 
 logger = get_logger(__name__)
 
@@ -202,6 +202,57 @@ def _validate_provider_config(provider_config: Dict[str, Any], definition) -> No
                 detail=f"Invalid timezone: '{provider_config['timezone']}'. Use IANA timezone names (e.g., America/Chicago, UTC)",
                 status=400,
             )
+
+
+async def _validate_trigger_scopes(
+    provider_connection_id: Optional[int],
+    definition,
+) -> None:
+    """Validate that the OAuth connection has the scopes required by the trigger.
+
+    Raises a validation problem if the connection is missing required scopes,
+    preventing silent trigger failures at poll time.
+    """
+    required_scopes = definition.meta.required_scopes
+    if not required_scopes or provider_connection_id is None:
+        return
+
+    connection = await OAuthConnection.get_or_none(id=provider_connection_id)
+    if not connection:
+        return  # Connection existence is validated elsewhere
+
+    if not has_required_scopes(connection.scopes or "", required_scopes):
+        granted_set = parse_scopes(connection.scopes or "")
+        missing = [s for s in required_scopes if not any(
+            s == g or (
+                "googleapis.com" in s and "googleapis.com" in g
+                and _scope_satisfies_requirement_simple(g, s)
+            )
+            for g in granted_set
+        )]
+        display_name = get_connection_display_name(connection)
+        _raise_problem(
+            type_uri=VALIDATION_PROBLEM,
+            title="Insufficient permissions",
+            detail=(
+                f"The connected account ({display_name}) is missing permissions "
+                f"required by this trigger. Please reconnect with the required permissions. "
+                f"Missing scopes: {', '.join(missing)}"
+            ),
+            status=422,
+        )
+
+
+def _scope_satisfies_requirement_simple(granted: str, required: str) -> bool:
+    """Check if a granted Google scope satisfies a required scope via hierarchy."""
+    if granted == required:
+        return True
+    # Broader scope (e.g. gmail) satisfies narrower (e.g. gmail.readonly)
+    suffixes = [".readonly", ".modify", ".send", ".compose", ".labels", ".file", ".metadata"]
+    for suffix in suffixes:
+        if required.endswith(suffix) and granted == required[:-len(suffix)]:
+            return True
+    return False
 
 
 def _is_expression(value: Any) -> bool:
@@ -577,7 +628,16 @@ def _apply_subscription_updates(
         _validate_filters_payload(new_filters, definition)
         subscription.filters = new_filters
     if payload.provider_connection_id is not None:
+        old_connection_id = subscription.provider_connection_id
         subscription.provider_connection_id = payload.provider_connection_id
+        # Reset polling state when connection changes (user reconnected with different account)
+        if (subscription.is_polling
+                and old_connection_id is not None
+                and old_connection_id != payload.provider_connection_id):
+            subscription.poll_cursor_json = None
+            subscription.next_poll_at = datetime.now(timezone.utc)
+            subscription.poll_status = "ok"
+            subscription.poll_error_json = None
     if payload.provider_config is not None:
         new_provider_config = dict(payload.provider_config or {})
         _validate_provider_config(new_provider_config, definition)
@@ -828,18 +888,26 @@ async def _update_existing_subscription(
     subscription.trigger_key = trigger_spec.key
     subscription.title = definition.title
     new_connection_id = trigger_spec.provider_config.get("provider_connection_id")
+    old_connection_id = subscription.provider_connection_id
+    connection_changed = (
+        new_connection_id is not None
+        and old_connection_id is not None
+        and new_connection_id != old_connection_id
+    )
     if new_connection_id is not None or not subscription.provider_connection_id:
         subscription.provider_connection_id = new_connection_id
-    # Reset polling cursor when re-enabling a previously disabled subscription
-    # to prevent catchup storms from stale cursor positions
-    if not subscription.enabled and subscription.is_polling:
-        subscription.poll_cursor_json = None
-        subscription.next_poll_at = datetime.now(timezone.utc)
-        subscription.poll_status = "ok"
-        subscription.poll_error_json = None
-    # Reset polling cursor when provider_config changes (e.g. cron_expression or timezone)
-    # so adapter re-bootstraps with fresh config instead of using stale cursor values
-    elif subscription.is_polling and subscription.provider_config != provider_config:
+    # Reset polling state (cursor, next_poll_at, status, error) when any of these
+    # conditions indicate the subscription needs a fresh start:
+    if subscription.is_polling and (
+        # Engine-disabled subscription being republished (permanent error recovery)
+        subscription.poll_status == "disabled"
+        # User re-enabling a manually disabled subscription
+        or not subscription.enabled
+        # User reconnected with a different OAuth account
+        or connection_changed
+        # Config changed (e.g. cron expression, timezone, query filter)
+        or subscription.provider_config != provider_config
+    ):
         subscription.poll_cursor_json = None
         subscription.next_poll_at = datetime.now(timezone.utc)
         subscription.poll_status = "ok"
@@ -927,6 +995,7 @@ async def sync_trigger_subscriptions(  # pylint: disable=too-complex,too-many-lo
         _validate_filters_payload(filters, definition)
         if not skip_validation:
             _validate_provider_config(provider_config, definition)
+            await _validate_trigger_scopes(provider_connection_id, definition)
 
         # Extract form configuration from ui_meta (for form triggers)
         form_suffix, form_fields, form_config = _extract_form_config_from_spec(trigger_spec)

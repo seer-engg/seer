@@ -330,7 +330,10 @@ def _register_builtin_triggers(registry: TriggerRegistry) -> None:
                 event=_enveloped_event_schema(_gmail_email_received_payload_schema()),
                 config=_gmail_email_received_config_schema(),
             ),
-            meta=TriggerMetadata(sample_event=_gmail_email_received_sample_event()),
+            meta=TriggerMetadata(
+                sample_event=_gmail_email_received_sample_event(),
+                required_scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+            ),
         )
     )
     registry.register(
