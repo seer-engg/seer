@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from seer.api.workflows import models as api_models
 from seer.api.core.errors import VALIDATION_PROBLEM, raise_problem
 from seer.config import config as shared_config
@@ -113,10 +115,13 @@ async def list_triggers(user: User) -> api_models.TriggerCatalogResponse:
         status="active"
     ).all()
 
-    provider_to_scopes = {
-        conn.provider: conn.scopes or ""
-        for conn in connections
-    }
+    # RCA(wf_70): Group connections by provider to check if ANY connection has
+    # the required scopes. The old dict-comprehension only kept the last connection
+    # per provider, so is_connected depended on DB query order when a user had
+    # multiple connections for the same provider (e.g. two Google accounts).
+    provider_to_connections: dict[str, list] = defaultdict(list)
+    for conn in connections:
+        provider_to_connections[conn.provider].append(conn)
 
     triggers = []
     for definition in trigger_registry.all():
@@ -125,16 +130,18 @@ async def list_triggers(user: User) -> api_models.TriggerCatalogResponse:
             is_connected = True  # No OAuth needed
         else:
             oauth_provider = get_oauth_provider(definition.provider)
+            provider_connections = provider_to_connections.get(oauth_provider, [])
 
-            if oauth_provider not in provider_to_scopes:
+            if not provider_connections:
                 is_connected = False
             else:
-                # Check if connection has required scopes
-                granted_scopes = provider_to_scopes[oauth_provider]
                 required_scopes = definition.meta.required_scopes or []
-
                 if required_scopes:
-                    is_connected = has_required_scopes(granted_scopes, required_scopes)
+                    # Check if ANY connection for this provider has the required scopes
+                    is_connected = any(
+                        has_required_scopes(conn.scopes or "", required_scopes)
+                        for conn in provider_connections
+                    )
                 else:
                     is_connected = True  # No scope requirements
 
