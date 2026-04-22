@@ -843,6 +843,369 @@ class TestUpdateExistingSubscriptionReenableCursorReset:
 
 
 # =============================================================================
+# Disabled poll_status reset on publish (RCA: wf_70 Gmail trigger stuck)
+# =============================================================================
+
+
+class TestUpdateExistingSubscriptionDisabledPollStatusReset:
+    """Tests that _update_existing_subscription resets poll_status='disabled'
+    when a workflow is republished — the user is signaling intent to reactivate."""
+
+    async def test_disabled_subscription_resets_on_publish(self):
+        """A subscription with poll_status='disabled' (engine-disabled due to permanent
+        error) must be reset to 'ok' when republished, even if enabled=True and
+        provider_config hasn't changed."""
+        from seer.api.workflows.services.triggers import _update_existing_subscription
+
+        provider_config = {"provider_connection_id": 18, "query": "is:unread"}
+
+        subscription = MagicMock()
+        subscription.enabled = True  # User never disabled it
+        subscription.is_polling = True
+        subscription.poll_cursor_json = None
+        subscription.next_poll_at = datetime(2026, 4, 9, 5, 14, tzinfo=timezone.utc)
+        subscription.poll_status = "disabled"  # Engine disabled due to 403
+        subscription.poll_error_json = {
+            "reason": "adapter_permanent_error",
+            "detail": {"status": 403, "body": "insufficient scopes"},
+        }
+        subscription.trigger_key = "poll.gmail.email_received"
+        subscription.webhook_slug = None
+        subscription.provider_connection_id = 18
+        subscription.provider_config = provider_config
+        subscription.form_suffix = None
+        subscription.save = AsyncMock()
+
+        trigger_spec = MagicMock()
+        trigger_spec.key = "poll.gmail.email_received"
+        trigger_spec.filters = {}
+        trigger_spec.provider_config = provider_config  # Same config — no change
+
+        definition = MagicMock()
+        definition.title = "Gmail"
+
+        await _update_existing_subscription(
+            subscription,
+            trigger_spec,
+            definition,
+            webhook_slug=None,
+            adjusted_interval=900,
+            skip_validation=True,
+        )
+
+        assert subscription.poll_status == "ok"
+        assert subscription.poll_error_json is None
+        assert subscription.poll_cursor_json is None
+        assert subscription.next_poll_at is not None
+        assert isinstance(subscription.next_poll_at, datetime)
+        assert subscription.enabled is True
+        subscription.save.assert_awaited_once()
+
+    async def test_ok_subscription_preserves_state_when_config_unchanged(self):
+        """A healthy subscription (poll_status='ok') with unchanged config should
+        NOT have its polling state reset — this is the no-op case."""
+        from seer.api.workflows.services.triggers import _update_existing_subscription
+
+        provider_config = {"provider_connection_id": 18, "query": "is:unread"}
+        original_cursor = {"history_id": "123456"}
+        original_next_poll = datetime(2026, 4, 22, 12, 0, tzinfo=timezone.utc)
+
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = True
+        subscription.poll_cursor_json = original_cursor
+        subscription.next_poll_at = original_next_poll
+        subscription.poll_status = "ok"
+        subscription.poll_error_json = None
+        subscription.trigger_key = "poll.gmail.email_received"
+        subscription.webhook_slug = None
+        subscription.provider_connection_id = 18
+        subscription.provider_config = provider_config
+        subscription.form_suffix = None
+        subscription.save = AsyncMock()
+
+        trigger_spec = MagicMock()
+        trigger_spec.key = "poll.gmail.email_received"
+        trigger_spec.filters = {}
+        trigger_spec.provider_config = provider_config
+
+        definition = MagicMock()
+        definition.title = "Gmail"
+
+        await _update_existing_subscription(
+            subscription,
+            trigger_spec,
+            definition,
+            webhook_slug=None,
+            adjusted_interval=900,
+            skip_validation=True,
+        )
+
+        assert subscription.poll_cursor_json == original_cursor
+        assert subscription.poll_status == "ok"
+
+
+class TestUpdateExistingSubscriptionConnectionChangeReset:
+    """Tests that _update_existing_subscription resets polling state
+    when provider_connection_id changes (user reconnected with different account)."""
+
+    async def test_connection_change_resets_polling_state(self):
+        """Switching OAuth connection (e.g. from conn 18 to conn 25) must reset
+        polling state so the adapter re-bootstraps with the new credentials."""
+        from seer.api.workflows.services.triggers import _update_existing_subscription
+
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = True
+        subscription.poll_cursor_json = {"history_id": "old_cursor"}
+        subscription.next_poll_at = datetime(2026, 4, 20, 10, 0, tzinfo=timezone.utc)
+        subscription.poll_status = "ok"
+        subscription.poll_error_json = None
+        subscription.trigger_key = "poll.gmail.email_received"
+        subscription.webhook_slug = None
+        subscription.provider_connection_id = 18  # Old connection
+        subscription.provider_config = {"provider_connection_id": 18, "query": "is:unread"}
+        subscription.form_suffix = None
+        subscription.save = AsyncMock()
+
+        trigger_spec = MagicMock()
+        trigger_spec.key = "poll.gmail.email_received"
+        trigger_spec.filters = {}
+        trigger_spec.provider_config = {"provider_connection_id": 25, "query": "is:unread"}  # New connection
+
+        definition = MagicMock()
+        definition.title = "Gmail"
+
+        await _update_existing_subscription(
+            subscription,
+            trigger_spec,
+            definition,
+            webhook_slug=None,
+            adjusted_interval=900,
+            skip_validation=True,
+        )
+
+        assert subscription.provider_connection_id == 25
+        assert subscription.poll_cursor_json is None
+        assert subscription.poll_status == "ok"
+        assert subscription.poll_error_json is None
+        assert subscription.next_poll_at is not None
+        assert isinstance(subscription.next_poll_at, datetime)
+
+    async def test_same_connection_preserves_state(self):
+        """Republishing with the same connection should NOT reset polling state
+        (unless poll_status is disabled or config changed)."""
+        from seer.api.workflows.services.triggers import _update_existing_subscription
+
+        provider_config = {"provider_connection_id": 18, "query": "is:unread"}
+        original_cursor = {"history_id": "123456"}
+
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = True
+        subscription.poll_cursor_json = original_cursor
+        subscription.next_poll_at = datetime(2026, 4, 22, 12, 0, tzinfo=timezone.utc)
+        subscription.poll_status = "ok"
+        subscription.poll_error_json = None
+        subscription.trigger_key = "poll.gmail.email_received"
+        subscription.webhook_slug = None
+        subscription.provider_connection_id = 18
+        subscription.provider_config = provider_config
+        subscription.form_suffix = None
+        subscription.save = AsyncMock()
+
+        trigger_spec = MagicMock()
+        trigger_spec.key = "poll.gmail.email_received"
+        trigger_spec.filters = {}
+        trigger_spec.provider_config = provider_config
+
+        definition = MagicMock()
+        definition.title = "Gmail"
+
+        await _update_existing_subscription(
+            subscription,
+            trigger_spec,
+            definition,
+            webhook_slug=None,
+            adjusted_interval=900,
+            skip_validation=True,
+        )
+
+        assert subscription.poll_cursor_json == original_cursor
+        assert subscription.poll_status == "ok"
+
+
+class TestApplySubscriptionUpdatesConnectionChangeReset:
+    """Tests that _apply_subscription_updates resets polling state
+    when provider_connection_id changes via PATCH."""
+
+    def test_connection_change_resets_polling_state(self):
+        """Changing connection via PATCH should reset polling state."""
+        from seer.api.workflows.services.triggers import _apply_subscription_updates
+
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = True
+        subscription.poll_cursor_json = {"history_id": "old"}
+        subscription.next_poll_at = datetime(2026, 4, 20, 10, 0, tzinfo=timezone.utc)
+        subscription.poll_status = "disabled"
+        subscription.poll_error_json = {"reason": "oauth_error"}
+        subscription.provider_connection_id = 18
+        subscription.trigger_key = "poll.gmail.email_received"
+
+        payload = MagicMock()
+        payload.enabled = None
+        payload.filters = None
+        payload.provider_connection_id = 25  # Different connection
+        payload.provider_config = None
+
+        definition = MagicMock()
+
+        _apply_subscription_updates(subscription, payload, definition)
+
+        assert subscription.provider_connection_id == 25
+        assert subscription.poll_cursor_json is None
+        assert subscription.poll_status == "ok"
+        assert subscription.poll_error_json is None
+        assert subscription.next_poll_at is not None
+
+    def test_same_connection_preserves_state(self):
+        """Setting same connection via PATCH should NOT reset polling state."""
+        from seer.api.workflows.services.triggers import _apply_subscription_updates
+
+        original_cursor = {"history_id": "keep_this"}
+
+        subscription = MagicMock()
+        subscription.enabled = True
+        subscription.is_polling = True
+        subscription.poll_cursor_json = original_cursor
+        subscription.next_poll_at = datetime(2026, 4, 22, 12, 0, tzinfo=timezone.utc)
+        subscription.poll_status = "ok"
+        subscription.poll_error_json = None
+        subscription.provider_connection_id = 18
+        subscription.trigger_key = "poll.gmail.email_received"
+
+        payload = MagicMock()
+        payload.enabled = None
+        payload.filters = None
+        payload.provider_connection_id = 18  # Same connection
+        payload.provider_config = None
+
+        definition = MagicMock()
+
+        _apply_subscription_updates(subscription, payload, definition)
+
+        assert subscription.poll_cursor_json == original_cursor
+        assert subscription.poll_status == "ok"
+
+
+# =============================================================================
+# Scope validation tests
+# =============================================================================
+
+
+class TestValidateTriggerScopes:
+    """Tests for _validate_trigger_scopes at publish time."""
+
+    async def test_missing_scopes_raises_problem(self):
+        """Trigger with required_scopes should fail if connection lacks them."""
+        from seer.api.workflows.services.triggers import _validate_trigger_scopes
+
+        definition = MagicMock()
+        definition.meta.required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+        mock_connection = MagicMock()
+        mock_connection.scopes = "https://www.googleapis.com/auth/gmail.send openid"
+        mock_connection.provider_metadata = {"email": "user@gmail.com"}
+        mock_connection.provider = "google"
+        mock_connection.provider_account_id = "12345"
+
+        with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuth:
+            MockOAuth.get_or_none = AsyncMock(return_value=mock_connection)
+            with patch("seer.api.workflows.services.triggers._raise_problem") as mock_raise:
+                mock_raise.side_effect = Exception("Insufficient permissions")
+
+                with pytest.raises(Exception, match="Insufficient permissions"):
+                    await _validate_trigger_scopes(18, definition)
+
+            mock_raise.assert_called_once()
+            call_kwargs = mock_raise.call_args[1]
+            assert call_kwargs["status"] == 422
+            assert "missing permissions" in call_kwargs["detail"].lower() or "Missing scopes" in call_kwargs["detail"]
+
+    async def test_sufficient_scopes_passes(self):
+        """Trigger with required_scopes should pass if connection has them."""
+        from seer.api.workflows.services.triggers import _validate_trigger_scopes
+
+        definition = MagicMock()
+        definition.meta.required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+        mock_connection = MagicMock()
+        mock_connection.scopes = "https://www.googleapis.com/auth/gmail.readonly openid"
+
+        with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuth:
+            MockOAuth.get_or_none = AsyncMock(return_value=mock_connection)
+            with patch("seer.api.workflows.services.triggers._raise_problem") as mock_raise:
+                await _validate_trigger_scopes(18, definition)
+
+            mock_raise.assert_not_called()
+
+    async def test_broader_scope_satisfies_narrower(self):
+        """Google scope hierarchy: broader scope (gmail) should satisfy narrower (gmail.readonly)."""
+        from seer.api.workflows.services.triggers import _validate_trigger_scopes
+
+        definition = MagicMock()
+        definition.meta.required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+        mock_connection = MagicMock()
+        # Broader 'gmail' scope satisfies 'gmail.readonly'
+        mock_connection.scopes = "https://www.googleapis.com/auth/gmail openid"
+
+        with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuth:
+            MockOAuth.get_or_none = AsyncMock(return_value=mock_connection)
+            with patch("seer.api.workflows.services.triggers._raise_problem") as mock_raise:
+                await _validate_trigger_scopes(18, definition)
+
+            mock_raise.assert_not_called()
+
+    async def test_no_required_scopes_skips_validation(self):
+        """Triggers without required_scopes should skip validation entirely."""
+        from seer.api.workflows.services.triggers import _validate_trigger_scopes
+
+        definition = MagicMock()
+        definition.meta.required_scopes = None
+
+        # Should not raise, and should not query the database
+        with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuth:
+            await _validate_trigger_scopes(18, definition)
+            MockOAuth.get_or_none.assert_not_called()
+
+    async def test_no_connection_id_skips_validation(self):
+        """Triggers without a provider_connection_id should skip validation."""
+        from seer.api.workflows.services.triggers import _validate_trigger_scopes
+
+        definition = MagicMock()
+        definition.meta.required_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+        with patch("seer.api.workflows.services.triggers.OAuthConnection") as MockOAuth:
+            await _validate_trigger_scopes(None, definition)
+            MockOAuth.get_or_none.assert_not_called()
+
+
+class TestGmailTriggerRequiredScopes:
+    """Tests that the Gmail trigger definition declares required_scopes."""
+
+    def test_gmail_trigger_has_required_scopes(self):
+        """The Gmail email_received trigger must declare gmail.readonly scope."""
+        from seer.core.registry.trigger_registry import trigger_registry
+
+        definition = trigger_registry.maybe_get("poll.gmail.email_received")
+        assert definition is not None
+        assert definition.meta.required_scopes is not None
+        assert "https://www.googleapis.com/auth/gmail.readonly" in definition.meta.required_scopes
+
+
+# =============================================================================
 # sync_trigger_subscriptions slug regeneration (regression guard for DB wipe)
 # =============================================================================
 
