@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from seer.api.workflows import models as api_models
 from seer.api.core.errors import VALIDATION_PROBLEM, raise_problem
 from seer.config import config as shared_config
@@ -117,7 +119,6 @@ async def list_triggers(user: User) -> api_models.TriggerCatalogResponse:
     # the required scopes. The old dict-comprehension only kept the last connection
     # per provider, so is_connected depended on DB query order when a user had
     # multiple connections for the same provider (e.g. two Google accounts).
-    from collections import defaultdict
     provider_to_connections: dict[str, list] = defaultdict(list)
     for conn in connections:
         provider_to_connections[conn.provider].append(conn)
