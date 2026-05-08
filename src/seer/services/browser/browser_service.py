@@ -295,19 +295,19 @@ class BrowserService:
         """
         Check if model should use custom submit_result tool vs standard structured output.
 
-        Models like Kimi-k2.5 excel at tool-calling but struggle with complex
-        nested schemas like StructuredOutputAction[T]. For these models, we use
-        a simpler submit_result tool approach.
+        Models like Kimi-k2.5 and DeepSeek excel at tool-calling but struggle with
+        complex structured output schemas (response_format). For these models, we
+        use a simpler submit_result tool approach.
 
         Args:
-            model_name: The model identifier (e.g., "moonshotai/kimi-k2.5")
+            model_name: The model identifier (e.g., "deepseek-v4-pro", "moonshotai/kimi-k2.5")
 
         Returns:
             True if model should use custom submit_result tool
         """
-        kimi_patterns = ["kimi", "moonshot"]
+        custom_tool_patterns = ["kimi", "moonshot", "deepseek"]
         model_lower = model_name.lower()
-        return any(pattern in model_lower for pattern in kimi_patterns)
+        return any(pattern in model_lower for pattern in custom_tool_patterns)
 
     async def _run_browser_agent(
         self,
@@ -553,18 +553,74 @@ class BrowserService:
         """
         Get the LLM instance for the BrowserUse agent.
 
-        BrowserUse accesses llm.provider for telemetry and feature detection.
-        We add this attribute dynamically to support OpenRouter-backed models.
+        Routes to the correct API provider based on model prefix:
+        - gpt-*, o1*, o3*, o4*, openai/* -> OpenAI native API (strips openai/ prefix)
+        - deepseek-* -> OpenCode Go API
+        - kimi-*, qwen*, glm-*, minimax-*, big-pickle, *-free -> OpenCode Zen API
+        - All others -> OpenRouter
 
         Args:
-            model: OpenRouter model identifier. If None, uses config.default_llm_model.
+            model: Model identifier. If None, uses config.default_llm_model.
         """
+        resolved_model = model if model else config.default_llm_model
+
+        # Detect OpenAI native models and route directly (bypasses OpenRouter)
+        openai_prefixes = ("gpt-", "o1", "o3", "openai/", "o4")
+        if any(resolved_model.startswith(prefix) for prefix in openai_prefixes):
+            api_key = config.openai_api_key
+            if api_key is None or api_key == "":
+                raise ValueError("OPENAI_API_KEY not found in environment")
+            clean_model = resolved_model.split("/", 1)[-1] if "/" in resolved_model else resolved_model
+            logger.info(f"Using OpenAI API | Model: {clean_model}")
+            return ChatOpenAI(
+                model=clean_model,
+                api_key=api_key,
+                temperature=0,
+            )
+
+        # Detect OpenCode Go models (deepseek-*) — use ChatOpenAI with
+        # dont_force_structured_output=True to avoid response_format
+        # and tool_choice, neither of which deepseek-reasoner supports.
+        # Schema is communicated via system prompt instead.
+        if resolved_model.startswith("deepseek-"):
+            import os  # pylint: disable=import-outside-toplevel  # Reason: Minimal import for env var
+
+            api_key = config.opencode_zen_api_key or os.environ.get("OPENAICODE_ZEN_API_KEY")
+            if api_key is None or api_key == "":
+                raise ValueError("OPENAICODE_ZEN_API_KEY not found in environment")
+            logger.info(f"Using OpenCode Go API (DeepSeek) | Model: {resolved_model}")
+            return ChatOpenAI(
+                model=resolved_model,
+                api_key=api_key,
+                base_url="https://opencode.ai/zen/go/v1",
+                temperature=0,
+                dont_force_structured_output=True,
+                add_schema_to_system_prompt=True,
+                remove_min_items_from_schema=True,
+                remove_defaults_from_schema=True,
+            )
+
+        # Detect OpenCode Zen models (kimi, qwen, glm, minimax, big-pickle, free models)
+        zen_prefixes = ("kimi-", "qwen", "glm-", "minimax-", "big-pickle")
+        zen_suffixes = ("-free",)
+        is_zen = any(resolved_model.startswith(p) for p in zen_prefixes) or any(resolved_model.endswith(s) for s in zen_suffixes)
+
+        if is_zen:
+            import os  # pylint: disable=import-outside-toplevel  # Reason: Minimal import for env var
+            api_key = config.opencode_zen_api_key or os.environ.get("OPENAICODE_ZEN_API_KEY")
+            if api_key is None or api_key == "":
+                raise ValueError("OPENAICODE_ZEN_API_KEY not found in environment")
+            logger.info(f"Using OpenCode Zen API | Model: {resolved_model}")
+            return ChatOpenAI(
+                model=resolved_model,
+                api_key=api_key,
+                base_url="https://opencode.ai/zen/v1",
+                temperature=0,
+            )
+
         api_key = config.openrouter_api_key
         if api_key is None or api_key == "":
             raise ValueError("OPENROUTER_API_KEY not found in environment")
-
-        # Use provided model or fall back to config default
-        resolved_model = model if model else config.default_llm_model
         logger.info(f"Using OpenRouter API | Model: {resolved_model} | Base URL: https://openrouter.ai/api/v1")
         return ChatOpenAI(
             model=resolved_model,

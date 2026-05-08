@@ -61,6 +61,14 @@ class SeerConfig(SeerConfigPropertiesMixin, BaseSettings):
     tavily_api_key: Optional[str] = Field(
         default=None, description="Tavily API key for web search"
     )
+    opencode_zen_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias="OPENAICODE_ZEN_API_KEY",
+        description="OpenCode Zen API key for curated model access",
+    )
+    exa_api_key: Optional[str] = Field(
+        default=None, description="EXA API key for web search and enrichment"
+    )
 
     # ============================================================================
     # LangGraph Checkpointer Configuration
